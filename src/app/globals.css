@@ -1,26 +1,190 @@
 @import "tailwindcss";
 
+/* Light, high-contrast on purpose: players are outdoors in daylight in NYC.
+   A dark theme is unreadable in direct sun, and maintaining two themes for a
+   one-day event is not worth the risk. */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --ink: #10131a;
+  --muted: #5c6675;
+  --line: #d9dee6;
+  --accent: #1d4ed8;
+  --good: #067647;
+  --bad: #b42318;
+  --warn: #b54708;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.45;
+  margin: 0;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Inputs below 16px trigger an automatic zoom on iOS that is hard to recover
+   from one-handed while walking. */
+input,
+select,
+textarea,
+button {
+  font-size: 17px;
+  font-family: inherit;
+}
+
+.wrap {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 0 14px 100px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  margin: 12px 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 18px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.btn:active {
+  transform: scale(0.985);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-good {
+  background: var(--good);
+  border-color: var(--good);
+  color: #fff;
+}
+.btn-bad {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+.btn-wide {
+  width: 100%;
+}
+.btn-sm {
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+
+.field {
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.muted {
+  color: var(--muted);
+}
+.tiny {
+  font-size: 13px;
+}
+.good {
+  color: var(--good);
+}
+.bad {
+  color: var(--bad);
+}
+.warn {
+  color: var(--warn);
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(246, 247, 249, 0.94);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  padding-left: max(10px, env(safe-area-inset-left));
+}
+.nav a {
+  padding: 8px 13px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 15px;
+  text-decoration: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.nav a.on {
+  background: var(--ink);
+  color: #fff;
+}
+
+.media {
+  width: 100%;
+  max-height: 62vh;
+  border-radius: 10px;
+  background: #000;
+  display: block;
+  object-fit: contain;
+}
+
+.bar {
+  height: 12px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s linear;
 }

@@ -1,0 +1,91 @@
+import { db, mediaUrl } from "@/lib/db";
+import { getSettings, isOrganizer } from "@/lib/settings";
+import { json, fail } from "@/lib/http";
+import type { Database } from "@/lib/database.types";
+
+type SubmissionRow = Database["public"]["Tables"]["submissions"]["Row"];
+
+export const dynamic = "force-dynamic";
+
+/**
+ * The judging queue, plus the last few decisions so a misclick during live
+ * scoring is one tap from being undone rather than a hunt through the database.
+ */
+export async function GET(req: Request) {
+  if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
+
+  const url = new URL(req.url);
+  const settings = await getSettings();
+  const round = Number(url.searchParams.get("round")) || settings.active_round;
+  const sb = db();
+
+  const [{ data: pending }, { data: recent }, { data: tasks }, { data: teams }, { data: players }] =
+    await Promise.all([
+      sb
+        .from("submissions")
+        .select("*")
+        .eq("round", round)
+        .eq("status", "pending")
+        .order("created_at", { ascending: true }),
+      sb
+        .from("submissions")
+        .select("*")
+        .eq("round", round)
+        .in("status", ["approved", "rejected"])
+        .order("judged_at", { ascending: false })
+        .limit(12),
+      sb.from("tasks").select("id,title,points,requires_video,is_secret").eq("round", round),
+      sb.from("teams").select("id,name,color").eq("round", round),
+      sb.from("players").select("id,name"),
+    ]);
+
+  const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
+  const teamById = new Map((teams ?? []).map((t) => [t.id, t]));
+  const playerById = new Map((players ?? []).map((p) => [p.id, p]));
+
+  // Teams sometimes submit the same task twice -- two teammates racing, or a
+  // retry after a rejection. That is allowed (a hard constraint would throw an
+  // error in the field), and scoring counts a task once. The judge just needs to
+  // SEE it, so approving a duplicate is a deliberate choice.
+  const { data: approved } = await sb
+    .from("submissions")
+    .select("team_id,task_id")
+    .eq("round", round)
+    .eq("status", "approved");
+  const alreadyApproved = new Set(
+    (approved ?? []).map((s) => `${s.team_id}:${s.task_id}`)
+  );
+
+  const shape = (s: SubmissionRow) => {
+    const task = taskById.get(s.task_id);
+    const team = teamById.get(s.team_id);
+    return {
+      id: s.id,
+      status: s.status,
+      createdAt: s.created_at,
+      mediaUrl: mediaUrl(s.object_name),
+      mediaType: s.media_type,
+      sizeBytes: s.size_bytes,
+      isVideo: String(s.media_type ?? "").startsWith("video"),
+      taskTitle: task?.title ?? "(deleted task)",
+      taskPoints: s.task_points,
+      requiresVideo: Boolean(task?.requires_video),
+      isSecret: Boolean(task?.is_secret),
+      teamName: team?.name ?? "(unknown team)",
+      teamColor: team?.color ?? "#666",
+      playerName: playerById.get(s.player_id)?.name ?? "someone",
+      duplicate: alreadyApproved.has(`${s.team_id}:${s.task_id}`),
+      pointsAwarded: s.points_awarded,
+      bonus: s.bonus,
+      starred: s.starred,
+      rejectReason: s.reject_reason,
+    };
+  };
+
+  return json({
+    round,
+    queue: (pending ?? []).map(shape),
+    recent: (recent ?? []).map(shape),
+    pendingCount: (pending ?? []).length,
+  });
+}
