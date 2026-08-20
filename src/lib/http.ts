@@ -56,3 +56,21 @@ export function extOf(fileName: string, contentType: string): string {
   if (contentType.startsWith("image")) return "jpg";
   return "bin";
 }
+
+const VIDEO_EXT = /\.(mp4|m4v|mov|webm|avi|mkv|3gp|mpeg|mpg|ogv)$/i;
+
+/**
+ * Whether to render an object with <video> or <img>.
+ *
+ * Cannot rely on media_type alone: some Android file pickers hand over a File
+ * with an empty `type`, which gets stored as application/octet-stream. Treating
+ * that as an image renders a real video into a broken <img>, and the judge has
+ * no way to view the evidence. The object path always carries an extension, so
+ * fall back to it.
+ */
+export function isVideoObject(mediaType: string | null, objectName: string): boolean {
+  const t = (mediaType ?? "").toLowerCase();
+  if (t.startsWith("video")) return true;
+  if (t.startsWith("image")) return false;
+  return VIDEO_EXT.test(objectName);
+}

@@ -52,12 +52,37 @@ export async function GET(req: Request) {
   }));
 
   if (format === "csv") {
+    // The judge screen deliberately allows approving a duplicate (a hard block
+    // in the field is worse than a duplicate row), and `team_scores` counts a
+    // task once. The CSV is the copy someone will actually total in Sheets, so
+    // it has to carry the same dedup or a team gets credited twice and the
+    // wrong team can win. `counts` is 1 only on the best row per task.
+    const best = new Map<string, { id: string; total: number }>();
+    for (const r of rows) {
+      if (r.status !== "approved") continue;
+      const k = `${r.round}:${r.team}:${r.task}`;
+      const prev = best.get(k);
+      if (!prev || r.total > prev.total) best.set(k, { id: r.id, total: r.total });
+    }
+    const counted = new Set([...best.values()].map((b) => b.id));
+
     const cols = [
       "round", "team", "player", "task", "status", "pointsAwarded",
-      "bonus", "total", "starred", "rejectReason", "mediaUrl",
+      "bonus", "total", "counts", "starred", "rejectReason", "mediaUrl",
     ] as const;
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const body = [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))];
+    const withCounts = rows.map((r) => ({ ...r, counts: counted.has(r.id) ? 1 : 0 }));
+    const body = [
+      cols.join(","),
+      ...withCounts.map((r) => cols.map((c) => esc(r[c])).join(",")),
+      "",
+      "TEAM TOTALS (this is the authoritative score)",
+      "round,team,points,tasksScored",
+      ...(scores ?? [])
+        .slice()
+        .sort((a, b) => a.round - b.round || b.points - a.points)
+        .map((s) => [s.round, esc(s.name), s.points, s.tasks_scored].join(",")),
+    ];
     return new Response(body.join("\n"), {
       headers: {
         "content-type": "text/csv; charset=utf-8",

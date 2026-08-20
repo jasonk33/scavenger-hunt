@@ -57,6 +57,7 @@ export default function SubmitPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingTask = useRef<Task | null>(null);
   const handle = useRef<UploadHandle | null>(null);
+  const currentSubmissionId = useRef<string | null>(null);
   const wakeRef = useRef<ReturnType<typeof createWakeLock> | null>(null);
   if (!wakeRef.current) wakeRef.current = createWakeLock();
   const wake = wakeRef.current;
@@ -113,6 +114,22 @@ export default function SubmitPage() {
     fileInput.current?.click();
   };
 
+  /**
+   * tus's abort(true) suppresses every callback -- neither onError nor onSuccess
+   * fires afterwards. So cancelling has to drive the terminal state itself, or
+   * the job sticks at "uploading" forever, which leaves every Upload button on
+   * the page disabled and the progress card impossible to dismiss.
+   */
+  const cancelUpload = () => {
+    handle.current?.abort();
+    handle.current = null;
+    wake.release();
+    const id = currentSubmissionId.current;
+    currentSubmissionId.current = null;
+    if (id) void api(`/api/submissions/${id}`, { method: "DELETE" }).catch(() => {});
+    setJob((j) => j && { ...j, status: "error", message: "Cancelled. Nothing was sent." });
+  };
+
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     // Reset immediately so picking the SAME file twice still fires a change event.
@@ -165,6 +182,7 @@ export default function SubmitPage() {
       submissionId = init.submissionId;
       objectName = init.objectName;
       contentType = init.contentType;
+      currentSubmissionId.current = submissionId;
     } catch (err) {
       setJob((j) => j && { ...j, status: "error", message: errorMessage(err, "Could not start.") });
       return;
@@ -184,12 +202,16 @@ export default function SubmitPage() {
       onRetry: (n) => setJob((j) => j && { ...j, retries: n }),
       onError: (message) => {
         wake.release();
+        handle.current = null;
+        currentSubmissionId.current = null;
         setJob((j) => j && { ...j, status: "error", message });
         // Drop the placeholder row so it doesn't linger as a phantom submission.
         void api(`/api/submissions/${submissionId}`, { method: "DELETE" }).catch(() => {});
       },
       onSuccess: async () => {
         wake.release();
+        handle.current = null;
+        currentSubmissionId.current = null;
         try {
           await api(`/api/submissions/${submissionId}`, {
             method: "PATCH",
@@ -198,12 +220,14 @@ export default function SubmitPage() {
           setJob((j) => j && { ...j, pct: 100, status: "done" });
           reload();
         } catch (err) {
+          // The bytes ARE in Storage; only the registration failed. Say so, and
+          // leave the row for Admin to promote rather than deleting the media.
           setJob(
             (j) =>
               j && {
                 ...j,
                 status: "error",
-                message: `Uploaded, but couldn't register it: ${errorMessage(err)}. Tell an organizer.`,
+                message: `Uploaded, but couldn't register it: ${errorMessage(err)}. Tell an organizer — the file did arrive.`,
               }
           );
         }
@@ -272,7 +296,9 @@ export default function SubmitPage() {
         </div>
       )}
 
-      {job && <JobCard job={job} onClose={() => setJob(null)} onCancel={() => handle.current?.abort()} />}
+      {job && (
+        <JobCard job={job} onClose={() => setJob(null)} onCancel={cancelUpload} />
+      )}
 
       <input
         className="field"

@@ -41,6 +41,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   let patch: SubmissionUpdate;
 
   if (action === "approve") {
+    // Guard on `pending`: two organizers judging at once are not occasionally
+    // colliding, they are ALWAYS looking at the same oldest item. Without this,
+    // whoever writes second silently overwrites the first decision and the
+    // points disappear with no trace on any screen.
+    if (existing.status !== "pending") {
+      return fail("Someone already judged this one. Refresh to see the decision.", 409);
+    }
     const bonus = Math.min(2, Math.max(0, Math.round(Number(body.bonus ?? 0)) || 0));
     patch = {
       status: "approved",
@@ -51,6 +58,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       judged_at: new Date().toISOString(),
     };
   } else if (action === "reject") {
+    if (existing.status !== "pending") {
+      return fail("Someone already judged this one. Refresh to see the decision.", 409);
+    }
     patch = {
       status: "rejected",
       points_awarded: null,
@@ -77,11 +87,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const { data, error } = await sb
     .from("submissions")
+    // Re-assert the status we validated above so two simultaneous approvals
+    // cannot both land; the loser gets 409 instead of overwriting.
     .update(patch)
     .eq("id", id)
+    .eq("status", existing.status)
     .select("id,status,points_awarded,bonus,starred")
-    .single();
+    .maybeSingle();
 
   if (error) return fail(error.message, 500);
+  if (!data) return fail("Someone else just judged this one. Refresh to see the decision.", 409);
   return json({ ok: true, submission: data });
 }

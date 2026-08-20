@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, mediaUrl } from "@/lib/db";
 import { getSettings, isOrganizer } from "@/lib/settings";
 import { json, fail } from "@/lib/http";
 
@@ -26,14 +26,17 @@ export async function GET() {
 
   const all = subs ?? [];
   // Rows stuck in `uploading` are submissions whose bytes may or may not have
-  // landed -- a dead phone, a closed tab. They never reach the judge queue on
-  // their own, so they have to be visible somewhere.
+  // landed -- a dead phone, a closed tab, or a final PATCH that failed after a
+  // successful upload. They never reach the judge queue on their own, so they
+  // have to be visible AND recoverable: mediaUrl lets the organizer check
+  // whether the file actually arrived before promoting it.
   const stuck = all
     .filter((s) => s.status === "uploading")
     .map((s) => ({
       id: s.id,
       round: s.round,
       objectName: s.object_name,
+      mediaUrl: mediaUrl(s.object_name),
       createdAt: s.created_at,
       playerName: (players ?? []).find((p) => p.id === s.player_id)?.name ?? "?",
       taskTitle: (tasks ?? []).find((t) => t.id === s.task_id)?.title ?? "?",

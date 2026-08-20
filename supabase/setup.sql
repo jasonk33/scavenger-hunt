@@ -117,7 +117,7 @@ select t.id                                 as team_id,
        coalesce(sum(b.pts), 0)::int         as points,
        count(b.task_id)::int                as tasks_scored
 from teams t
-left join best b on b.team_id = t.id
+left join best b on b.team_id = t.id and b.round = t.round
 group by t.id, t.round, t.name, t.color, t.sort_order;
 
 -- RLS is on with no policies: nothing is reachable with the anon key. Every read

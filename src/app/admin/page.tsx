@@ -24,7 +24,14 @@ type AdminData = {
     revealed_at: string | null;
     active: boolean;
   }>;
-  stuck: Array<{ id: string; round: number; playerName: string; taskTitle: string; createdAt: string }>;
+  stuck: Array<{
+    id: string;
+    round: number;
+    playerName: string;
+    taskTitle: string;
+    createdAt: string;
+    mediaUrl: string;
+  }>;
   counts: Record<string, { total: number; uploading: number; pending: number; approved: number; rejected: number }>;
 };
 
@@ -113,7 +120,7 @@ function Admin() {
       {tab === "event" && <EventTab data={data} run={run} />}
       {tab === "roster" && <RosterTab data={data} run={run} />}
       {tab === "tasks" && <TasksTab data={data} run={run} />}
-      {tab === "health" && <HealthTab data={data} />}
+      {tab === "health" && <HealthTab data={data} run={run} />}
     </>
   );
 }
@@ -475,7 +482,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   );
 }
 
-function HealthTab({ data }: { data: AdminData }) {
+function HealthTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => void }) {
   const { data: health } = usePoll<{
     ok: boolean;
     checks: Array<{ name: string; ok: boolean; detail: string }>;
@@ -525,15 +532,31 @@ function HealthTab({ data }: { data: AdminData }) {
       <div className="card">
         <b>Stuck uploads</b>
         <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-          Submissions that started but never finished — a phone died, or a tab was closed. They
-          never reach the judge queue. Ask the player to re-upload.
+          Submissions that started but never finished — a phone died, a tab closed, or the upload
+          landed but the app never heard back. They don&apos;t reach the judge queue on their own.
+          <b> Open the file first:</b> if it plays, the media arrived and you can send it to the
+          judge. If it 404s, ask the player to re-upload.
         </p>
         {data.stuck.length === 0 && <span className="good tiny">None.</span>}
-        <div style={{ display: "grid", gap: 4 }}>
+        <div style={{ display: "grid", gap: 8 }}>
           {data.stuck.map((s) => (
-            <div key={s.id} className="tiny">
-              R{s.round} · <b>{s.playerName}</b> · {s.taskTitle} ·{" "}
-              <span className="muted">{new Date(s.createdAt).toLocaleTimeString()}</span>
+            <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div className="tiny" style={{ flex: 1, minWidth: 0 }}>
+                R{s.round} · <b>{s.playerName}</b> · {s.taskTitle}
+                <br />
+                <span className="muted">{new Date(s.createdAt).toLocaleTimeString()}</span>
+              </div>
+              <a className="btn btn-sm" href={s.mediaUrl} target="_blank" rel="noreferrer">
+                Open
+              </a>
+              <button
+                className="btn btn-sm btn-good"
+                onClick={() =>
+                  run(() => api(`/api/submissions/${s.id}`, { method: "PATCH", body: "{}" }))
+                }
+              >
+                Send to judge
+              </button>
             </div>
           ))}
         </div>

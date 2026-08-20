@@ -18,6 +18,20 @@ import { createClient } from "@supabase/supabase-js";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 
+// This script writes to the SAME project the live app uses -- it flips
+// active_round and closes submissions. Running it against production mid-event
+// would show every player "Submissions are closed right now" with no
+// explanation, so refuse unless it is pointed at localhost or explicitly forced.
+const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(BASE);
+if (!isLocal && !process.argv.includes("--allow-prod")) {
+  console.error(
+    `\nRefusing to run against ${BASE}.\n` +
+      `This test closes submissions and switches rounds on the live project.\n` +
+      `Re-run with --allow-prod only if the event is not currently running.\n`
+  );
+  process.exit(1);
+}
+
 // Read .env.local directly so the script needs no extra tooling.
 const env = Object.fromEntries(
   readFileSync(new URL("../.env.local", import.meta.url), "utf8")
@@ -68,6 +82,31 @@ async function call(path, init = {}) {
 
 const NAME = `__smoke_${Date.now()}`;
 let playerId, teamA, teamB, taskId, submissionId, objectName;
+// Captured before the test mutates anything, so the restore in `finally` always
+// has something to put back even if main() throws on its first statement.
+let settingsBefore = null;
+
+async function restoreSettings() {
+  if (!settingsBefore) return;
+  try {
+    await call("/api/admin/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        active_round: settingsBefore.active_round,
+        submissions_open: String(settingsBefore.submissions_open),
+      }),
+    });
+    console.log(
+      `  (restored active_round=${settingsBefore.active_round} submissions_open=${settingsBefore.submissions_open})`
+    );
+  } catch (e) {
+    console.error(
+      `\n  !! COULD NOT RESTORE SETTINGS: ${e.message}\n` +
+        `  !! Set active_round=${settingsBefore.active_round} and ` +
+        `submissions_open=${settingsBefore.submissions_open} by hand in Admin.\n`
+    );
+  }
+}
 
 async function cleanup() {
   try {
@@ -107,7 +146,8 @@ async function main() {
   teamA = r1Teams[0];
   teamB = r2Teams.find((t) => t.name !== teamA.name) ?? r2Teams[0];
 
-  const settingsBefore = data.settings;
+  const settingsBackup = data.settings;
+  settingsBefore = settingsBackup;
   await call("/api/admin/settings", {
     method: "POST",
     body: JSON.stringify({ active_round: 1, submissions_open: "true" }),
@@ -234,13 +274,38 @@ async function main() {
   });
   check("bonus is clamped to 2", overBonus.body?.submission?.bonus === 2, String(overBonus.body?.submission?.bonus));
 
+  // Two organizers judging at once always see the same oldest item. The second
+  // decision must be refused, not silently overwrite the first.
+  const doubleJudge = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reject", reason: "race" }),
+  });
+  check(
+    "a second judge cannot overwrite an existing decision",
+    doubleJudge.status === 409,
+    `HTTP ${doubleJudge.status}`
+  );
+
+  const stillApproved = (await call("/api/judge/queue?round=1")).body.recent.find(
+    (r) => r.id === submissionId
+  );
+  check("the first decision survived the race", stillApproved?.status === "approved", stillApproved?.status);
+
   const board1 = (await call("/api/leaderboard?round=1")).body;
   const rowA = board1.rows.find((r) => r.teamId === teamA.id);
+  // Assert the row EXISTS before comparing anything to it. Without this, the
+  // remix check below degenerates into `undefined === undefined`, which passes
+  // -- reporting the one guarantee this whole design exists to provide as
+  // verified while having compared nothing.
+  check("leaderboard returns the round 1 team", Boolean(rowA), "team missing from leaderboard");
   check(
     "leaderboard credits the round 1 team",
     rowA && rowA.points >= taskPoints + 2,
     `${rowA?.points} points`
   );
+
+  const board2Before = (await call("/api/leaderboard?round=2")).body;
+  const rowBBefore = board2Before.rows.find((r) => r.teamId === teamB.id);
 
   // --- THE regression test ------------------------------------------------
   // Flip to Round 2, where this player is on a DIFFERENT team. If submissions
@@ -252,16 +317,42 @@ async function main() {
   const rowAAfter = board1After.rows.find((r) => r.teamId === teamA.id);
   check(
     "REMIX: round 1 score is unchanged after the roster is remixed",
-    rowAAfter?.points === rowA?.points,
+    Boolean(rowA) && Boolean(rowAAfter) && rowAAfter.points === rowA.points,
     `${rowA?.points} -> ${rowAAfter?.points}`
   );
 
   const board2 = (await call("/api/leaderboard?round=2")).body;
   const rowB = board2.rows.find((r) => r.teamId === teamB.id);
-  check("REMIX: round 2 team did not inherit round 1 points", (rowB?.points ?? 0) === 0, `${rowB?.points}`);
+  check("leaderboard returns the round 2 team", Boolean(rowB), "team missing from leaderboard");
+  // Compared against its own prior value rather than hardcoded 0, so the check
+  // still means something on a project that already has real submissions.
+  check(
+    "REMIX: round 2 team did not inherit round 1 points",
+    Boolean(rowB) && Boolean(rowBBefore) && rowB.points === rowBBefore.points,
+    `${rowBBefore?.points} -> ${rowB?.points}`
+  );
 
   const stateR2 = (await call(`/api/state?playerId=${playerId}`)).body;
   check("player is now on their round 2 team", stateR2.team?.id === teamB.id, stateR2.team?.name);
+
+  // The judge must still be able to reach the OTHER round's backlog after the
+  // flip, or Round 1 submissions still in the queue at 3:30pm never get scored.
+  const queueR2 = (await call("/api/judge/queue")).body;
+  check(
+    "judge is told about the other round's backlog",
+    typeof queueR2.otherRoundPending === "number",
+    JSON.stringify(queueR2.otherRoundPending)
+  );
+  const queueR1 = (await call("/api/judge/queue?round=1")).body;
+  check("judge can still open round 1 after the flip", queueR1.round === 1);
+
+  // Cross-round roster assignment must be refused: it would attribute scores to
+  // a team that doesn't exist in that round's standings.
+  const crossRound = await call("/api/admin/roster", {
+    method: "POST",
+    body: JSON.stringify({ round: 2, playerId, teamId: teamA.id }),
+  });
+  check("cross-round team assignment is refused", crossRound.status === 409, JSON.stringify(crossRound.body));
 
   const wrongRound = await call("/api/submissions", {
     method: "POST",
@@ -281,40 +372,45 @@ async function main() {
   check("submissions are refused while closed", closed.status === 409);
 
   // --- export -------------------------------------------------------------
+  // Every export assertion tests for THIS run's artifacts. Matching on the team
+  // name or a bare "STAR--" would pass off any pre-existing submission.
   const csv = await fetch(`${BASE}/api/export?format=csv`, { headers: { cookie } });
   const csvText = await csv.text();
-  check("CSV export includes the submission", csvText.includes(NAME) || csvText.includes(teamA.name));
+  check("CSV export includes this run's submission", csvText.includes(NAME));
+  check("CSV carries a dedup column", csvText.split("\n")[0].includes("counts"));
+  check("CSV includes authoritative team totals", csvText.includes("TEAM TOTALS"));
 
   const sh = await fetch(`${BASE}/api/export?format=sh`, { headers: { cookie } });
   const shText = await sh.text();
-  check("download script is generated", shText.includes("curl -fsSL"));
-  check("award candidates are marked in the download script", shText.includes("STAR--"));
+  const myLine = shText.split("\n").find((l) => l.includes(objectName));
+  check("download script includes this run's media", Boolean(myLine), objectName);
+  check("download script marks it as an award candidate", Boolean(myLine?.includes("STAR--")));
+  check("download script sorts into round/team folders", Boolean(myLine?.includes("round-1/")));
 
   // --- unauthenticated access --------------------------------------------
   const noCookie = await fetch(`${BASE}/api/judge/queue`);
   check("judge queue requires the PIN", PIN ? noCookie.status === 401 : true, `HTTP ${noCookie.status}`);
-
-  // --- restore ------------------------------------------------------------
-  await call("/api/admin/settings", {
-    method: "POST",
-    body: JSON.stringify({
-      active_round: settingsBefore.active_round,
-      submissions_open: String(settingsBefore.submissions_open),
-    }),
-  });
 }
 
-main()
-  .then(cleanup, async (e) => {
-    console.error("\n\x1b[31mAborted:\x1b[0m", e.message);
+// Settings are restored in a `finally`, not on the happy path. Any throw after
+// the round flip would otherwise leave the live event stuck in Round 2 with
+// submissions closed -- and every player would just see "Submissions are closed
+// right now" with no clue why.
+(async () => {
+  try {
+    await main();
+  } catch (e) {
+    console.error("\n\x1b[31mAborted:\x1b[0m", e?.stack ?? e?.message ?? e);
+    failures.push("run aborted before finishing");
+  } finally {
+    await restoreSettings();
     await cleanup();
+  }
+
+  console.log(`\n${passed} passed, ${failures.length} failed`);
+  if (failures.length) {
+    console.log("\nFailed:");
+    for (const f of failures) console.log(`  - ${f}`);
     process.exitCode = 1;
-  })
-  .then(() => {
-    console.log(`\n${passed} passed, ${failures.length} failed`);
-    if (failures.length) {
-      console.log("\nFailed:");
-      for (const f of failures) console.log(`  - ${f}`);
-      process.exitCode = 1;
-    }
-  });
+  }
+})();

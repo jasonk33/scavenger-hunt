@@ -1,6 +1,6 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings, isOrganizer } from "@/lib/settings";
-import { json, fail } from "@/lib/http";
+import { json, fail, isVideoObject } from "@/lib/http";
 import type { Database } from "@/lib/database.types";
 
 type SubmissionRow = Database["public"]["Tables"]["submissions"]["Row"];
@@ -66,7 +66,7 @@ export async function GET(req: Request) {
       mediaUrl: mediaUrl(s.object_name),
       mediaType: s.media_type,
       sizeBytes: s.size_bytes,
-      isVideo: String(s.media_type ?? "").startsWith("video"),
+      isVideo: isVideoObject(s.media_type, s.object_name),
       taskTitle: task?.title ?? "(deleted task)",
       taskPoints: s.task_points,
       requiresVideo: Boolean(task?.requires_video),
@@ -82,10 +82,20 @@ export async function GET(req: Request) {
     };
   };
 
+  // Pending count for the OTHER round. After the 3:30pm flip there is normally
+  // still a Round 1 backlog, and if the judge screen never mentions it those
+  // submissions quietly never get scored.
+  const { count: otherRoundPending } = await sb
+    .from("submissions")
+    .select("id", { count: "exact", head: true })
+    .eq("round", round === 1 ? 2 : 1)
+    .eq("status", "pending");
+
   return json({
     round,
     queue: (pending ?? []).map(shape),
     recent: (recent ?? []).map(shape),
     pendingCount: (pending ?? []).length,
+    otherRoundPending: otherRoundPending ?? 0,
   });
 }

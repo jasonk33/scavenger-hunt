@@ -1,6 +1,6 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
-import { json } from "@/lib/http";
+import { json, isVideoObject } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +34,7 @@ export async function GET(req: Request) {
     items: (subs ?? []).map((s) => ({
       id: s.id,
       mediaUrl: mediaUrl(s.object_name),
-      isVideo: String(s.media_type ?? "").startsWith("video"),
+      isVideo: isVideoObject(s.media_type, s.object_name),
       taskTitle: taskById.get(s.task_id)?.title ?? "",
       points: (s.points_awarded ?? 0) + (s.bonus ?? 0),
       bonus: s.bonus,

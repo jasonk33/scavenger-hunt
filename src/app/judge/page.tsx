@@ -23,7 +23,13 @@ type Item = {
   rejectReason: string | null;
 };
 
-type Queue = { round: number; queue: Item[]; recent: Item[]; pendingCount: number };
+type Queue = {
+  round: number;
+  queue: Item[];
+  recent: Item[];
+  pendingCount: number;
+  otherRoundPending: number;
+};
 
 const REASONS = ["No stranger in frame", "Doesn't match the task", "Can't tell what's happening", "Wrong round"];
 
@@ -75,7 +81,15 @@ export default function JudgePage() {
 }
 
 function JudgeQueue() {
-  const { data, reload } = usePoll<Queue>("/api/judge/queue", 5000);
+  // Deliberately NOT locked to the active round. When the organizer flips to
+  // Round 2 at the break there will still be a Round 1 backlog in the queue,
+  // and without this selector those submissions become invisible and never get
+  // scored -- a silently wrong Round 1 result.
+  const [round, setRound] = useState<number | null>(null);
+  const { data, reload } = usePoll<Queue>(
+    round ? `/api/judge/queue?round=${round}` : "/api/judge/queue",
+    5000
+  );
   const [bonus, setBonus] = useState(0);
   const [star, setStar] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -91,6 +105,7 @@ function JudgeQueue() {
   );
   const current = queue[0];
   const next = queue[1];
+  const otherRoundPending = data?.otherRoundPending ?? 0;
 
   // Reset the per-item controls whenever the item changes, so a bonus meant for
   // the last submission never lands on the next one.
@@ -136,10 +151,29 @@ function JudgeQueue() {
       <header style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "16px 0 4px" }}>
         <h1 style={{ fontSize: 24, margin: 0 }}>Judge</h1>
         <span className="pill">{queue.length} waiting</span>
-        <span className="muted tiny" style={{ marginLeft: "auto" }}>
-          Round {data?.round ?? "–"}
-        </span>
       </header>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        {[1, 2].map((r) => (
+          <button
+            key={r}
+            className={`btn btn-sm ${(round ?? data?.round) === r ? "btn-primary" : ""}`}
+            onClick={() => setRound(r)}
+          >
+            Round {r}
+            {otherRoundPending > 0 && (round ?? data?.round) !== r ? ` · ${otherRoundPending}` : ""}
+          </button>
+        ))}
+      </div>
+
+      {/* After the break there is usually still a Round 1 backlog. Saying so
+          stops it from being forgotten once the active round moves on. */}
+      {otherRoundPending > 0 && (
+        <p className="warn tiny" style={{ marginTop: 0 }}>
+          {otherRoundPending} submission{otherRoundPending === 1 ? "" : "s"} still waiting in the
+          other round.
+        </p>
+      )}
 
       {err && <div className="card bad tiny">{err}</div>}
 

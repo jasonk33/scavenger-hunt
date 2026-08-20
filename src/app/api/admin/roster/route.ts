@@ -27,6 +27,18 @@ export async function POST(req: Request) {
   const toClear = entries.filter((e) => e.playerId && !e.teamId).map((e) => e.playerId);
 
   if (toSet.length) {
+    // Teams are per-round rows. Assigning a player to a team from the OTHER
+    // round would attribute their submissions to a team that doesn't exist in
+    // this round's standings, and the score would silently vanish.
+    const { data: valid } = await sb
+      .from("teams")
+      .select("id")
+      .eq("round", round)
+      .in("id", toSet.map((e) => e.team_id));
+    const allowed = new Set((valid ?? []).map((t) => t.id));
+    const bad = toSet.filter((e) => !allowed.has(e.team_id));
+    if (bad.length) return fail(`Those teams don't belong to Round ${round}.`, 409);
+
     const { error } = await sb.from("roster").upsert(toSet, { onConflict: "round,player_id" });
     if (error) return fail(error.message, 500);
   }
