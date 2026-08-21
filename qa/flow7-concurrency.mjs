@@ -7,8 +7,7 @@
 import { chromium } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import {
-  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  check, note, summary, call,
+  BASE, BUCKET, admin, setup, teardown, snapshot, captureSettings, restoreSettings, asPlayer, check, note, summary, call,
 } from "./lib.mjs";
 
 const MEDIA = new URL("./media/", import.meta.url).pathname;
@@ -73,8 +72,7 @@ try {
 
   const pages = await Promise.all(fx.players.map(async (p) => {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-    await ctx.addInitScript(([me]) => localStorage.setItem("sh.player", JSON.stringify(me)),
-      [{ id: p.id, name: p.name }]);
+    await asPlayer(ctx, p);
     const page = await ctx.newPage();
     await page.goto(`${BASE}/submit`, { waitUntil: "networkidle" });
     await page.waitForSelector(".card-flat", { timeout: 20000 });
@@ -117,7 +115,7 @@ try {
 
   // Fetch every object and confirm the bytes are actually there and complete.
   const fetched = await Promise.all(rows.map(async (r) => {
-    const { data: pub } = admin.storage.from(process.env.SUPABASE_BUCKET || "hunt").getPublicUrl(r.object_name);
+    const { data: pub } = admin.storage.from(BUCKET).getPublicUrl(r.object_name);
     const res = await fetch(pub.publicUrl);
     const buf = Buffer.from(await res.arrayBuffer());
     return { ok: res.ok, len: buf.length };

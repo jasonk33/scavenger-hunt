@@ -86,6 +86,12 @@ export async function call(path, init = {}) {
 /* ---------- fixtures ---------- */
 
 const TAG = "__qa";
+// `_` is a single-character wildcard in SQL LIKE, so `__qa%` also matches any
+// two characters followed by "qa". These filters drive delete() against real
+// players, teams and tasks, and snapshot() uses the same predicate -- so a
+// wrongly-matched row would be excluded from the before AND after counts and
+// the integrity diff could never see it. Match exactly in JS instead.
+const isQa = (s) => typeof s === "string" && s.startsWith(TAG);
 
 /** Creates an isolated team (both rounds) plus players rostered into round 1. */
 export async function setup({ players = ["__qa Alice", "__qa Bob"], teams = ["__qa Red", "__qa Blue"] } = {}) {
@@ -117,8 +123,8 @@ export async function setup({ players = ["__qa Alice", "__qa Bob"], teams = ["__
 
 /** Removes every __qa artifact: submissions + media, roster, teams, players. */
 export async function teardown() {
-  const { data: players } = await admin.from("players").select("id,name").like("name", `${TAG}%`);
-  const ids = (players ?? []).map((p) => p.id);
+  const { data: allPlayers } = await admin.from("players").select("id,name");
+  const ids = (allPlayers ?? []).filter((p) => isQa(p.name)).map((p) => p.id);
 
   if (ids.length) {
     const { data: subs } = await admin
@@ -132,8 +138,8 @@ export async function teardown() {
     await admin.from("players").delete().in("id", ids);
   }
 
-  const { data: teams } = await admin.from("teams").select("id").like("name", `${TAG}%`);
-  const teamIds = (teams ?? []).map((t) => t.id);
+  const { data: allTeams } = await admin.from("teams").select("id,name");
+  const teamIds = (allTeams ?? []).filter((t) => isQa(t.name)).map((t) => t.id);
   if (teamIds.length) {
     // Any stragglers pointing at a __qa team (e.g. reassigned during a race test).
     const { data: subs } = await admin.from("submissions").select("id,object_name").in("team_id", teamIds);
@@ -159,31 +165,40 @@ export async function teardown() {
   }
 }
 
+/** Deletes only the tasks this suite created. Exact-match, never LIKE. */
+export async function teardownTasks() {
+  const { data } = await admin.from("tasks").select("id,title");
+  const ids = (data ?? []).filter((t) => isQa(t.title)).map((t) => t.id);
+  if (!ids.length) return;
+  await admin.from("submissions").delete().in("task_id", ids);
+  await admin.from("tasks").delete().in("id", ids);
+}
+
 /** Snapshot of everything the event depends on, for a before/after integrity diff. */
 export async function snapshot() {
   const [players, teams, roster, tasks, subs, settings] = await Promise.all([
-    admin.from("players").select("id,name").not("name", "like", `${TAG}%`),
-    admin.from("teams").select("id,name,round,color").not("name", "like", `${TAG}%`),
+    admin.from("players").select("id,name"),
+    admin.from("teams").select("id,name,round,color"),
     admin.from("roster").select("round,player_id,team_id"),
     // Full task state, not just a count: a stray click on a Reveal button changes
     // nothing countable but spoils a secret challenge, and deactivating a task
     // silently removes it from every player's list.
-    admin.from("tasks").select("id,title,points,round,is_secret,revealed_at,active,requires_video")
-      .not("title", "like", `${TAG}%`).order("id"),
+    admin.from("tasks").select("id,title,points,round,is_secret,revealed_at,active,requires_video").order("id"),
     admin.from("submissions").select("id,status,team_id,points_awarded,bonus"),
     admin.from("settings").select("key,value"),
   ]);
-  const qaPlayers = new Set(); // roster rows for __qa players are expected to vanish
-  const { data: qp } = await admin.from("players").select("id").like("name", `${TAG}%`);
-  for (const p of qp ?? []) qaPlayers.add(p.id);
+  const realPlayers = (players.data ?? []).filter((p) => !isQa(p.name));
+  const realTeams = (teams.data ?? []).filter((t) => !isQa(t.name));
+  const realTasks = (tasks.data ?? []).filter((t) => !isQa(t.title));
+  const qaPlayers = new Set((players.data ?? []).filter((p) => isQa(p.name)).map((p) => p.id));
   return {
-    players: (players.data ?? []).length,
-    teams: (teams.data ?? []).length,
+    players: realPlayers.length,
+    teams: realTeams.length,
     roster: (roster.data ?? []).filter((r) => !qaPlayers.has(r.player_id)).length,
-    tasks: (tasks.data ?? []).length,
-    secretsRevealed: (tasks.data ?? []).filter((t) => t.revealed_at).map((t) => t.title),
-    tasksInactive: (tasks.data ?? []).filter((t) => t.active === false).map((t) => t.title),
-    taskFingerprint: (tasks.data ?? [])
+    tasks: realTasks.length,
+    secretsRevealed: realTasks.filter((t) => t.revealed_at).map((t) => t.title),
+    tasksInactive: realTasks.filter((t) => t.active === false).map((t) => t.title),
+    taskFingerprint: realTasks
       .map((t) => `${t.id}:${t.points}:${t.requires_video}:${t.is_secret}`)
       .join("|"),
     submissions: (subs.data ?? []).length,
@@ -205,19 +220,21 @@ export async function restoreSettings(before) {
 
 /* ---------- browser helpers ---------- */
 
-export async function asPlayer(page, player) {
-  await page.addInitScript(
-    ([p]) => {
-      localStorage.setItem("sh.player", JSON.stringify({ id: p.id, name: p.name }));
-    },
-    [player]
+/** Seeds a player identity into a context before any page script runs. */
+export async function asPlayer(context, player) {
+  await context.addInitScript(
+    ([p]) => localStorage.setItem("sh.player", JSON.stringify(p)),
+    [{ id: player.id, name: player.name }]
   );
 }
 
+/**
+ * Grants organizer access to a context. The cookie domain is derived from BASE
+ * rather than hardcoded, so the same driver works against a deployed URL.
+ */
 export async function asOrganizer(context) {
-  const url = new URL(BASE);
   await context.addCookies([
-    { name: "organizer", value: PIN, domain: url.hostname, path: "/" },
+    { name: "organizer", value: PIN, domain: new URL(BASE).hostname, path: "/" },
   ]);
 }
 

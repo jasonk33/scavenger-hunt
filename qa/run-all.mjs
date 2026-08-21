@@ -19,13 +19,20 @@ const drivers = readdirSync(dir)
 
 const run = (file) =>
   new Promise((resolve) => {
-    const p = spawn(process.execPath, [`${dir}${file}`], { stdio: ["ignore", "pipe", "pipe"] });
+    // Forward our own args (e.g. --allow-prod) so `npm run qa -- --allow-prod`
+    // reaches the per-driver guard in lib.mjs instead of being swallowed here.
+    const p = spawn(process.execPath, [`${dir}${file}`, ...process.argv.slice(2)], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let out = "";
     p.stdout.on("data", (d) => { out += d; process.stdout.write(d); });
     p.stderr.on("data", (d) => { out += d; process.stderr.write(d); });
     p.on("close", (code) => {
       const m = out.match(/^(.+): (\d+)\/(\d+) passed/m);
-      const intact = !/real data intact: false/.test(out);
+      // Require the line to be present AND true. Inferring "intact" from the
+      // absence of a failure line would score a driver that never checked as
+      // clean, which is exactly the case worth catching.
+      const intact = /real data intact: true/.test(out);
       resolve({
         file,
         code,

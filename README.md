@@ -74,6 +74,12 @@ the actual file chooser, cancelling mid-upload, judging, flipping to Round 2 wit
 a Round 1 backlog still pending, and racing two judges against the same
 submission. `smoke` proves the API is right; `qa` proves the screens are.
 
+On a fresh clone, download the browser binary once first:
+
+```bash
+npx playwright install chromium
+```
+
 Each driver creates its own `__qa`-prefixed fixtures, restores every setting in a
 `finally`, and then diffs a snapshot of the real event data — including which
 secret challenges are revealed — so a run that quietly changes your event fails

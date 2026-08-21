@@ -12,8 +12,12 @@ export async function GET(req: Request) {
   /*
    * The cap has to clear a whole round's approvals, or the feed silently stops
    * showing the oldest ones with nothing on screen to say so. Five teams working
-   * through 79 tasks can produce a few hundred; the images are lazy-loaded, so a
-   * long list costs DOM nodes rather than bandwidth.
+   * through 79 tasks can produce a few hundred.
+   *
+   * Photos are lazy-loaded so extra rows are nearly free, but videos render with
+   * preload="auto" (required, or iOS shows an untappable black box), so each one
+   * starts fetching as soon as it is rendered. Round 2 has 11 video-only tasks,
+   * so a fully-scored round is worth on the order of 50 eager video fetches.
    */
   const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 400));
   const sb = db();

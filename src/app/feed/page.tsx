@@ -21,7 +21,7 @@ type Feed = {
 
 export default function FeedPage() {
   const [round, setRound] = useState(0);
-  const { data } = usePoll<Feed>(round ? `/api/feed?round=${round}` : "/api/feed", 8000);
+  const { data, error } = usePoll<Feed>(round ? `/api/feed?round=${round}` : "/api/feed", 8000);
   const shown = round || data?.round || 1;
   const items = data?.items ?? [];
 
@@ -37,7 +37,9 @@ export default function FeedPage() {
         ))}
       </div>
 
-      {!data && <p className="muted" style={{ marginTop: 16 }}>Loading…</p>}
+      {error && <div className="card card-bad tiny bad">Connection hiccup — retrying.</div>}
+
+      {!data && !error && <p className="muted" style={{ marginTop: 16 }}>Loading…</p>}
 
       {data && items.length === 0 && (
         <div className="empty">

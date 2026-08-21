@@ -1,8 +1,7 @@
 /** Does media actually render for the judge and in the feed? Photos and video. */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  seed, check, note, summary, call,
+  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, asOrganizer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -25,7 +24,7 @@ try {
 
   browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await ctx.addCookies([{ name: "organizer", value: PIN, domain: "localhost", path: "/" }]);
+  await asOrganizer(ctx);
   const page = await ctx.newPage();
 
   const failedRequests = [];

@@ -5,8 +5,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  seed, check, note, summary, call,
+  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, asPlayer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -114,7 +113,7 @@ try {
   /* ---- player sees the rejection ---- */
   console.log("\n5. Player-side rejection banner and Retry");
   const pctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await pctx.addInitScript(([p]) => localStorage.setItem("sh.player", JSON.stringify(p)), [{ id: alice.id, name: alice.name }]);
+  await asPlayer(pctx, alice);
   const pp = await pctx.newPage();
   await pp.goto(`${BASE}/submit`, { waitUntil: "networkidle" });
   await pp.waitForTimeout(1000);

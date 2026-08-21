@@ -4,8 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  seed, check, note, summary, call, omit,
+  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, omit, asOrganizer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -31,7 +30,7 @@ try {
 
   browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await ctx.addCookies([{ name: "organizer", value: PIN, domain: "localhost", path: "/" }]);
+  await asOrganizer(ctx);
   const judge = await ctx.newPage();
 
   /* ---- once per team ---- */
@@ -143,7 +142,6 @@ try {
 
   await feed.screenshot({ path: new URL("./shots/feed-heavy.png", import.meta.url).pathname });
 
-  await admin.from("submissions").delete().eq("task_id", task.id);
 } finally {
   if (browser) await browser.close();
   await teardown();

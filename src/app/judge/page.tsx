@@ -223,10 +223,18 @@ function JudgeQueue() {
       {err && <div className="card card-bad tiny bad">{err}</div>}
 
       {!current && !reviewing && (
-        <div className="empty">
-          <b className="good">Queue is empty</b>
-          Nothing waiting. This refreshes on its own.
-        </div>
+        data ? (
+          <div className="empty">
+            <b className="good">Queue is empty</b>
+            Nothing waiting. This refreshes on its own.
+          </div>
+        ) : (
+          // Before the first poll returns, `queue` is empty simply because
+          // nothing has loaded. Rendering the green all-clear here would tell a
+          // judge they were caught up while a backlog was still on its way --
+          // worse than saying nothing, because they might walk away.
+          <p className="muted" style={{ marginTop: 16 }}>Loading…</p>
+        )
       )}
 
       {reviewing && (

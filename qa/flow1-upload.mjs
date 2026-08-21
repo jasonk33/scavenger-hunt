@@ -8,8 +8,7 @@
 import { chromium } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
-  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  check, note, summary, call,
+  BASE, BUCKET, admin, setup, teardown, snapshot, captureSettings, restoreSettings, check, note, summary, call,
 } from "./lib.mjs";
 
 const MEDIA = new URL("./media/", import.meta.url).pathname;
@@ -87,7 +86,7 @@ try {
   check("team denormalized onto the row", subs1[0]?.team_id === fx.teamOf("__qa Red", 1).id);
 
   // the bytes are actually retrievable and are a real JPEG
-  const { data: pub } = admin.storage.from(process.env.SUPABASE_BUCKET || "hunt").getPublicUrl(subs1[0].object_name);
+  const { data: pub } = admin.storage.from(BUCKET).getPublicUrl(subs1[0].object_name);
   const head = await fetch(pub.publicUrl);
   check("media is publicly fetchable", head.ok, String(head.status));
   check("stored content-type is image/jpeg", head.headers.get("content-type")?.includes("image/jpeg"), head.headers.get("content-type"));

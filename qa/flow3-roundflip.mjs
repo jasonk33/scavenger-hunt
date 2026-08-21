@@ -10,8 +10,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  seed, check, note, summary, call,
+  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, asOrganizer, asPlayer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -42,7 +41,7 @@ try {
 
   browser = await chromium.launch();
   const octx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await octx.addCookies([{ name: "organizer", value: PIN, domain: "localhost", path: "/" }]);
+  await asOrganizer(octx);
   const judge = await octx.newPage();
   const adminPage = await octx.newPage();
 
@@ -115,7 +114,7 @@ try {
   /* ================= player mid-flip ================= */
   console.log("\n6. A player who had /submit open when the round flipped");
   const pctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await pctx.addInitScript(([p]) => localStorage.setItem("sh.player", JSON.stringify(p)), [{ id: alice.id, name: alice.name }]);
+  await asPlayer(pctx, alice);
   const pp = await pctx.newPage();
   await pp.goto(`${BASE}/submit`, { waitUntil: "networkidle" });
   await pp.waitForTimeout(6500); // one poll cycle
@@ -138,7 +137,7 @@ try {
   /* ================= two judges racing ================= */
   console.log("\n7. Two judges racing the same submission");
   const octx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await octx2.addCookies([{ name: "organizer", value: PIN, domain: "localhost", path: "/" }]);
+  await asOrganizer(octx2);
   const judge2 = await octx2.newPage();
 
   await judge.goto(`${BASE}/judge?round=1`, { waitUntil: "networkidle" });

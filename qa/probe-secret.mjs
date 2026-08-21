@@ -1,8 +1,7 @@
 /** Secret-challenge reveal: hidden until the organizer says so, then live. */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  check, note, summary, call,
+  BASE, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, asOrganizer, asPlayer, check, note, summary, call,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -23,7 +22,7 @@ try {
 
   browser = await chromium.launch();
   const pctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await pctx.addInitScript(([p]) => localStorage.setItem("sh.player", JSON.stringify(p)), [{ id: alice.id, name: alice.name }]);
+  await asPlayer(pctx, alice);
   const page = await pctx.newPage();
 
   console.log("\n1. Before reveal");
@@ -44,7 +43,7 @@ try {
 
   console.log("\n2. Organizer reveals it");
   const octx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await octx.addCookies([{ name: "organizer", value: PIN, domain: "localhost", path: "/" }]);
+  await asOrganizer(octx);
   const adminPage = await octx.newPage();
   await adminPage.goto(`${BASE}/admin`, { waitUntil: "networkidle" });
   await adminPage.waitForTimeout(1200);
@@ -108,8 +107,7 @@ try {
     realSecrets.every((t) => t.revealed_at === null), JSON.stringify(realSecrets));
 } finally {
   if (browser) await browser.close();
-  await admin.from("submissions").delete().like("object_name", "%__qa%");
-  await admin.from("tasks").delete().like("title", "__qa%");
+  await teardownTasks();
   await teardown();
   await restoreSettings(settingsBefore);
   const after = await snapshot();

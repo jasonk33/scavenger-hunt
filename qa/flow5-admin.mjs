@@ -4,8 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  seed, check, note, summary, call, omit,
+  BASE, PIN, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, omit, asOrganizer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -21,7 +20,7 @@ try {
 
   browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await ctx.addCookies([{ name: "organizer", value: PIN, domain: "localhost", path: "/" }]);
+  await asOrganizer(ctx);
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -163,7 +162,7 @@ try {
   check("no uncaught page errors on admin", errors.length === 0, errors.join(" | "));
 } finally {
   if (browser) await browser.close();
-  await admin.from("tasks").delete().like("title", "__qa%");
+  await teardownTasks();
   await teardown();
   await restoreSettings(settingsBefore);
   const after = await snapshot();

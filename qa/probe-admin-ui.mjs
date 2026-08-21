@@ -1,8 +1,7 @@
 /** Drives the admin screen the way an organizer actually taps it. */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  check, note, summary, call,
+  BASE, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, asOrganizer, check, note, summary, call,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -20,7 +19,7 @@ try {
 
   browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await ctx.addCookies([{ name: "organizer", value: PIN, domain: "localhost", path: "/" }]);
+  await asOrganizer(ctx);
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -108,7 +107,7 @@ try {
   check("no uncaught page errors while driving admin", errors.length === 0, errors.join(" | "));
 } finally {
   if (browser) await browser.close();
-  await admin.from("tasks").delete().like("title", "__qa%");
+  await teardownTasks();
   await teardown();
   await restoreSettings(settingsBefore);
   const after = await snapshot();

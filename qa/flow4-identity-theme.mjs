@@ -4,8 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  seed, check, note, summary, call,
+  BASE, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -203,7 +202,7 @@ try {
   await admin.from("tasks").delete().eq("id", doomedId);
 } finally {
   if (browser) await browser.close();
-  await admin.from("tasks").delete().like("title", "__qa%");
+  await teardownTasks();
   await teardown();
   await restoreSettings(settingsBefore);
   const after = await snapshot();

@@ -7,8 +7,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  check, note, summary, call,
+  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings, asPlayer, check, note, summary, call,
 } from "./lib.mjs";
 
 const MEDIA = new URL("./media/", import.meta.url).pathname;
@@ -27,8 +26,7 @@ try {
 
   browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await context.addInitScript(([p]) => localStorage.setItem("sh.player", JSON.stringify(p)),
-    [{ id: alice.id, name: alice.name }]);
+  await asPlayer(context, alice);
   const page = await context.newPage();
 
   // The PATCH is issued from inside tus's onSuccess, which is exactly the moment
