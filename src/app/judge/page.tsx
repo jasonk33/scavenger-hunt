@@ -268,15 +268,15 @@ function JudgeQueue() {
                 scoreboard -- usually because the player tapped the wrong name
                 when they joined. */}
             <button
-              className="btn-plain"
+              className="btn-plain nowrap name"
               style={{ fontWeight: 700 }}
               onClick={() => setReassigning((v) => !v)}
               title="Wrong team? Tap to move it"
             >
               {current.teamName}
             </button>
-            <span className="muted tiny nowrap grow">{current.playerName}</span>
-            <span className="pill pill-solid">{current.taskPoints} pts</span>
+            <span className="muted tiny nowrap name">{current.playerName}</span>
+            <span className="pill pill-solid push">{current.taskPoints} pts</span>
           </div>
 
           {reassigning && (

@@ -200,6 +200,18 @@ h2 {
 .push {
   margin-left: auto;
 }
+
+/* A name sharing a row with another name -- a team's alongside a player's.
+   Without this the longer one claims its full width first and the other is left
+   with the remainder, which on a 390px phone showed a player their own name as
+   "E." and gave the feed and judge cards a player name zero pixels wide. Each
+   name instead shrinks in proportion to its own length, so the longest gives up
+   the most, and none drops below a readable floor. Pair with .nowrap so the loss
+   is an ellipsis. */
+.name {
+  flex: 0 1 auto;
+  min-width: 3.5rem;
+}
 .stack {
   display: grid;
   gap: 8px;
@@ -223,6 +235,12 @@ h2 {
   padding: 14px;
   margin: 12px 0;
   box-shadow: var(--shadow);
+  /* Cards are laid out in a grid on the feed, and a grid item defaults to
+     min-width:auto -- so a card containing a long unbreakable name pushes itself
+     wider than its track and scrolls the whole page sideways on a narrow phone.
+     For a card in normal flow this is already the effective value, so it only
+     bites where the card is a flex or grid item. */
+  min-width: 0;
 }
 .card-flat {
   margin: 0;

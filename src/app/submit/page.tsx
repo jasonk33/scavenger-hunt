@@ -275,41 +275,46 @@ export default function SubmitPage() {
       {/* Tapping your own name switches player. Mis-taps on the join list are
           the realistic mistake here, and picking the wrong name can put you on
           the wrong TEAM -- which means your uploads credit the wrong
-          scoreboard. So this has to be obvious, not buried at the bottom. */}
-      <header className="row" style={{ margin: "18px 0 8px" }}>
+          scoreboard. So this has to be obvious, not buried at the bottom.
+
+          Two lines rather than one: sharing a row with the team pill left a long
+          team name to squeeze the h1, and a player looking at their own name
+          rendered as "E." has no way to tell whether they picked the right
+          person. On its own line the name always fits. */}
+      <header style={{ margin: "18px 0 8px" }}>
         <button
           className="btn-plain row"
           style={{ gap: 8, minHeight: 44 }}
           onClick={() => setSwitching(true)}
           title="Not you? Tap to switch"
         >
-          <h1 className="nowrap" style={{ margin: 0 }}>
-            {me.name}
-          </h1>
+          <h1 style={{ margin: 0 }}>{me.name}</h1>
           <span className="pill muted">switch</span>
         </button>
-        {data?.team ? (
-          // Team colours are organizer-editable, so the label colour is derived
-          // from the swatch rather than assumed to be white.
-          <span
-            className="pill"
-            style={{
-              background: data.team.color,
-              color: inkOn(data.team.color),
-              borderColor: data.team.color,
-            }}
-          >
-            {data.team.name}
-          </span>
-        ) : data ? (
-          <span className="pill pill-warn">no team</span>
-        ) : (
-          // Before the first poll lands `data` is null, which is not the same as
-          // "not on a team". Warning here would tell every player they were
-          // unrostered for as long as the request takes.
-          <span className="pill muted">…</span>
-        )}
-        <span className="muted tiny push">R{data?.settings.round ?? "–"}</span>
+        <div className="row" style={{ marginTop: 2 }}>
+          {data?.team ? (
+            // Team colours are organizer-editable, so the label colour is derived
+            // from the swatch rather than assumed to be white.
+            <span
+              className="pill nowrap name"
+              style={{
+                background: data.team.color,
+                color: inkOn(data.team.color),
+                borderColor: data.team.color,
+              }}
+            >
+              {data.team.name}
+            </span>
+          ) : data ? (
+            <span className="pill pill-warn">no team</span>
+          ) : (
+            // Before the first poll lands `data` is null, which is not the same as
+            // "not on a team". Warning here would tell every player they were
+            // unrostered for as long as the request takes.
+            <span className="pill muted">…</span>
+          )}
+          <span className="muted tiny push">R{data?.settings.round ?? "–"}</span>
+        </div>
       </header>
 
       {switching && (

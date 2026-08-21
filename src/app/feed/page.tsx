@@ -53,9 +53,9 @@ export default function FeedPage() {
           <div key={it.id} className="card" style={{ margin: 0 }}>
             <div className="row" style={{ marginBottom: 10 }}>
               <span className="swatch" style={{ background: it.teamColor }} />
-              <b style={{ fontSize: 15 }}>{it.teamName}</b>
-              <span className="muted tiny nowrap grow">{it.playerName}</span>
-              <span className={`pill${it.starred ? " pill-warn" : ""}`}>
+              <b className="nowrap name" style={{ fontSize: 15 }}>{it.teamName}</b>
+              <span className="muted tiny nowrap name">{it.playerName}</span>
+              <span className={`pill push${it.starred ? " pill-warn" : ""}`}>
                 {it.starred ? "⭐ " : ""}
                 {it.points} pts
               </span>
