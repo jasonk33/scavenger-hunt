@@ -81,21 +81,43 @@ export async function PATCH(req: Request) {
   return json({ ok: true, updated: ids.length });
 }
 
+/**
+ * Deletes the team in BOTH rounds, matching POST and PATCH.
+ *
+ * Removing only the row whose id was passed would leave an invisible twin in
+ * the other round -- still on that round's leaderboard, still in its roster
+ * dropdown -- and would break the copy-roster tool, which pairs rounds by name
+ * and silently drops players whose team has no twin.
+ */
 export async function DELETE(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return fail("id required.");
 
   const sb = db();
+  const { data: team } = await sb.from("teams").select("id,name").eq("id", id).maybeSingle();
+  if (!team) return fail("Team not found.", 404);
+
+  const { data: pair } = await sb.from("teams").select("id").eq("name", team.name);
+  const ids = (pair ?? []).map((t) => t.id);
+  if (!ids.length) return fail("Team not found.", 404);
+
   const { count } = await sb
     .from("submissions")
     .select("id", { count: "exact", head: true })
-    .eq("team_id", id);
+    .in("team_id", ids);
   if (count) {
-    return fail(`That team has ${count} submissions. Deleting it would delete those too.`, 409);
+    return fail(`"${team.name}" has ${count} submission(s). Deleting it would delete those too.`, 409);
   }
 
-  const { error } = await sb.from("teams").delete().eq("id", id);
+  // roster.team_id cascades, so members are silently unassigned. Say so rather
+  // than letting players discover it when they cannot submit.
+  const { count: rostered } = await sb
+    .from("roster")
+    .select("player_id", { count: "exact", head: true })
+    .in("team_id", ids);
+
+  const { error } = await sb.from("teams").delete().in("id", ids);
   if (error) return fail(error.message, 500);
-  return json({ ok: true });
+  return json({ ok: true, deleted: ids.length, unassigned: rostered ?? 0 });
 }

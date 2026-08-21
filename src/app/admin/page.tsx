@@ -437,16 +437,20 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
             <div key={t.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 type="color"
-                value={t.color}
+                defaultValue={t.color}
                 title="Team colour"
-                onChange={(e) =>
-                  run(() =>
-                    api("/api/admin/teams", {
-                      method: "PATCH",
-                      body: JSON.stringify({ id: t.id, color: e.target.value }),
-                    })
-                  )
-                }
+                // onBlur, not onChange: a colour input fires continuously while
+                // the picker is dragged, and each tick would PATCH both rounds.
+                onBlur={(e) => {
+                  if (e.target.value !== t.color) {
+                    run(() =>
+                      api("/api/admin/teams", {
+                        method: "PATCH",
+                        body: JSON.stringify({ id: t.id, color: e.target.value }),
+                      })
+                    );
+                  }
+                }}
                 style={{
                   width: 44,
                   height: 44,
@@ -712,7 +716,11 @@ function TaskEditor({
           style={{ flex: 1 }}
           disabled={!title.trim()}
           onClick={() =>
-            onSave({ title, points, requiresVideo: clip, isSecret: secret, active: true })
+            // Deliberately does NOT send `active`. Sending `active: true` here
+            // would silently un-remove a deactivated task just because someone
+            // fixed its wording -- and would make the Restore button below dead
+            // UI. Removed tasks stay removed until Restore is tapped.
+            onSave({ title, points, requiresVideo: clip, isSecret: secret })
           }
         >
           Save

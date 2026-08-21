@@ -78,7 +78,10 @@ export async function GET(req: Request) {
       teamName: team?.name ?? "(unknown team)",
       teamColor: team?.color ?? "#666",
       playerName: playerById.get(s.player_id)?.name ?? "someone",
-      duplicate: alreadyApproved.has(`${s.team_id}:${s.task_id}`),
+      // Only meaningful for something still waiting: an approved row is itself
+      // in `alreadyApproved`, so testing it here would tell a judge reopening
+      // any past approval that it duplicates itself.
+      duplicate: s.status === "pending" && alreadyApproved.has(`${s.team_id}:${s.task_id}`),
       pointsAwarded: s.points_awarded,
       bonus: s.bonus,
       starred: s.starred,

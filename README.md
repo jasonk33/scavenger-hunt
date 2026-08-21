@@ -13,7 +13,8 @@ No app install, no accounts, no passwords for players.
 ### 1. Supabase
 
 Open the SQL editor in your Supabase project, paste in the whole of
-`supabase/setup.sql`, and run it. That one file creates the tables and the
+`supabase/setup.sql`, and run it. Re-run it after pulling any change that
+touches that file — the schema and the scoring view do not update themselves. That one file creates the tables and the
 scoring view, turns on RLS, makes the `hunt` bucket with a 500 MB limit and the
 right upload policies, and seeds 5 teams per round plus the 79 tasks from the
 source doc. It is safe to re-run.
@@ -36,7 +37,18 @@ npm install
 npm run dev
 ```
 
-### 3. Verify it actually works
+### 3. Load some data to play with (optional)
+
+```bash
+npm run demo          # 16 test players across 4 teams, remixed between rounds
+npm run demo:reset    # remove them again
+```
+
+`demo:reset` also deletes **every submission and every media file** in the
+project, so it refuses to run once real players have submitted anything. Use it
+to clear your own testing before the day.
+
+### 4. Verify it actually works
 
 ```bash
 npm run smoke     # with the dev server running in another terminal
@@ -47,9 +59,15 @@ whole path a phone takes. It also asserts that remixing the roster doesn't move
 Round 1 scores, which is the one bug in this app that would be both silent and
 unrecoverable.
 
+It creates and tears down its own throwaway teams and player, so it is safe to
+run against a project that already has real data. By default it refuses to run
+against anything but localhost, because it briefly switches rounds and closes
+submissions; `npm run smoke -- --allow-prod` overrides that once the event is
+not running.
+
 Open **Admin → health** for the same checks from the browser.
 
-### 4. Deploy
+### 5. Deploy
 
 ```bash
 npx vercel        # first run links the project

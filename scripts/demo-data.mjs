@@ -57,6 +57,34 @@ const R2 = [
 
 const reset = process.argv.includes("--reset");
 
+/*
+ * The reset deletes EVERY submission and every media object in the bucket, and
+ * .env.local points at the same Supabase project the live app uses. Scoping the
+ * player deletion by name is not enough of a guard: run this after the party and
+ * the photos are gone.
+ *
+ * So it refuses once real submissions exist, unless explicitly forced.
+ */
+async function confirmDestructive() {
+  const force = process.argv.includes("--force");
+  const { count } = await db.from("submissions").select("id", { count: "exact", head: true });
+  if (!count || force) return;
+
+  const { data: players } = await db.from("players").select("id").in("name", DEMO_PLAYERS);
+  const demoIds = new Set((players ?? []).map((p) => p.id));
+  const { data: rows } = await db.from("submissions").select("player_id");
+  const real = (rows ?? []).filter((r) => !demoIds.has(r.player_id)).length;
+
+  if (real > 0) {
+    console.error(
+      `\nRefusing to reset: ${real} submission(s) are from real players, not demo ones.\n` +
+        `This would delete all ${count} submission(s) and every file in the bucket.\n` +
+        `Re-run with --force if that is genuinely what you want.\n`
+    );
+    process.exit(1);
+  }
+}
+
 async function wipe() {
   const { data: players } = await db.from("players").select("id,name").in("name", DEMO_PLAYERS);
   const ids = (players ?? []).map((p) => p.id);
@@ -138,7 +166,7 @@ async function seed() {
   );
 }
 
-(reset ? wipe() : seed()).catch((e) => {
+(reset ? confirmDestructive().then(wipe) : seed()).catch((e) => {
   console.error(e.message);
   process.exitCode = 1;
 });

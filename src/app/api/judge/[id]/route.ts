@@ -33,10 +33,19 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const { data: existing } = await sb
     .from("submissions")
-    .select("id,task_points,bonus,starred,status,round,team_id")
+    .select("id,task_points,bonus,starred,status,round,team_id,judged_at")
     .eq("id", id)
     .maybeSingle();
   if (!existing) return fail("Submission not found.", 404);
+
+  /*
+   * Secondary edits (star, bonus, reassign) bump judged_at so the
+   * compare-and-swap below can tell two concurrent edits apart -- but only when
+   * the row has already been judged. Stamping judged_at on a still-pending row
+   * would mark it decided while its status says otherwise.
+   */
+  const touch = (): SubmissionUpdate =>
+    existing.judged_at === null ? {} : { judged_at: new Date().toISOString() };
 
   let patch: SubmissionUpdate;
 
@@ -84,10 +93,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     };
   } else if (action === "star") {
     // Standalone toggle so an award candidate can be flagged without re-judging.
-    patch = { starred: Boolean(body.starred) };
+    if (guardConflict) return guardConflict;
+    patch = { starred: Boolean(body.starred), ...touch() };
   } else if (action === "bonus") {
-    patch = { bonus: Math.min(2, Math.max(0, Math.round(Number(body.bonus ?? 0)) || 0)) };
+    if (guardConflict) return guardConflict;
+    patch = { bonus: Math.min(2, Math.max(0, Math.round(Number(body.bonus ?? 0)) || 0)), ...touch() };
   } else if (action === "reset") {
+    // Deliberately unguarded: "send it back to the queue" is valid from any
+    // state, and it is the recovery action when two judges have collided.
     patch = {
       status: "pending",
       points_awarded: null,
@@ -102,6 +115,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     //
     // The new team must belong to the SAME round as the submission, or the
     // points would land on a team that doesn't exist in that round's standings.
+    if (guardConflict) return guardConflict;
     const teamId = String(body.teamId ?? "");
     if (!teamId) return fail("teamId required.");
     const { data: team } = await sb
@@ -113,18 +127,27 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (team.round !== existing.round) {
       return fail(`That team is in Round ${team.round}, but this is a Round ${existing.round} submission.`, 409);
     }
-    patch = { team_id: teamId };
+    patch = { team_id: teamId, ...touch() };
   } else {
     return fail("Unknown action.");
   }
 
-  const { data, error } = await sb
-    .from("submissions")
-    // Re-assert the status we validated above so two simultaneous approvals
-    // cannot both land; the loser gets 409 instead of overwriting.
-    .update(patch)
-    .eq("id", id)
-    .eq("status", existing.status)
+  /*
+   * Compare-and-swap on status AND judged_at.
+   *
+   * Status alone is not enough once re-review exists: two judges who both
+   * reopen the same *approved* item and both approve are an approved -> approved
+   * transition, so a status-only check matches for both and the second write
+   * silently overwrites the first's bonus and star. judged_at changes on every
+   * decision, so it distinguishes them.
+   */
+  let write = sb.from("submissions").update(patch).eq("id", id).eq("status", existing.status);
+  write =
+    existing.judged_at === null
+      ? write.is("judged_at", null)
+      : write.eq("judged_at", existing.judged_at);
+
+  const { data, error } = await write
     .select("id,status,points_awarded,bonus,starred")
     .maybeSingle();
 

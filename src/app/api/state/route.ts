@@ -93,7 +93,10 @@ export async function GET(req: Request) {
   const approvedTasks = new Set(scored.map((s) => s.task_id));
   const taskTitle = new Map((tasks ?? []).map((t) => [t.id, t.title]));
   const openRejections = mine
-    .filter((s) => s.status === "rejected" && !approvedTasks.has(s.task_id))
+    // Only tasks still in the visible list: a rejection on a task the organizer
+    // has since removed (or an unrevealed secret) would render as "a task" with
+    // a Retry button that does nothing.
+    .filter((s) => s.status === "rejected" && !approvedTasks.has(s.task_id) && taskTitle.has(s.task_id))
     // One entry per task, even if two teammates both got rejected on it.
     .filter((s, i, arr) => arr.findIndex((o) => o.task_id === s.task_id) === i)
     .map((s) => ({

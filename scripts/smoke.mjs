@@ -294,7 +294,7 @@ async function main() {
 
   const overBonus = await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "bonus", bonus: 99 }),
+    body: JSON.stringify({ action: "bonus", bonus: 99, expectedStatus: "approved" }),
   });
   check("bonus is clamped to 2", overBonus.body?.submission?.bonus === 2, String(overBonus.body?.submission?.bonus));
 
@@ -321,7 +321,7 @@ async function main() {
   const otherTeam = teamAlt;
   const reassign = await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "reassign", teamId: otherTeam.id }),
+    body: JSON.stringify({ action: "reassign", teamId: otherTeam.id, expectedStatus: "approved" }),
   });
   check("a submission can be moved to the right team", reassign.status === 200, JSON.stringify(reassign.body));
 
@@ -331,14 +331,14 @@ async function main() {
 
   const crossRoundMove = await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "reassign", teamId: teamB.id }),
+    body: JSON.stringify({ action: "reassign", teamId: teamB.id, expectedStatus: "approved" }),
   });
   check("cross-round reassignment is refused", crossRoundMove.status === 409, `HTTP ${crossRoundMove.status}`);
 
   // Put it back so the remix assertions below measure team A.
   await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "reassign", teamId: teamA.id }),
+    body: JSON.stringify({ action: "reassign", teamId: teamA.id, expectedStatus: "approved" }),
   });
 
   // Editing a task's wording and value must not rescore anything already judged.
@@ -391,6 +391,21 @@ async function main() {
     body: JSON.stringify({ action: "approve", bonus: 2, starred: true, expectedStatus: "rejected" }),
   });
   check("a rejected submission can be re-reviewed and approved", back.status === 200, JSON.stringify(back.body));
+
+  // Changing an already-approved call again (raising the bonus, say) must work:
+  // approved -> approved is a legitimate transition, not a collision.
+  const again = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "approve", bonus: 1, expectedStatus: "approved" }),
+  });
+  check("an approved item can be re-reviewed again", again.status === 200, JSON.stringify(again.body));
+  check("the changed bonus took effect", again.body?.submission?.bonus === 1, String(again.body?.submission?.bonus));
+
+  // Restore the bonus the remaining assertions expect.
+  await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "bonus", bonus: 2, expectedStatus: "approved" }),
+  });
 
   const clearedState = (await call(`/api/state?playerId=${playerId}&_=${Date.now()}`)).body;
   check(
