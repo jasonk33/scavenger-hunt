@@ -29,19 +29,12 @@ export default function FeedPage() {
     <>
       <h1>Feed</h1>
 
-      <div className="row" style={{ marginBottom: 12 }}>
-        <div className="seg">
-          {[1, 2].map((r) => (
-            <button key={r} className={shown === r ? "on" : ""} onClick={() => setRound(r)}>
-              Round {r}
-            </button>
-          ))}
-        </div>
-        {items.length > 0 && (
-          <span className="muted tiny push">
-            {items.length} approved
-          </span>
-        )}
+      <div className="seg" style={{ marginBottom: 12 }}>
+        {[1, 2].map((r) => (
+          <button key={r} className={shown === r ? "on" : ""} onClick={() => setRound(r)}>
+            Round {r}
+          </button>
+        ))}
       </div>
 
       {data && items.length === 0 && (

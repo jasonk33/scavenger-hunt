@@ -64,11 +64,9 @@ export default function JoinPage() {
 
   return (
     <>
-      {data?.eventName && (
-        <div className="eyebrow" style={{ margin: "22px 0 0" }}>
-          {data.eventName}
-        </div>
-      )}
+      {/* Falsy until the first poll lands, so the h1 keeps its full top margin
+          while loading rather than hugging the nav. */}
+      {data?.eventName && <div className="eyebrow" style={{ margin: "22px 0 0" }}>{data.eventName}</div>}
       <h1 style={{ marginTop: data?.eventName ? 4 : 22 }}>Who are you?</h1>
       <p className="lede">Tap your name. You can change it later if you tap the wrong one.</p>
 

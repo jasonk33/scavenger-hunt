@@ -52,14 +52,16 @@ export default function LeaderboardPage() {
       {error && <div className="card card-bad tiny bad">Connection hiccup — retrying.</div>}
 
       <div className="stack">
-        {rows.map((r, i) => {
+        {rows.map((r) => {
           // Ties genuinely share the lead, so this highlights every team on the
-          // top score rather than whichever one sorted first.
+          // top score rather than whichever one sorted first -- and they share a
+          // position number too, so two tied teams don't read as 1st and 2nd.
           const top = lead > 0 && r.points === lead;
+          const place = rows.findIndex((x) => x.points === r.points) + 1;
           return (
             <div key={r.teamId} className={`card card-flat${top ? " card-accent" : ""}`}>
               <div className="row">
-                <span className={`rank${top ? " rank-1" : ""}`}>{i + 1}</span>
+                <span className={`rank${top ? " rank-1" : ""}`}>{place}</span>
                 <span className="swatch swatch-lg" style={{ background: r.color }} />
                 <div className="grow">
                   <div className="nowrap" style={{ fontWeight: 700 }}>

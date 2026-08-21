@@ -35,7 +35,6 @@
   --notice-ink: #4a3308;
   --nav-bg: rgba(246, 247, 249, 0.88);
   --shadow: 0 1px 2px rgba(16, 19, 26, 0.05), 0 1px 3px rgba(16, 19, 26, 0.04);
-  --shadow-lg: 0 2px 4px rgba(16, 19, 26, 0.05), 0 8px 24px rgba(16, 19, 26, 0.08);
   color-scheme: light;
 }
 
@@ -62,7 +61,6 @@
     --notice-ink: #f6e3b4;
     --nav-bg: rgba(15, 18, 22, 0.88);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
-    --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.45);
     color-scheme: dark;
   }
 }
@@ -87,7 +85,6 @@
   --notice-ink: #f6e3b4;
   --nav-bg: rgba(15, 18, 22, 0.88);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
 
@@ -251,8 +248,9 @@ h2 {
   background: var(--good-weak);
 }
 
-/* Same tint at a 1px border, for use inside long lists where a 2px border on
-   some rows and not others reads as misalignment. */
+/* Same tint at a 1px border. Used for the many approved rows in the long task
+   list, where thickening dozens of borders would read as noise; .card-accent's
+   2px is for a single highlighted row or a standalone alert. */
 .card-done {
   border-color: var(--good);
   background: var(--good-weak);
@@ -268,8 +266,12 @@ h2 {
 }
 .empty b {
   display: block;
-  color: var(--ink);
   margin-bottom: 4px;
+}
+/* Zero specificity on the colour so a status class on the headline -- e.g.
+   <b className="good"> on the judge's empty queue -- still wins. */
+:where(.empty) b {
+  color: var(--ink);
 }
 
 /* ---- Buttons ----------------------------------------------------------- */
@@ -627,20 +629,24 @@ h2 {
 
 /* A fixed box for every photo and clip. Without it, cards grow as each image
    decodes and the whole feed jumps under your thumb -- and on the judge screen
-   the Approve button moves between submissions, which is worse.
-   Capped by height first, then width derived from it, so a wide desktop window
-   doesn't stretch the box sideways and letterbox portrait phone photos into a
-   thin strip. */
+   the Approve button moves between submissions, which is worse. */
 .media-box {
   position: relative;
   width: 100%;
   aspect-ratio: 4 / 5;
   max-height: 62vh;
-  max-width: calc(62vh * 0.8);
   margin-inline: auto;
   background: #000;
   border-radius: 10px;
   overflow: hidden;
+}
+/* Only once there is width to spare: derive the width cap from the height cap
+   so a wide window can't stretch the box sideways and squeeze a portrait phone
+   photo into a thin strip. Below this, the box stays full width. */
+@media (min-width: 560px) {
+  .media-box {
+    max-width: calc(62vh * 0.8);
+  }
 }
 .media {
   width: 100%;
