@@ -45,7 +45,6 @@ type State = {
   };
   rejections: Rejection[];
   upload: { endpoint: string; anonKey: string; bucket: string };
-  configOk: boolean;
 };
 
 type Job = {
@@ -259,6 +258,10 @@ export default function SubmitPage() {
 
   const s = data?.stats;
   const closed = data && !data.settings.submissions_open;
+  // One gate, two buttons: the retry button on a rejection and every task row's
+  // Upload button open the same file picker, so they must agree about when that
+  // is allowed. Written out twice they agreed only by copy-paste.
+  const uploadBlocked = Boolean(closed) || !data?.team || job?.status === "uploading";
 
   return (
     <>
@@ -389,7 +392,7 @@ export default function SubmitPage() {
                 </div>
                 <button
                   className="btn btn-sm"
-                  disabled={Boolean(closed) || !data?.team || job?.status === "uploading"}
+                  disabled={uploadBlocked}
                   onClick={() => {
                     const task = data?.tasks.find((x) => x.id === r.taskId);
                     if (task) pickFor(task);
@@ -434,7 +437,7 @@ export default function SubmitPage() {
                 key={t.id}
                 task={t}
                 subs={byTask.get(t.id) ?? []}
-                disabled={Boolean(closed) || !data?.team || job?.status === "uploading"}
+                disabled={uploadBlocked}
                 onPick={() => pickFor(t)}
               />
             ))}

@@ -29,7 +29,6 @@ type Queue = {
   teams: Array<{ id: string; name: string; color: string }>;
   queue: Item[];
   recent: Item[];
-  pendingCount: number;
   otherRoundPending: number;
 };
 

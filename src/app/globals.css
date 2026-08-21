@@ -207,8 +207,13 @@ h2 {
    "E." and gave the feed and judge cards a player name zero pixels wide. Each
    name instead shrinks in proportion to its own length, so the longest gives up
    the most, and none drops below a readable floor. Pair with .nowrap so the loss
-   is an ellipsis. */
-.name {
+   is an ellipsis.
+
+   Scoped to `.row` deliberately: the judge screen's team name is a `.btn-plain`
+   button, and .btn-plain sets `min-width: 0`. As a bare `.name` the two would
+   tie on specificity and the floor would silently lose on source order -- which
+   is exactly the starvation this rule exists to prevent. */
+.row .name {
   flex: 0 1 auto;
   min-width: 3.5rem;
 }

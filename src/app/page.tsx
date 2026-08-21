@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { getMe, inkOn, setMe, usePoll } from "@/lib/client";
 
 type PlayersResponse = {
-  round: number;
   eventName: string;
   players: Array<{ id: string; name: string; team: { name: string; color: string } | null }>;
 };
