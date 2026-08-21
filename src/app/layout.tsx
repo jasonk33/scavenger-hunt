@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Nav from "@/components/Nav";
 import Notice from "@/components/Notice";
+import { THEME_SCRIPT } from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
   title: "Scavenger Hunt",
@@ -14,12 +15,20 @@ export const viewport: Viewport = {
   // Zoom stays enabled deliberately: someone will need to squint at a task in
   // bright sun, and locking zoom to look tidy is a bad trade.
   maximumScale: 5,
-  themeColor: "#f6f7f9",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f6f7f9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0f1216" },
+  ],
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Applies a saved theme before first paint. Without this, a phone set
+            to dark mode flashes white on every navigation. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
         <Nav />
         <Notice />

@@ -13,6 +13,7 @@ type Item = {
   taskPoints: number;
   requiresVideo: boolean;
   isSecret: boolean;
+  teamId: string;
   teamName: string;
   teamColor: string;
   playerName: string;
@@ -25,6 +26,7 @@ type Item = {
 
 type Queue = {
   round: number;
+  teams: Array<{ id: string; name: string; color: string }>;
   queue: Item[];
   recent: Item[];
   pendingCount: number;
@@ -56,18 +58,25 @@ export default function JudgePage() {
 
   if (authed === null) return <p className="muted" style={{ marginTop: 24 }}>Checking…</p>;
 
+  // This is the only door into the organizer screens, so it says what is behind
+  // it. Players will land here by tapping "Organizer" out of curiosity; the PIN
+  // is what stops them, not obscurity.
   if (!authed) {
     return (
       <div className="card" style={{ marginTop: 24 }}>
-        <b>Organizer PIN</b>
+        <b>Organizer</b>
+        <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
+          Judging and event setup. Players don&apos;t need this.
+        </p>
         <input
           className="field"
           type="password"
           inputMode="numeric"
+          placeholder="PIN"
           value={pin}
           onChange={(e) => setPin(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && login()}
-          style={{ margin: "10px 0" }}
+          style={{ marginBottom: 10 }}
         />
         {pinError && <p className="bad tiny">{pinError}</p>}
         <button className="btn btn-primary btn-wide" onClick={login}>
@@ -93,6 +102,11 @@ function JudgeQueue() {
   const [bonus, setBonus] = useState(0);
   const [star, setStar] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
+  // When set, the review card shows this already-judged item instead of the
+  // head of the queue, so any past call can be reopened and changed.
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  const [historyQ, setHistoryQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   // Judged locally but not yet reflected in a poll -- keeps the screen from
@@ -103,17 +117,34 @@ function JudgeQueue() {
     () => (data?.queue ?? []).filter((i) => !done.has(i.id)),
     [data, done]
   );
-  const current = queue[0];
-  const next = queue[1];
+  const history = useMemo(() => data?.recent ?? [], [data]);
+  const reviewing = reviewId ? history.find((h) => h.id === reviewId) ?? null : null;
+  const current = reviewing ?? queue[0];
+  const next = reviewing ? undefined : queue[1];
   const otherRoundPending = data?.otherRoundPending ?? 0;
+
+  const filteredHistory = useMemo(() => {
+    const needle = historyQ.trim().toLowerCase();
+    if (!needle) return history;
+    return history.filter(
+      (h) =>
+        h.taskTitle.toLowerCase().includes(needle) ||
+        h.teamName.toLowerCase().includes(needle) ||
+        h.playerName.toLowerCase().includes(needle)
+    );
+  }, [history, historyQ]);
 
   // Reset the per-item controls whenever the item changes, so a bonus meant for
   // the last submission never lands on the next one.
   useEffect(() => {
-    setBonus(0);
-    setStar(false);
+    // Seed from the existing decision when reopening a judged item, so tapping
+    // "Update" doesn't silently wipe a bonus or an award flag.
+    setBonus(current?.status === "approved" ? (current.bonus ?? 0) : 0);
+    setStar(Boolean(current?.starred));
     setRejecting(false);
+    setReassigning(false);
     setErr("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id]);
 
   const decide = async (body: Record<string, unknown>) => {
@@ -122,8 +153,15 @@ function JudgeQueue() {
     setErr("");
     const id = current.id;
     try {
-      await api(`/api/judge/${id}`, { method: "POST", body: JSON.stringify(body) });
-      setDone((d) => new Set(d).add(id));
+      // expectedStatus is what makes re-reviewing safe: the server accepts the
+      // change only if the row is still in the state this screen last saw, so a
+      // deliberate correction goes through but a stale second judge is refused.
+      await api(`/api/judge/${id}`, {
+        method: "POST",
+        body: JSON.stringify({ expectedStatus: current.status, ...body }),
+      });
+      if (reviewing) setReviewId(null);
+      else setDone((d) => new Set(d).add(id));
       reload();
     } catch (e) {
       setErr(errorMessage(e, "Failed"));
@@ -134,7 +172,10 @@ function JudgeQueue() {
 
   const undo = async (id: string) => {
     try {
-      await api(`/api/judge/${id}`, { method: "POST", body: JSON.stringify({ action: "reset" }) });
+      await api(`/api/judge/${id}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "reset" }),
+      });
       setDone((d) => {
         const n = new Set(d);
         n.delete(id);
@@ -177,7 +218,7 @@ function JudgeQueue() {
 
       {err && <div className="card bad tiny">{err}</div>}
 
-      {!current && (
+      {!current && !reviewing && (
         <div className="card">
           <b className="good">Queue is empty.</b>
           <p className="muted tiny" style={{ margin: "4px 0 0" }}>
@@ -186,16 +227,105 @@ function JudgeQueue() {
         </div>
       )}
 
+      {reviewing && (
+        <div className="card" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <b>Re-reviewing</b>
+            <span
+              className="pill"
+              style={{
+                borderColor: reviewing.status === "approved" ? "var(--good)" : "var(--bad)",
+                color: reviewing.status === "approved" ? "var(--good)" : "var(--bad)",
+              }}
+            >
+              currently{" "}
+              {reviewing.status === "approved"
+                ? `approved +${(reviewing.pointsAwarded ?? 0) + reviewing.bonus}`
+                : "rejected"}
+            </span>
+            <button
+              className="btn btn-sm"
+              style={{ marginLeft: "auto" }}
+              onClick={() => setReviewId(null)}
+            >
+              Back to queue
+            </button>
+          </div>
+          <p className="muted tiny" style={{ margin: "6px 0 0" }}>
+            Approving or rejecting below replaces the earlier call. The team sees the change on
+            their next refresh.
+          </p>
+        </div>
+      )}
+
       {current && (
         <div className="card">
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: current.teamColor }} />
-            <b>{current.teamName}</b>
+            {/* Tap the team name to move a submission that landed on the wrong
+                scoreboard -- usually because the player tapped the wrong name
+                when they joined. */}
+            <button
+              onClick={() => setReassigning((v) => !v)}
+              style={{
+                background: "none",
+                border: 0,
+                padding: 0,
+                font: "inherit",
+                fontWeight: 700,
+                color: "var(--ink)",
+                cursor: "pointer",
+              }}
+              title="Wrong team? Tap to move it"
+            >
+              {current.teamName}
+            </button>
             <span className="muted tiny">{current.playerName}</span>
             <span className="pill" style={{ marginLeft: "auto" }}>
               {current.taskPoints} pts
             </span>
           </div>
+
+          {reassigning && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              <span className="muted tiny" style={{ width: "100%" }}>
+                Move this submission to:
+              </span>
+              {(data?.teams ?? [])
+                .filter((tm) => tm.id !== current.teamId)
+                .map((tm) => (
+                  <button
+                    key={tm.id}
+                    className="btn btn-sm"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await api(`/api/judge/${current.id}`, {
+                          method: "POST",
+                          body: JSON.stringify({
+                            action: "reassign",
+                            teamId: tm.id,
+                            expectedStatus: current.status,
+                          }),
+                        });
+                        setReassigning(false);
+                        reload();
+                      } catch (e) {
+                        setErr(errorMessage(e, "Failed"));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    {tm.name}
+                  </button>
+                ))}
+              <button className="btn btn-sm" onClick={() => setReassigning(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
 
           <div style={{ fontWeight: 700, fontSize: 19, marginBottom: 8 }}>{current.taskTitle}</div>
 
@@ -264,7 +394,8 @@ function JudgeQueue() {
                   disabled={busy}
                   onClick={() => decide({ action: "approve", bonus, starred: star })}
                 >
-                  Approve {current.taskPoints + bonus}
+                  {reviewing?.status === "approved" ? "Update to" : "Approve"}{" "}
+                  {current.taskPoints + bonus}
                 </button>
                 <button
                   className="btn btn-bad"
@@ -308,17 +439,35 @@ function JudgeQueue() {
         </div>
       )}
 
-      {(data?.recent ?? []).length > 0 && (
+      {history.length > 0 && (
         <>
           <h2 className="muted" style={{ fontSize: 15, margin: "20px 0 6px" }}>
-            Just judged
+            Judged this round ({history.length}) — tap any to change it
           </h2>
+
+          {history.length > 8 && (
+            <input
+              className="field"
+              placeholder="Search by task, team or player"
+              value={historyQ}
+              onChange={(e) => setHistoryQ(e.target.value)}
+              style={{ marginBottom: 8 }}
+            />
+          )}
+
           <div style={{ display: "grid", gap: 6 }}>
-            {(data?.recent ?? []).map((r) => (
+            {filteredHistory.map((r) => (
               <div
                 key={r.id}
                 className="card"
-                style={{ margin: 0, padding: 10, display: "flex", gap: 10, alignItems: "center" }}
+                style={{
+                  margin: 0,
+                  padding: 10,
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  borderColor: r.id === reviewId ? "var(--accent)" : undefined,
+                }}
               >
                 <span
                   className="pill"
@@ -329,21 +478,47 @@ function JudgeQueue() {
                 >
                   {r.status === "approved" ? `+${(r.pointsAwarded ?? 0) + r.bonus}` : "✗"}
                 </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <button
+                  onClick={() => {
+                    setReviewId(r.id);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    background: "none",
+                    border: 0,
+                    padding: 0,
+                    color: "var(--ink)",
+                    cursor: "pointer",
+                  }}
+                >
                   <div
                     className="tiny"
-                    style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    style={{
+                      fontWeight: 600,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
                   >
                     {r.starred ? "⭐ " : ""}
                     {r.taskTitle}
                   </div>
-                  <div className="muted tiny">{r.teamName}</div>
-                </div>
-                <button className="btn btn-sm" onClick={() => undo(r.id)}>
+                  <div className="muted tiny">
+                    {r.teamName}
+                    {r.status === "rejected" && r.rejectReason ? ` · ${r.rejectReason}` : ""}
+                  </div>
+                </button>
+                <button className="btn btn-sm" onClick={() => undo(r.id)} title="Send back to the queue">
                   Undo
                 </button>
               </div>
             ))}
+            {filteredHistory.length === 0 && (
+              <span className="muted tiny">Nothing matches that.</span>
+            )}
           </div>
         </>
       )}

@@ -81,7 +81,9 @@ async function call(path, init = {}) {
 }
 
 const NAME = `__smoke_${Date.now()}`;
-let playerId, teamA, teamB, taskId, submissionId, objectName;
+const TEAM_A = "__smoke Team A";
+const TEAM_B = "__smoke Team B";
+let playerId, teamA, teamB, teamAlt, taskId, submissionId, objectName;
 // Captured before the test mutates anything, so the restore in `finally` always
 // has something to put back even if main() throws on its first statement.
 let settingsBefore = null;
@@ -116,6 +118,7 @@ async function cleanup() {
       await admin.from("roster").delete().eq("player_id", playerId);
       await admin.from("players").delete().eq("id", playerId);
     }
+    await admin.from("teams").delete().in("name", [TEAM_A, TEAM_B]);
   } catch (e) {
     console.log("  (cleanup warning)", e.message);
   }
@@ -136,15 +139,36 @@ async function main() {
   for (const c of health.body?.checks ?? []) check(`health: ${c.name}`, c.ok, c.detail);
 
   // --- fixtures -----------------------------------------------------------
-  const data = (await call("/api/admin/data")).body;
-  const r1Teams = data.teams.filter((t) => t.round === 1);
-  const r2Teams = data.teams.filter((t) => t.round === 2);
-  check("round 1 teams seeded", r1Teams.length >= 2, `${r1Teams.length} found`);
-  check("round 2 teams seeded", r2Teams.length >= 1, `${r2Teams.length} found`);
-  if (r1Teams.length < 2 || !r2Teams.length) throw new Error("Seed data missing — run 03-seed.sql");
+  const seeded = (await call("/api/admin/data")).body;
+  check("round 1 teams seeded", seeded.teams.filter((t) => t.round === 1).length >= 2);
+  check("round 2 teams seeded", seeded.teams.filter((t) => t.round === 2).length >= 1);
+  check("tasks seeded", seeded.tasks.length > 0, `${seeded.tasks.length} tasks`);
+  if (!seeded.tasks.length) throw new Error("Seed data missing — run supabase/setup.sql");
 
-  teamA = r1Teams[0];
-  teamB = r2Teams.find((t) => t.name !== teamA.name) ?? r2Teams[0];
+  /*
+   * The test scores against its OWN throwaway teams, never the real ones.
+   *
+   * Reusing a real team means every absolute assertion below ("the team now has
+   * 3 points") silently becomes wrong the moment anyone plays with the app for
+   * real -- and it reports as an app bug when it is only contamination. Fresh
+   * teams start at zero and nothing else ever writes to them.
+   */
+  await admin.from("teams").upsert(
+    [
+      { round: 1, name: TEAM_A, color: "#111111", sort_order: 9001 },
+      { round: 2, name: TEAM_A, color: "#111111", sort_order: 9001 },
+      { round: 1, name: TEAM_B, color: "#222222", sort_order: 9002 },
+      { round: 2, name: TEAM_B, color: "#222222", sort_order: 9002 },
+    ],
+    { onConflict: "round,name", ignoreDuplicates: true }
+  );
+
+  const data = (await call("/api/admin/data")).body;
+  teamA = data.teams.find((t) => t.round === 1 && t.name === TEAM_A);
+  teamB = data.teams.find((t) => t.round === 2 && t.name === TEAM_B);
+  teamAlt = data.teams.find((t) => t.round === 1 && t.name === TEAM_B);
+  check("created isolated test teams", Boolean(teamA && teamB && teamAlt));
+  if (!teamA || !teamB || !teamAlt) throw new Error("Could not create test teams");
 
   const settingsBackup = data.settings;
   settingsBefore = settingsBackup;
@@ -290,6 +314,98 @@ async function main() {
     (r) => r.id === submissionId
   );
   check("the first decision survived the race", stillApproved?.status === "approved", stillApproved?.status);
+
+  // A player who tapped the wrong name on the join screen lands on the wrong
+  // team, so the judge must be able to move the submission. It must NOT be
+  // movable to a team from the other round.
+  const otherTeam = teamAlt;
+  const reassign = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reassign", teamId: otherTeam.id }),
+  });
+  check("a submission can be moved to the right team", reassign.status === 200, JSON.stringify(reassign.body));
+
+  const movedBoard = (await call("/api/leaderboard?round=1")).body;
+  const movedTo = movedBoard.rows.find((r) => r.teamId === otherTeam.id);
+  check("the points followed the reassignment", (movedTo?.points ?? 0) >= taskPoints, `${movedTo?.points}`);
+
+  const crossRoundMove = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reassign", teamId: teamB.id }),
+  });
+  check("cross-round reassignment is refused", crossRoundMove.status === 409, `HTTP ${crossRoundMove.status}`);
+
+  // Put it back so the remix assertions below measure team A.
+  await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reassign", teamId: teamA.id }),
+  });
+
+  // Editing a task's wording and value must not rescore anything already judged.
+  const renamed = await call("/api/admin/tasks", {
+    method: "PATCH",
+    body: JSON.stringify({ id: taskId, points: taskPoints === 10 ? 1 : 10 }),
+  });
+  check("a task's point value can be edited", renamed.status === 200, JSON.stringify(renamed.body));
+
+  const afterEdit = (await call("/api/leaderboard?round=1")).body.rows.find(
+    (r) => r.teamId === teamA.id
+  );
+  check(
+    "editing a task does not rescore what was already judged",
+    afterEdit?.points === taskPoints + 2,
+    `expected ${taskPoints + 2}, got ${afterEdit?.points}`
+  );
+  await call("/api/admin/tasks", {
+    method: "PATCH",
+    body: JSON.stringify({ id: taskId, points: taskPoints }),
+  });
+
+  // --- re-review and rejection visibility ---------------------------------
+  // Changing a call you got wrong must be possible at any point, and the team
+  // has to find out they were rejected or they will never redo it.
+  const flip = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reject", reason: "changed my mind", expectedStatus: "approved" }),
+  });
+  check("an approved submission can be re-reviewed and rejected", flip.status === 200, JSON.stringify(flip.body));
+
+  const stale = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "approve", expectedStatus: "pending" }),
+  });
+  check("a stale judge is still refused after a re-review", stale.status === 409, `HTTP ${stale.status}`);
+
+  const rejectedState = (await call(`/api/state?playerId=${playerId}&_=${Date.now()}`)).body;
+  const seen = (rejectedState.rejections ?? []).find((r) => r.taskId === taskId);
+  check("the team is told which task was rejected", Boolean(seen), JSON.stringify(rejectedState.rejections));
+  check("the rejection carries the reason", seen?.reason === "changed my mind", seen?.reason);
+
+  const zeroed = (await call("/api/leaderboard?round=1")).body.rows.find(
+    (r) => r.teamId === teamA.id
+  );
+  check("a re-review removes the points", zeroed?.points === 0, `${zeroed?.points}`);
+
+  const back = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "approve", bonus: 2, starred: true, expectedStatus: "rejected" }),
+  });
+  check("a rejected submission can be re-reviewed and approved", back.status === 200, JSON.stringify(back.body));
+
+  const clearedState = (await call(`/api/state?playerId=${playerId}&_=${Date.now()}`)).body;
+  check(
+    "the rejection notice clears once the task is approved",
+    !(clearedState.rejections ?? []).some((r) => r.taskId === taskId),
+    JSON.stringify(clearedState.rejections)
+  );
+
+  const restored = (await call("/api/leaderboard?round=1")).body.rows.find(
+    (r) => r.teamId === teamA.id
+  );
+  check("the points come back", restored?.points === taskPoints + 2, `${restored?.points}`);
+
+  const judged = (await call("/api/judge/queue?round=1")).body.recent;
+  check("judged items stay reachable for re-review", judged.some((r) => r.id === submissionId));
 
   const board1 = (await call("/api/leaderboard?round=1")).body;
   const rowA = board1.rows.find((r) => r.teamId === teamA.id);

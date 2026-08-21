@@ -22,6 +22,14 @@ type Sub = {
   reject_reason: string | null;
 };
 
+type Rejection = {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  reason: string | null;
+  at: string;
+};
+
 type State = {
   settings: { round: number; submissions_open: boolean; event_name: string };
   me: Me | null;
@@ -35,6 +43,7 @@ type State = {
     rejected: number;
     points: number;
   };
+  rejections: Rejection[];
   upload: { endpoint: string; anonKey: string; bucket: string };
   configOk: boolean;
 };
@@ -54,6 +63,7 @@ export default function SubmitPage() {
   const [me, setMeState] = useState<Me | null>(null);
   const [q, setQ] = useState("");
   const [job, setJob] = useState<Job | null>(null);
+  const [switching, setSwitching] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingTask = useRef<Task | null>(null);
   const handle = useRef<UploadHandle | null>(null);
@@ -252,9 +262,32 @@ export default function SubmitPage() {
         style={{ display: "none" }}
       />
 
-      <header style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "16px 0 6px" }}>
-        <h1 style={{ fontSize: 26, margin: 0 }}>{me.name}</h1>
+      {/* Tapping your own name switches player. Mis-taps on the join list are
+          the realistic mistake here, and picking the wrong name can put you on
+          the wrong TEAM -- which means your uploads credit the wrong
+          scoreboard. So this has to be obvious, not buried at the bottom. */}
+      <header style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0 6px" }}>
+        <button
+          onClick={() => setSwitching(true)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "none",
+            border: 0,
+            padding: 0,
+            color: "var(--ink)",
+            cursor: "pointer",
+            minWidth: 0,
+          }}
+          title="Not you? Tap to switch"
+        >
+          <h1 style={{ fontSize: 26, margin: 0 }}>{me.name}</h1>
+          <span className="pill muted">switch</span>
+        </button>
         {data?.team ? (
+          // Team colours are fixed values from the plan and are all dark enough
+          // for white text in either theme.
           <span
             className="pill"
             style={{ background: data.team.color, color: "#fff", borderColor: data.team.color }}
@@ -265,9 +298,35 @@ export default function SubmitPage() {
           <span className="pill warn">no team</span>
         )}
         <span className="muted tiny" style={{ marginLeft: "auto" }}>
-          Round {data?.settings.round ?? "–"}
+          R{data?.settings.round ?? "–"}
         </span>
       </header>
+
+      {switching && (
+        <div className="card" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
+          <b>You&apos;re submitting as {me.name}</b>
+          <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
+            {s && s.submitted > 0
+              ? `${s.submitted} submission${s.submitted === 1 ? "" : "s"} already went in under this name. Switching won't move those — ask an organizer if any of them are on the wrong team.`
+              : "Nothing has been submitted under this name yet, so switching is clean."}
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="btn btn-sm btn-primary"
+              style={{ flex: 1 }}
+              onClick={() => {
+                setMe(null);
+                router.replace("/");
+              }}
+            >
+              Pick a different name
+            </button>
+            <button className="btn btn-sm" onClick={() => setSwitching(false)}>
+              Stay
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && <div className="card bad tiny">Connection hiccup — retrying. ({error})</div>}
 
@@ -293,6 +352,39 @@ export default function SubmitPage() {
           <Stat label="scored" value={s.approved} />
           <Stat label="waiting" value={s.pending} />
           {s.rejected > 0 && <Stat label="rejected" value={s.rejected} />}
+        </div>
+      )}
+
+      {/* A rejected team that isn't told has simply lost those points -- they
+          will never know to redo it. This sits above the task list until the
+          task gets an approved submission, at which point it disappears on its
+          own. Tapping jumps to the task so the retry is one action. */}
+      {(data?.rejections ?? []).length > 0 && (
+        <div className="card" style={{ borderColor: "var(--bad)", borderWidth: 2 }}>
+          <b className="bad">
+            {data!.rejections.length} rejected — redo {data!.rejections.length === 1 ? "it" : "them"}{" "}
+            to get the points
+          </b>
+          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+            {data!.rejections.map((r) => (
+              <div key={r.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>{r.taskTitle}</div>
+                  <div className="muted tiny">{r.reason || "No reason given"}</div>
+                </div>
+                <button
+                  className="btn btn-sm"
+                  disabled={Boolean(closed) || !data?.team || job?.status === "uploading"}
+                  onClick={() => {
+                    const task = data?.tasks.find((x) => x.id === r.taskId);
+                    if (task) pickFor(task);
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -330,19 +422,6 @@ export default function SubmitPage() {
         </section>
       ))}
 
-      <p className="muted tiny" style={{ marginTop: 28 }}>
-        Signed in as {me.name}.{" "}
-        <button
-          className="tiny"
-          style={{ background: "none", border: 0, textDecoration: "underline", padding: 0 }}
-          onClick={() => {
-            setMe(null);
-            router.replace("/");
-          }}
-        >
-          Not you?
-        </button>
-      </p>
     </>
   );
 }

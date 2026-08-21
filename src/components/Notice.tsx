@@ -35,8 +35,9 @@ export default function Notice() {
   return (
     <div
       style={{
-        background: "#fef3c7",
-        borderBottom: "1px solid #f0c36d",
+        background: "var(--notice-bg)",
+        borderBottom: "1px solid var(--notice-line)",
+        color: "var(--notice-ink)",
         padding: "10px 14px",
         fontWeight: 600,
       }}

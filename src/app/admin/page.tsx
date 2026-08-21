@@ -61,15 +61,19 @@ export default function AdminPage() {
   if (!authed) {
     return (
       <div className="card" style={{ marginTop: 24 }}>
-        <b>Organizer PIN</b>
+        <b>Organizer</b>
+        <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
+          Event setup: players, teams, rounds, exports.
+        </p>
         <input
           className="field"
           type="password"
           inputMode="numeric"
+          placeholder="PIN"
           value={pin}
           onChange={(e) => setPin(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && login()}
-          style={{ margin: "10px 0" }}
+          style={{ marginBottom: 10 }}
         />
         {pinError && <p className="bad tiny">{pinError}</p>}
         <button className="btn btn-primary btn-wide" onClick={login}>
@@ -241,6 +245,9 @@ function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
 function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => void }) {
   const [round, setRound] = useState(data.settings.active_round);
   const [names, setNames] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [newTeam, setNewTeam] = useState("");
 
   const teams = data.teams.filter((t) => t.round === round);
   const assigned = new Map(
@@ -300,24 +307,95 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
         </p>
 
         <div style={{ display: "grid", gap: 6 }}>
-          {data.players.map((p) => (
-            <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ flex: 1, minWidth: 0 }}>{p.name}</span>
-              <select
-                className="field"
-                style={{ width: 200, minHeight: 44 }}
-                value={assigned.get(p.id) ?? ""}
-                onChange={(e) => setTeam(p.id, e.target.value)}
-              >
-                <option value="">— none —</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+          {data.players.map((p) =>
+            editing === p.id ? (
+              <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  className="field"
+                  style={{ flex: 1, minHeight: 44 }}
+                  value={draft}
+                  autoFocus
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && draft.trim()) {
+                      run(() =>
+                        api("/api/admin/players", {
+                          method: "PATCH",
+                          body: JSON.stringify({ id: p.id, name: draft }),
+                        })
+                      );
+                      setEditing(null);
+                    }
+                    if (e.key === "Escape") setEditing(null);
+                  }}
+                />
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={!draft.trim()}
+                  onClick={() => {
+                    run(() =>
+                      api("/api/admin/players", {
+                        method: "PATCH",
+                        body: JSON.stringify({ id: p.id, name: draft }),
+                      })
+                    );
+                    setEditing(null);
+                  }}
+                >
+                  Save
+                </button>
+                <button className="btn btn-sm" onClick={() => setEditing(null)}>
+                  Cancel
+                </button>
+                {/* Refused server-side if they already have submissions, so this
+                    cannot quietly delete someone's evidence. */}
+                <button
+                  className="btn btn-sm btn-bad"
+                  onClick={() => {
+                    run(() => api(`/api/admin/players?id=${p.id}`, { method: "DELETE" }));
+                    setEditing(null);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    background: "none",
+                    border: 0,
+                    padding: 0,
+                    color: "var(--ink)",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => {
+                    setEditing(p.id);
+                    setDraft(p.name);
+                  }}
+                  title="Rename or remove"
+                >
+                  {p.name} <span className="muted tiny">edit</span>
+                </button>
+                <select
+                  className="field"
+                  style={{ width: 200, minHeight: 44 }}
+                  value={assigned.get(p.id) ?? ""}
+                  onChange={(e) => setTeam(p.id, e.target.value)}
+                >
+                  <option value="">— none —</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )
+          )}
         </div>
       </div>
 
@@ -347,6 +425,88 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
           Add
         </button>
       </div>
+
+      <div className="card">
+        <b>Teams</b>
+        <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
+          Renaming is safe at any time — submissions point at the team, not its name. A change
+          applies to both rounds so the two stay paired.
+        </p>
+        <div style={{ display: "grid", gap: 6 }}>
+          {teams.map((t) => (
+            <div key={t.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="color"
+                value={t.color}
+                title="Team colour"
+                onChange={(e) =>
+                  run(() =>
+                    api("/api/admin/teams", {
+                      method: "PATCH",
+                      body: JSON.stringify({ id: t.id, color: e.target.value }),
+                    })
+                  )
+                }
+                style={{
+                  width: 44,
+                  height: 44,
+                  padding: 2,
+                  border: "1px solid var(--line)",
+                  borderRadius: 10,
+                  background: "var(--card)",
+                }}
+              />
+              <input
+                className="field"
+                style={{ flex: 1, minHeight: 44 }}
+                defaultValue={t.name}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v && v !== t.name) {
+                    run(() =>
+                      api("/api/admin/teams", {
+                        method: "PATCH",
+                        body: JSON.stringify({ id: t.id, name: v }),
+                      })
+                    );
+                  }
+                }}
+              />
+              <button
+                className="btn btn-sm"
+                onClick={() => run(() => api(`/api/admin/teams?id=${t.id}`, { method: "DELETE" }))}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <input
+            className="field"
+            style={{ flex: 1, minHeight: 44 }}
+            placeholder="New team name"
+            value={newTeam}
+            onChange={(e) => setNewTeam(e.target.value)}
+          />
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={!newTeam.trim()}
+            onClick={() =>
+              run(async () => {
+                await api("/api/admin/teams", {
+                  method: "POST",
+                  body: JSON.stringify({ name: newTeam, color: "#6b7280" }),
+                });
+                setNewTeam("");
+              })
+            }
+          >
+            Add team
+          </button>
+        </div>
+      </div>
     </>
   );
 }
@@ -355,11 +515,9 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   const [round, setRound] = useState(data.settings.active_round);
   const [title, setTitle] = useState("");
   const [points, setPoints] = useState(3);
+  const [editing, setEditing] = useState<string | null>(null);
 
-  const tasks = useMemo(
-    () => data.tasks.filter((t) => t.round === round),
-    [data.tasks, round]
-  );
+  const tasks = useMemo(() => data.tasks.filter((t) => t.round === round), [data.tasks, round]);
   const secrets = tasks.filter((t) => t.is_secret);
 
   const patch = (body: Record<string, unknown>) =>
@@ -440,45 +598,139 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
 
       <div className="card">
         <b>All tasks ({tasks.length})</b>
-        <div style={{ display: "grid", gap: 4, marginTop: 8 }}>
-          {tasks.map((t) => (
-            <div
-              key={t.id}
-              style={{
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                opacity: t.active ? 1 : 0.45,
-              }}
-            >
-              <span className="pill">{t.points}</span>
-              <span
-                className="tiny"
-                style={{ flex: 1, minWidth: 0, textDecoration: t.active ? "none" : "line-through" }}
+        <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
+          Tap a task to change its wording or point value. Editing the value does NOT rescore
+          anything already judged — each submission keeps the points it was worth at the time.
+        </p>
+        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+          {tasks.map((t) =>
+            editing === t.id ? (
+              <TaskEditor
+                key={t.id}
+                task={t}
+                onCancel={() => setEditing(null)}
+                onSave={(body) => {
+                  patch({ id: t.id, ...body });
+                  setEditing(null);
+                }}
+                onDelete={() => {
+                  run(() => api(`/api/admin/tasks?id=${t.id}`, { method: "DELETE" }));
+                  setEditing(null);
+                }}
+              />
+            ) : (
+              <button
+                key={t.id}
+                onClick={() => setEditing(t.id)}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  textAlign: "left",
+                  background: "none",
+                  border: 0,
+                  padding: "2px 0",
+                  color: "var(--ink)",
+                  opacity: t.active ? 1 : 0.45,
+                  cursor: "pointer",
+                }}
               >
-                {t.title}
-                {t.requires_video && <span className="muted"> · clip</span>}
-              </span>
-              {t.active && (
-                <button
-                  className="btn btn-sm"
-                  onClick={() =>
-                    run(() => api(`/api/admin/tasks?id=${t.id}`, { method: "DELETE" }))
-                  }
+                <span className="pill">{t.points}</span>
+                <span
+                  className="tiny"
+                  style={{ flex: 1, minWidth: 0, textDecoration: t.active ? "none" : "line-through" }}
                 >
-                  Remove
-                </button>
-              )}
-              {!t.active && (
-                <button className="btn btn-sm" onClick={() => patch({ id: t.id, active: true })}>
-                  Restore
-                </button>
-              )}
-            </div>
-          ))}
+                  {t.title}
+                  {t.requires_video && <span className="muted"> · clip</span>}
+                  {t.is_secret && <span className="warn"> · secret</span>}
+                </span>
+                <span className="muted tiny">edit</span>
+              </button>
+            )
+          )}
         </div>
       </div>
     </>
+  );
+}
+
+function TaskEditor({
+  task,
+  onSave,
+  onCancel,
+  onDelete,
+}: {
+  task: AdminData["tasks"][number];
+  onSave: (body: Record<string, unknown>) => void;
+  onCancel: () => void;
+  onDelete: () => void;
+}) {
+  const [title, setTitle] = useState(task.title);
+  const [points, setPoints] = useState(task.points);
+  const [clip, setClip] = useState(task.requires_video);
+  const [secret, setSecret] = useState(task.is_secret);
+
+  return (
+    <div className="card" style={{ margin: 0, borderColor: "var(--accent)" }}>
+      <textarea
+        className="field"
+        rows={2}
+        value={title}
+        autoFocus
+        onChange={(e) => setTitle(e.target.value)}
+        style={{ minHeight: 70, marginBottom: 8 }}
+      />
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+        {[1, 3, 5, 7, 10].map((p) => (
+          <button
+            key={p}
+            className={`btn btn-sm ${points === p ? "btn-primary" : ""}`}
+            onClick={() => setPoints(p)}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        <button
+          className={`btn btn-sm ${clip ? "btn-primary" : ""}`}
+          onClick={() => setClip((v) => !v)}
+        >
+          video only
+        </button>
+        <button
+          className={`btn btn-sm ${secret ? "btn-primary" : ""}`}
+          onClick={() => setSecret((v) => !v)}
+        >
+          secret
+        </button>
+        {!task.active && <span className="pill muted">removed</span>}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          className="btn btn-sm btn-primary"
+          style={{ flex: 1 }}
+          disabled={!title.trim()}
+          onClick={() =>
+            onSave({ title, points, requiresVideo: clip, isSecret: secret, active: true })
+          }
+        >
+          Save
+        </button>
+        <button className="btn btn-sm" onClick={onCancel}>
+          Cancel
+        </button>
+        {task.active ? (
+          <button className="btn btn-sm btn-bad" onClick={onDelete}>
+            Remove
+          </button>
+        ) : (
+          <button className="btn btn-sm" onClick={() => onSave({ active: true })}>
+            Restore
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

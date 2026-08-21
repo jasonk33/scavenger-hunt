@@ -26,6 +26,24 @@ export async function POST(req: Request) {
   return json({ ok: true, added: names.length });
 }
 
+/** Rename a player. Their submissions follow the id, so history is preserved. */
+export async function PATCH(req: Request) {
+  if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
+  const body = await req.json().catch(() => ({}));
+  const id = String(body?.id ?? "");
+  const name = String(body?.name ?? "").trim();
+  if (!id || !name) return fail("id and name are required.");
+
+  const { error } = await db().from("players").update({ name }).eq("id", id);
+  if (error) {
+    return fail(
+      /duplicate|unique/i.test(error.message) ? "Someone already has that name." : error.message,
+      /duplicate|unique/i.test(error.message) ? 409 : 500
+    );
+  }
+  return json({ ok: true });
+}
+
 export async function DELETE(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
   const id = new URL(req.url).searchParams.get("id");

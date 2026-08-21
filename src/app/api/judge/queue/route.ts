@@ -27,13 +27,16 @@ export async function GET(req: Request) {
         .eq("round", round)
         .eq("status", "pending")
         .order("created_at", { ascending: true }),
+      // Everything judged this round, not just the last few. Any call can be
+      // reopened and changed at any point, so the whole history has to be
+      // reachable -- a 12-item window is useless an hour later.
       sb
         .from("submissions")
         .select("*")
         .eq("round", round)
         .in("status", ["approved", "rejected"])
         .order("judged_at", { ascending: false })
-        .limit(12),
+        .limit(300),
       sb.from("tasks").select("id,title,points,requires_video,is_secret").eq("round", round),
       sb.from("teams").select("id,name,color").eq("round", round),
       sb.from("players").select("id,name"),
@@ -71,6 +74,7 @@ export async function GET(req: Request) {
       taskPoints: s.task_points,
       requiresVideo: Boolean(task?.requires_video),
       isSecret: Boolean(task?.is_secret),
+      teamId: s.team_id,
       teamName: team?.name ?? "(unknown team)",
       teamColor: team?.color ?? "#666",
       playerName: playerById.get(s.player_id)?.name ?? "someone",
@@ -93,6 +97,9 @@ export async function GET(req: Request) {
 
   return json({
     round,
+    // Sent so the judge can move a submission that landed on the wrong team --
+    // the realistic cause being a player tapping the wrong name when joining.
+    teams: teams ?? [],
     queue: (pending ?? []).map(shape),
     recent: (recent ?? []).map(shape),
     pendingCount: (pending ?? []).length,

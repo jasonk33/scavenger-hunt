@@ -84,9 +84,30 @@ export async function GET(req: Request) {
     if (pts > (bestByTask.get(s.task_id) ?? -1)) bestByTask.set(s.task_id, pts);
   }
 
+  /**
+   * Rejections the team still needs to act on: rejected, and no approved
+   * submission for that task since. A rejection the team has already redone
+   * successfully drops off by itself, so this list is always "what to fix now"
+   * rather than a running tally of failures.
+   */
+  const approvedTasks = new Set(scored.map((s) => s.task_id));
+  const taskTitle = new Map((tasks ?? []).map((t) => [t.id, t.title]));
+  const openRejections = mine
+    .filter((s) => s.status === "rejected" && !approvedTasks.has(s.task_id))
+    // One entry per task, even if two teammates both got rejected on it.
+    .filter((s, i, arr) => arr.findIndex((o) => o.task_id === s.task_id) === i)
+    .map((s) => ({
+      id: s.id,
+      taskId: s.task_id,
+      taskTitle: taskTitle.get(s.task_id) ?? "a task",
+      reason: s.reject_reason,
+      at: s.created_at,
+    }));
+
   const up = uploadConfig();
 
   return json({
+    rejections: openRejections,
     settings: {
       round,
       submissions_open: settings.submissions_open,

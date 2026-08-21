@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
-/* Light, high-contrast on purpose: players are outdoors in daylight in NYC.
-   A dark theme is unreadable in direct sun, and maintaining two themes for a
-   one-day event is not worth the risk. */
+/*
+ * Two themes.
+ *
+ * Default is "auto": follow the phone's own setting via prefers-color-scheme.
+ * A manual choice writes data-theme onto <html> and wins over the media query.
+ *
+ * Worth knowing: the hunt runs outdoors in daylight, and dark mode is harder to
+ * read in direct sun. Auto is the right default because phones are usually in
+ * light mode during the day, but the toggle is there if you want it.
+ */
 
 :root {
   --bg: #f6f7f9;
@@ -11,9 +18,58 @@
   --muted: #5c6675;
   --line: #d9dee6;
   --accent: #1d4ed8;
+  --on-accent: #ffffff;
   --good: #067647;
   --bad: #b42318;
   --warn: #b54708;
+  --notice-bg: #fef3c7;
+  --notice-line: #f0c36d;
+  --notice-ink: #4a3308;
+  --nav-bg: rgba(246, 247, 249, 0.94);
+  --shadow: 0 1px 2px rgba(16, 19, 26, 0.05);
+  color-scheme: light;
+}
+
+/* Colours are lifted rather than merely inverted: on an OLED phone, pure black
+   with saturated accents smears while scrolling a feed of photos. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216;
+    --card: #171b21;
+    --ink: #e8ecf2;
+    --muted: #97a1b0;
+    --line: #2a313b;
+    --accent: #5b8cff;
+    --on-accent: #08121f;
+    --good: #3fc27f;
+    --bad: #ff6b5e;
+    --warn: #f5a54a;
+    --notice-bg: #3a2f12;
+    --notice-line: #6b571f;
+    --notice-ink: #f6e3b4;
+    --nav-bg: rgba(15, 18, 22, 0.94);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1216;
+  --card: #171b21;
+  --ink: #e8ecf2;
+  --muted: #97a1b0;
+  --line: #2a313b;
+  --accent: #5b8cff;
+  --on-accent: #08121f;
+  --good: #3fc27f;
+  --bad: #ff6b5e;
+  --warn: #f5a54a;
+  --notice-bg: #3a2f12;
+  --notice-line: #6b571f;
+  --notice-ink: #f6e3b4;
+  --nav-bg: rgba(15, 18, 22, 0.94);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
 }
 
 * {
@@ -55,6 +111,7 @@ button {
   border-radius: 14px;
   padding: 14px;
   margin: 12px 0;
+  box-shadow: var(--shadow);
 }
 
 .btn {
@@ -82,17 +139,17 @@ button {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn-good {
   background: var(--good);
   border-color: var(--good);
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn-bad {
   background: var(--bad);
   border-color: var(--bad);
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn-wide {
   width: 100%;
@@ -144,10 +201,11 @@ button {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(246, 247, 249, 0.94);
+  background: var(--nav-bg);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
   display: flex;
+  align-items: center;
   gap: 4px;
   padding: 8px 10px;
   overflow-x: auto;
@@ -164,7 +222,27 @@ button {
 }
 .nav a.on {
   background: var(--ink);
-  color: #fff;
+  color: var(--bg);
+}
+.nav a.organizer {
+  color: var(--accent);
+}
+
+/* Pinned to the right so it never competes with the screen links for the
+   left-to-right scan, and never wraps the bar onto two lines. */
+.theme-btn {
+  margin-left: auto;
+  flex: none;
+  min-height: 36px;
+  width: 36px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .media {

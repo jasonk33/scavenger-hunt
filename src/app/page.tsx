@@ -22,11 +22,26 @@ export default function JoinPage() {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const [previous, setPrevious] = useState<{ id: string; name: string } | null>(null);
   const { data, error } = usePoll<PlayersResponse>("/api/players", 10000);
 
+  // Arriving here with an identity already stored means one of two things: a
+  // returning player (bounce them straight to Submit) or someone who just tapped
+  // "switch" (Submit clears the identity first, so there is nothing to bounce).
+  // Either way, remember who they were so a mis-tap is one tap to undo.
   useEffect(() => {
-    if (getMe()) router.replace("/submit");
+    const me = getMe();
+    if (me) router.replace("/submit");
   }, [router]);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("sh.previous");
+      if (raw) setPrevious(JSON.parse(raw));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const matches = useMemo(() => {
     const list = data?.players ?? [];
@@ -38,6 +53,11 @@ export default function JoinPage() {
   const choose = (p: { id: string; name: string }) => {
     setBusy(true);
     setMe({ id: p.id, name: p.name });
+    try {
+      sessionStorage.setItem("sh.previous", JSON.stringify({ id: p.id, name: p.name }));
+    } catch {
+      /* ignore */
+    }
     router.replace("/submit");
   };
 
@@ -45,8 +65,21 @@ export default function JoinPage() {
     <>
       <h1 style={{ margin: "18px 0 4px", fontSize: 30 }}>Who are you?</h1>
       <p className="muted" style={{ marginTop: 0 }}>
-        Tap your name. You only do this once.
+        Tap your name. You can change it later if you tap the wrong one.
       </p>
+
+      {previous && (
+        <div className="card" style={{ margin: "10px 0" }}>
+          <span className="muted tiny">You were just {previous.name}.</span>{" "}
+          <button
+            className="btn btn-sm"
+            style={{ marginTop: 6 }}
+            onClick={() => choose(previous)}
+          >
+            Go back to {previous.name}
+          </button>
+        </div>
+      )}
 
       {error && <div className="card bad">Couldn&apos;t load the player list: {error}</div>}
 
