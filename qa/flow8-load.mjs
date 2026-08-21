@@ -23,7 +23,9 @@ writeFileSync(VIDEO, Buffer.concat([readFileSync(`${MEDIA}iphone-clip.mp4`), Buf
 
 const PHOTO_BYTES = readFileSync(PHOTO);
 const VIDEO_BYTES = readFileSync(VIDEO);
-const N = 12; // the upper end of the guest list
+// Defaults to the upper end of the guest list; override to point a smaller run
+// at production, e.g. QA_N=8 BASE_URL=https://... node qa/flow8-load.mjs --allow-prod
+const N = Number(process.env.QA_N) || 12;
 
 const before = await snapshot();
 const settingsBefore = await captureSettings();
