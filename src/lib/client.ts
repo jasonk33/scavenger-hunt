@@ -98,3 +98,28 @@ export function fmtBytes(b?: number | null) {
   if (b >= 1048576) return (b / 1048576).toFixed(1) + " MB";
   return Math.round(b / 1024) + " KB";
 }
+
+/**
+ * Readable text colour for a solid team-colour chip.
+ *
+ * Team colours are organizer-editable from a colour picker, so a pale pick is
+ * possible and white-on-pale is unreadable. Compares the WCAG contrast of black
+ * and white against the swatch and returns whichever wins, which guarantees at
+ * least 4.58:1 for every possible colour -- a fixed lightness threshold does
+ * not, and lands around 2.9:1 on mid-tones. Unparseable input falls back to
+ * white, matching the old fixed behaviour.
+ */
+export function inkOn(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return "#ffffff";
+  const n = parseInt(m[1], 16);
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const l =
+    0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  const onWhite = 1.05 / (l + 0.05);
+  const onBlack = (l + 0.05) / 0.05;
+  return onBlack > onWhite ? "#000000" : "#ffffff";
+}

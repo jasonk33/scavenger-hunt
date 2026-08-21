@@ -9,6 +9,10 @@
  * Worth knowing: the hunt runs outdoors in daylight, and dark mode is harder to
  * read in direct sun. Auto is the right default because phones are usually in
  * light mode during the day, but the toggle is there if you want it.
+ *
+ * The dark palette is written twice on purpose -- once for the media query and
+ * once for the manual override. There is no way to share them without a
+ * preprocessor, so if you change a colour, change it in BOTH.
  */
 
 :root {
@@ -17,16 +21,21 @@
   --ink: #10131a;
   --muted: #5c6675;
   --line: #d9dee6;
+  --line-soft: #e7ebf0;
   --accent: #1d4ed8;
+  --accent-weak: #eaf0ff;
   --on-accent: #ffffff;
   --good: #067647;
+  --good-weak: #e6f5ee;
   --bad: #b42318;
+  --bad-weak: #fdeceb;
   --warn: #b54708;
   --notice-bg: #fef3c7;
   --notice-line: #f0c36d;
   --notice-ink: #4a3308;
-  --nav-bg: rgba(246, 247, 249, 0.94);
-  --shadow: 0 1px 2px rgba(16, 19, 26, 0.05);
+  --nav-bg: rgba(246, 247, 249, 0.88);
+  --shadow: 0 1px 2px rgba(16, 19, 26, 0.05), 0 1px 3px rgba(16, 19, 26, 0.04);
+  --shadow-lg: 0 2px 4px rgba(16, 19, 26, 0.05), 0 8px 24px rgba(16, 19, 26, 0.08);
   color-scheme: light;
 }
 
@@ -39,16 +48,21 @@
     --ink: #e8ecf2;
     --muted: #97a1b0;
     --line: #2a313b;
+    --line-soft: #222831;
     --accent: #5b8cff;
+    --accent-weak: #1a2439;
     --on-accent: #08121f;
     --good: #3fc27f;
+    --good-weak: #14261e;
     --bad: #ff6b5e;
+    --bad-weak: #2c1a19;
     --warn: #f5a54a;
     --notice-bg: #3a2f12;
     --notice-line: #6b571f;
     --notice-ink: #f6e3b4;
-    --nav-bg: rgba(15, 18, 22, 0.94);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --nav-bg: rgba(15, 18, 22, 0.88);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
+    --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.45);
     color-scheme: dark;
   }
 }
@@ -59,16 +73,21 @@
   --ink: #e8ecf2;
   --muted: #97a1b0;
   --line: #2a313b;
+  --line-soft: #222831;
   --accent: #5b8cff;
+  --accent-weak: #1a2439;
   --on-accent: #08121f;
   --good: #3fc27f;
+  --good-weak: #14261e;
   --bad: #ff6b5e;
+  --bad-weak: #2c1a19;
   --warn: #f5a54a;
   --notice-bg: #3a2f12;
   --notice-line: #6b571f;
   --notice-ink: #f6e3b4;
-  --nav-bg: rgba(15, 18, 22, 0.94);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --nav-bg: rgba(15, 18, 22, 0.88);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
 
@@ -87,6 +106,8 @@ body {
   line-height: 1.45;
   margin: 0;
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Inputs below 16px trigger an automatic zoom on iOS that is hard to recover
@@ -99,11 +120,104 @@ button {
   font-family: inherit;
 }
 
+/* ---- Type scale -------------------------------------------------------- */
+
+h1 {
+  font-size: 28px;
+  line-height: 1.15;
+  letter-spacing: -0.021em;
+  font-weight: 800;
+  margin: 20px 0 6px;
+}
+h2 {
+  font-size: 19px;
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+  font-weight: 700;
+  margin: 22px 0 8px;
+}
+
+/* Small uppercase section label. Reads as deliberate structure where a plain
+   grey line of text just reads as small text. */
+.eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 22px 0 8px;
+}
+
+/* Standfirst under an h1. */
+.lede {
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.muted {
+  color: var(--muted);
+}
+.tiny {
+  font-size: 13px;
+}
+.good {
+  color: var(--good);
+}
+.bad {
+  color: var(--bad);
+}
+.warn {
+  color: var(--warn);
+}
+.nowrap {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tabular figures stop scores and percentages from jittering sideways as they
+   tick over on the 5-second poll. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---- Layout helpers ---------------------------------------------------- */
+
 .wrap {
   max-width: 44rem;
   margin: 0 auto;
-  padding: 0 14px 100px;
+  padding: 0 14px calc(80px + env(safe-area-inset-bottom));
 }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.push {
+  margin-left: auto;
+}
+.stack {
+  display: grid;
+  gap: 8px;
+}
+
+/* ---- Focus ------------------------------------------------------------- */
+
+/* :focus-visible only, so a thumb tap never leaves a ring behind but keyboard
+   and switch-control users always know where they are. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Card -------------------------------------------------------------- */
 
 .card {
   background: var(--card);
@@ -113,6 +227,52 @@ button {
   margin: 12px 0;
   box-shadow: var(--shadow);
 }
+.card-flat {
+  margin: 0;
+  padding: 12px;
+  box-shadow: none;
+}
+
+/* Alert framings. These replace repeated inline borderColor/borderWidth pairs
+   and keep the tinted background in step with the border. */
+.card-accent {
+  border-color: var(--accent);
+  border-width: 2px;
+  background: var(--accent-weak);
+}
+.card-bad {
+  border-color: var(--bad);
+  border-width: 2px;
+  background: var(--bad-weak);
+}
+.card-good {
+  border-color: var(--good);
+  border-width: 2px;
+  background: var(--good-weak);
+}
+
+/* Same tint at a 1px border, for use inside long lists where a 2px border on
+   some rows and not others reads as misalignment. */
+.card-done {
+  border-color: var(--good);
+  background: var(--good-weak);
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 30px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  margin: 12px 0;
+}
+.empty b {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+/* ---- Buttons ----------------------------------------------------------- */
 
 .btn {
   display: inline-flex;
@@ -128,13 +288,31 @@ button {
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
+  box-shadow: var(--shadow);
+  transition:
+    transform 0.09s ease,
+    border-color 0.12s ease,
+    background-color 0.12s ease,
+    filter 0.12s ease;
 }
-.btn:active {
-  transform: scale(0.985);
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 .btn:disabled {
   opacity: 0.45;
   cursor: default;
+  box-shadow: none;
+}
+/* Guarded so a phone never gets a hover state stuck on after a tap. */
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+  .btn-primary:hover:not(:disabled),
+  .btn-good:hover:not(:disabled),
+  .btn-bad:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
 }
 .btn-primary {
   background: var(--accent);
@@ -160,6 +338,57 @@ button {
   font-size: 15px;
   border-radius: 10px;
 }
+.btn-lg {
+  min-height: 58px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* A button that is really just tappable text -- switching player, opening a
+   past ruling, reassigning a team. */
+.btn-plain {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+
+/* ---- Segmented control (Round 1 / Round 2) ----------------------------- */
+
+.seg {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.seg button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+.seg button.on {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+/* ---- Fields ------------------------------------------------------------ */
 
 .field {
   width: 100%;
@@ -169,23 +398,21 @@ button {
   border-radius: 12px;
   background: var(--card);
   color: var(--ink);
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.field:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+.field::placeholder {
+  color: var(--muted);
+  opacity: 0.75;
 }
 
-.muted {
-  color: var(--muted);
-}
-.tiny {
-  font-size: 13px;
-}
-.good {
-  color: var(--good);
-}
-.bad {
-  color: var(--bad);
-}
-.warn {
-  color: var(--warn);
-}
+/* ---- Pills ------------------------------------------------------------- */
 
 .pill {
   display: inline-block;
@@ -196,29 +423,137 @@ button {
   border: 1px solid var(--line);
   white-space: nowrap;
 }
+.pill-good {
+  border-color: var(--good);
+  color: var(--good);
+  background: var(--good-weak);
+}
+.pill-bad {
+  border-color: var(--bad);
+  color: var(--bad);
+  background: var(--bad-weak);
+}
+.pill-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.pill-accent {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-weak);
+}
+.pill-solid {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
 
-.nav {
+/* A small square of team colour. Sized here so every screen agrees. */
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+.swatch-lg {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+/* ---- Leaderboard ------------------------------------------------------- */
+
+.rank {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--muted);
+  background: var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+.rank-1 {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.score {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Stat block (submit header) ---------------------------------------- */
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-value.big {
+  font-size: 30px;
+}
+.stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ---- Nav --------------------------------------------------------------- */
+
+/* Nav and the broadcast notice stick together as one unit, so there is no
+   magic offset to keep in sync if either one changes height. */
+.topbar {
   position: sticky;
   top: 0;
   z-index: 20;
+}
+
+.nav {
   background: var(--nav-bg);
-  backdrop-filter: blur(8px);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 10px;
+  padding: 6px 10px;
   overflow-x: auto;
+  scrollbar-width: none;
   padding-left: max(10px, env(safe-area-inset-left));
+  padding-right: max(10px, env(safe-area-inset-right));
 }
+.nav::-webkit-scrollbar {
+  display: none;
+}
+/* 44px so a moving thumb hits it reliably; these are the only way around the
+   app while walking. */
 .nav a {
-  padding: 8px 13px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 13px;
   border-radius: 10px;
   font-weight: 600;
   font-size: 15px;
   text-decoration: none;
   color: var(--muted);
   white-space: nowrap;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 .nav a.on {
   background: var(--ink);
@@ -227,14 +562,20 @@ button {
 .nav a.organizer {
   color: var(--accent);
 }
+@media (hover: hover) {
+  .nav a:hover:not(.on) {
+    background: var(--line-soft);
+    color: var(--ink);
+  }
+}
 
 /* Pinned to the right so it never competes with the screen links for the
    left-to-right scan, and never wraps the bar onto two lines. */
 .theme-btn {
   margin-left: auto;
   flex: none;
-  min-height: 36px;
-  width: 36px;
+  min-height: 40px;
+  width: 40px;
   padding: 0;
   border-radius: 9px;
   border: 1px solid var(--line);
@@ -243,16 +584,73 @@ button {
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+@media (hover: hover) {
+  .theme-btn:hover {
+    color: var(--ink);
+    border-color: var(--accent);
+  }
 }
 
+/* ---- Broadcast notice --------------------------------------------------- */
+
+/* Sits directly under the sticky nav on every screen. Sticky itself so it does
+   not scroll away mid-round -- an organizer only sets this when it matters. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  background: var(--notice-bg);
+  border-bottom: 1px solid var(--notice-line);
+  color: var(--notice-ink);
+  padding: 11px 14px;
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.35;
+}
+.notice-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--notice-ink);
+  opacity: 0.55;
+}
+
+/* ---- Media ------------------------------------------------------------- */
+
+/* A fixed box for every photo and clip. Without it, cards grow as each image
+   decodes and the whole feed jumps under your thumb -- and on the judge screen
+   the Approve button moves between submissions, which is worse.
+   Capped by height first, then width derived from it, so a wide desktop window
+   doesn't stretch the box sideways and letterbox portrait phone photos into a
+   thin strip. */
+.media-box {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  max-height: 62vh;
+  max-width: calc(62vh * 0.8);
+  margin-inline: auto;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+}
 .media {
   width: 100%;
-  max-height: 62vh;
-  border-radius: 10px;
-  background: #000;
+  height: 100%;
   display: block;
   object-fit: contain;
+  background: #000;
 }
+
+/* ---- Progress bar ------------------------------------------------------ */
 
 .bar {
   height: 12px;
@@ -264,5 +662,15 @@ button {
   display: block;
   height: 100%;
   background: var(--accent);
+  border-radius: 999px;
   transition: width 0.15s linear;
+}
+
+/* ---- Motion ------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

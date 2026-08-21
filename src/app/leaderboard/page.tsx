@@ -30,68 +30,67 @@ export default function LeaderboardPage() {
 
   return (
     <>
-      <h1 style={{ fontSize: 26, margin: "18px 0 8px" }}>Scores</h1>
+      <h1>Scores</h1>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        {[1, 2].map((r) => (
-          <button
-            key={r}
-            className={`btn btn-sm ${shown === r ? "btn-primary" : ""}`}
-            onClick={() => setRound(r)}
-          >
-            Round {r}
-          </button>
-        ))}
+      <div className="row" style={{ marginBottom: 10 }}>
+        <div className="seg">
+          {[1, 2].map((r) => (
+            <button key={r} className={shown === r ? "on" : ""} onClick={() => setRound(r)}>
+              Round {r}
+            </button>
+          ))}
+        </div>
+        {data && data.totalPending > 0 && (
+          // A team with a backlog is waiting, not losing. Saying so out loud stops
+          // the "we're getting robbed" conversation before it starts.
+          <span className="muted tiny push" style={{ textAlign: "right" }}>
+            {data.totalPending} still with the judge
+          </span>
+        )}
       </div>
 
-      {error && <div className="card bad tiny">Connection hiccup — retrying.</div>}
+      {error && <div className="card card-bad tiny bad">Connection hiccup — retrying.</div>}
 
-      {/* A team with a backlog is waiting, not losing. Saying so out loud stops
-          the "we're getting robbed" conversation before it starts. */}
-      {data && data.totalPending > 0 && (
-        <p className="muted tiny" style={{ marginTop: 0 }}>
-          {data.totalPending} submission{data.totalPending === 1 ? "" : "s"} still with the judge.
-        </p>
-      )}
-
-      <div style={{ display: "grid", gap: 8 }}>
-        {rows.map((r, i) => (
-          <div key={r.teamId} className="card" style={{ margin: 0, padding: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ width: 22, fontWeight: 700, color: "var(--muted)" }}>{i + 1}</span>
-              <span
-                style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: 3,
-                  background: r.color,
-                  flexShrink: 0,
-                }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {r.name}
+      <div className="stack">
+        {rows.map((r, i) => {
+          // Ties genuinely share the lead, so this highlights every team on the
+          // top score rather than whichever one sorted first.
+          const top = lead > 0 && r.points === lead;
+          return (
+            <div key={r.teamId} className={`card card-flat${top ? " card-accent" : ""}`}>
+              <div className="row">
+                <span className={`rank${top ? " rank-1" : ""}`}>{i + 1}</span>
+                <span className="swatch swatch-lg" style={{ background: r.color }} />
+                <div className="grow">
+                  <div className="nowrap" style={{ fontWeight: 700 }}>
+                    {r.name}
+                  </div>
+                  <div className="muted tiny">
+                    {r.tasksScored} task{r.tasksScored === 1 ? "" : "s"}
+                    {r.pending > 0 && ` · ${r.pending} pending`}
+                  </div>
                 </div>
-                <div className="muted tiny">
-                  {r.tasksScored} task{r.tasksScored === 1 ? "" : "s"}
-                  {r.pending > 0 && ` · ${r.pending} pending`}
-                </div>
+                <span className="score">{r.points}</span>
               </div>
-              <div style={{ fontSize: 28, fontWeight: 800 }}>{r.points}</div>
+              <div className="bar" style={{ marginTop: 10, height: 6 }}>
+                <i
+                  style={{
+                    width: lead > 0 ? `${(r.points / lead) * 100}%` : "0%",
+                    background: r.color,
+                  }}
+                />
+              </div>
             </div>
-            <div className="bar" style={{ marginTop: 8, height: 6 }}>
-              <i
-                style={{
-                  width: lead > 0 ? `${(r.points / lead) * 100}%` : "0%",
-                  background: r.color,
-                }}
-              />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {data && rows.length === 0 && <p className="muted">No teams set up for this round yet.</p>}
+      {data && rows.length === 0 && (
+        <div className="empty">
+          <b>No teams yet</b>
+          Round {shown} hasn&apos;t been set up. An organizer can add teams on the Admin screen.
+        </div>
+      )}
     </>
   );
 }

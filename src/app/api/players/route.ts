@@ -20,6 +20,7 @@ export async function GET() {
 
   return json({
     round: settings.active_round,
+    eventName: settings.event_name,
     players: (players ?? []).map((p) => ({
       id: p.id,
       name: p.name,

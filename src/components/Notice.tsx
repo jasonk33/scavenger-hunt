@@ -33,16 +33,9 @@ export default function Notice() {
   if (!text) return null;
 
   return (
-    <div
-      style={{
-        background: "var(--notice-bg)",
-        borderBottom: "1px solid var(--notice-line)",
-        color: "var(--notice-ink)",
-        padding: "10px 14px",
-        fontWeight: 600,
-      }}
-    >
-      {text}
+    <div className="notice">
+      <span className="notice-dot" aria-hidden="true" />
+      <span>{text}</span>
     </div>
   );
 }

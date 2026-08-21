@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getMe, setMe, usePoll } from "@/lib/client";
+import { getMe, inkOn, setMe, usePoll } from "@/lib/client";
 
 type PlayersResponse = {
   round: number;
+  eventName: string;
   players: Array<{ id: string; name: string; team: { name: string; color: string } | null }>;
 };
 
@@ -63,25 +64,28 @@ export default function JoinPage() {
 
   return (
     <>
-      <h1 style={{ margin: "18px 0 4px", fontSize: 30 }}>Who are you?</h1>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Tap your name. You can change it later if you tap the wrong one.
-      </p>
+      {data?.eventName && (
+        <div className="eyebrow" style={{ margin: "22px 0 0" }}>
+          {data.eventName}
+        </div>
+      )}
+      <h1 style={{ marginTop: data?.eventName ? 4 : 22 }}>Who are you?</h1>
+      <p className="lede">Tap your name. You can change it later if you tap the wrong one.</p>
 
       {previous && (
-        <div className="card" style={{ margin: "10px 0" }}>
-          <span className="muted tiny">You were just {previous.name}.</span>{" "}
-          <button
-            className="btn btn-sm"
-            style={{ marginTop: 6 }}
-            onClick={() => choose(previous)}
-          >
-            Go back to {previous.name}
-          </button>
+        <div className="card card-accent">
+          <div className="row">
+            <span className="grow tiny">
+              You were just <b>{previous.name}</b>.
+            </span>
+            <button className="btn btn-sm" onClick={() => choose(previous)}>
+              Go back
+            </button>
+          </div>
         </div>
       )}
 
-      {error && <div className="card bad">Couldn&apos;t load the player list: {error}</div>}
+      {error && <div className="card card-bad">Couldn&apos;t load the player list: {error}</div>}
 
       <input
         className="field"
@@ -95,26 +99,31 @@ export default function JoinPage() {
       {!data && !error && <p className="muted">Loading…</p>}
 
       {data && matches.length === 0 && (
-        <div className="card">
-          <b>No name matches that.</b>
-          <p className="muted tiny" style={{ marginBottom: 0 }}>
-            Ask an organizer to add you — takes them five seconds on the Admin screen.
-          </p>
+        <div className="empty">
+          <b>No name matches that</b>
+          Ask an organizer to add you — takes them five seconds on the Admin screen.
         </div>
       )}
 
-      <div style={{ display: "grid", gap: 8 }}>
+      <div className="stack">
         {matches.map((p) => (
           <button
             key={p.id}
             className="btn btn-wide"
             disabled={busy}
             onClick={() => choose(p)}
-            style={{ justifyContent: "space-between" }}
+            style={{ justifyContent: "space-between", gap: 10 }}
           >
-            <span>{p.name}</span>
+            <span className="nowrap">{p.name}</span>
             {p.team ? (
-              <span className="pill" style={{ borderColor: p.team.color, color: p.team.color }}>
+              <span
+                className="pill"
+                style={{
+                  background: p.team.color,
+                  borderColor: p.team.color,
+                  color: inkOn(p.team.color),
+                }}
+              >
                 {p.team.name}
               </span>
             ) : (

@@ -64,8 +64,8 @@ export default function JudgePage() {
   if (!authed) {
     return (
       <div className="card" style={{ marginTop: 24 }}>
-        <b>Organizer</b>
-        <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
+        <h2 style={{ margin: "0 0 2px" }}>Organizer</h2>
+        <p className="muted tiny" style={{ margin: "0 0 12px" }}>
           Judging and event setup. Players don&apos;t need this.
         </p>
         <input
@@ -189,22 +189,26 @@ function JudgeQueue() {
 
   return (
     <>
-      <header style={{ display: "flex", alignItems: "baseline", gap: 10, margin: "16px 0 4px" }}>
-        <h1 style={{ fontSize: 24, margin: 0 }}>Judge</h1>
-        <span className="pill">{queue.length} waiting</span>
+      <header className="row" style={{ margin: "18px 0 10px" }}>
+        <h1 style={{ margin: 0 }}>Judge</h1>
+        <span className={`pill${queue.length > 0 ? " pill-accent" : ""}`}>
+          {queue.length} waiting
+        </span>
       </header>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        {[1, 2].map((r) => (
-          <button
-            key={r}
-            className={`btn btn-sm ${(round ?? data?.round) === r ? "btn-primary" : ""}`}
-            onClick={() => setRound(r)}
-          >
-            Round {r}
-            {otherRoundPending > 0 && (round ?? data?.round) !== r ? ` · ${otherRoundPending}` : ""}
-          </button>
-        ))}
+      <div className="row" style={{ marginBottom: 10 }}>
+        <div className="seg">
+          {[1, 2].map((r) => (
+            <button
+              key={r}
+              className={(round ?? data?.round) === r ? "on" : ""}
+              onClick={() => setRound(r)}
+            >
+              Round {r}
+              {otherRoundPending > 0 && (round ?? data?.round) !== r ? ` · ${otherRoundPending}` : ""}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* After the break there is usually still a Round 1 backlog. Saying so
@@ -216,42 +220,32 @@ function JudgeQueue() {
         </p>
       )}
 
-      {err && <div className="card bad tiny">{err}</div>}
+      {err && <div className="card card-bad tiny bad">{err}</div>}
 
       {!current && !reviewing && (
-        <div className="card">
-          <b className="good">Queue is empty.</b>
-          <p className="muted tiny" style={{ margin: "4px 0 0" }}>
-            Nothing waiting. This refreshes on its own.
-          </p>
+        <div className="empty">
+          <b className="good">Queue is empty</b>
+          Nothing waiting. This refreshes on its own.
         </div>
       )}
 
       {reviewing && (
-        <div className="card" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="card card-accent">
+          <div className="row">
             <b>Re-reviewing</b>
             <span
-              className="pill"
-              style={{
-                borderColor: reviewing.status === "approved" ? "var(--good)" : "var(--bad)",
-                color: reviewing.status === "approved" ? "var(--good)" : "var(--bad)",
-              }}
+              className={`pill ${reviewing.status === "approved" ? "pill-good" : "pill-bad"}`}
             >
               currently{" "}
               {reviewing.status === "approved"
                 ? `approved +${(reviewing.pointsAwarded ?? 0) + reviewing.bonus}`
                 : "rejected"}
             </span>
-            <button
-              className="btn btn-sm"
-              style={{ marginLeft: "auto" }}
-              onClick={() => setReviewId(null)}
-            >
+            <button className="btn btn-sm push" onClick={() => setReviewId(null)}>
               Back to queue
             </button>
           </div>
-          <p className="muted tiny" style={{ margin: "6px 0 0" }}>
+          <p className="muted tiny" style={{ margin: "8px 0 0" }}>
             Approving or rejecting below replaces the earlier call. The team sees the change on
             their next refresh.
           </p>
@@ -260,34 +254,25 @@ function JudgeQueue() {
 
       {current && (
         <div className="card">
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: current.teamColor }} />
+          <div className="row" style={{ marginBottom: 10 }}>
+            <span className="swatch" style={{ background: current.teamColor }} />
             {/* Tap the team name to move a submission that landed on the wrong
                 scoreboard -- usually because the player tapped the wrong name
                 when they joined. */}
             <button
+              className="btn-plain"
+              style={{ fontWeight: 700 }}
               onClick={() => setReassigning((v) => !v)}
-              style={{
-                background: "none",
-                border: 0,
-                padding: 0,
-                font: "inherit",
-                fontWeight: 700,
-                color: "var(--ink)",
-                cursor: "pointer",
-              }}
               title="Wrong team? Tap to move it"
             >
               {current.teamName}
             </button>
-            <span className="muted tiny">{current.playerName}</span>
-            <span className="pill" style={{ marginLeft: "auto" }}>
-              {current.taskPoints} pts
-            </span>
+            <span className="muted tiny nowrap grow">{current.playerName}</span>
+            <span className="pill pill-solid">{current.taskPoints} pts</span>
           </div>
 
           {reassigning && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
               <span className="muted tiny" style={{ width: "100%" }}>
                 Move this submission to:
               </span>
@@ -327,35 +312,39 @@ function JudgeQueue() {
             </div>
           )}
 
-          <div style={{ fontWeight: 700, fontSize: 19, marginBottom: 8 }}>{current.taskTitle}</div>
+          <div style={{ fontWeight: 700, fontSize: 19, lineHeight: 1.3, marginBottom: 8 }}>
+            {current.taskTitle}
+          </div>
 
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-            {current.isSecret && <span className="pill warn">secret challenge</span>}
+          <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {current.isSecret && <span className="pill pill-warn">secret challenge</span>}
             {/* The doc marks some tasks as clip-only. Flagging the mismatch here
                 beats trying to enforce it at upload time and blocking a player
                 mid-round over a technicality. */}
             {current.requiresVideo && !current.isVideo && (
-              <span className="pill bad">task is video-only — this is a photo</span>
+              <span className="pill pill-bad">task is video-only — this is a photo</span>
             )}
             {current.duplicate && (
-              <span className="pill warn">team already has this task approved</span>
+              <span className="pill pill-warn">team already has this task approved</span>
             )}
             <span className="pill muted">{fmtBytes(current.sizeBytes)}</span>
           </div>
 
-          {current.isVideo ? (
-            <video
-              key={current.id}
-              className="media"
-              controls
-              playsInline
-              preload="auto"
-              src={`${current.mediaUrl}#t=0.1`}
-            />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={current.id} className="media" src={current.mediaUrl} alt={current.taskTitle} />
-          )}
+          <div className="media-box">
+            {current.isVideo ? (
+              <video
+                key={current.id}
+                className="media"
+                controls
+                playsInline
+                preload="auto"
+                src={`${current.mediaUrl}#t=0.1`}
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={current.id} className="media" src={current.mediaUrl} alt={current.taskTitle} />
+            )}
+          </div>
 
           {/* Quietly warms the next item's media so the queue feels instant. */}
           {next && !next.isVideo && (
@@ -365,21 +354,17 @@ function JudgeQueue() {
 
           {!rejecting ? (
             <>
-              <div style={{ display: "flex", gap: 8, margin: "12px 0 10px", flexWrap: "wrap" }}>
-                <span className="muted tiny" style={{ alignSelf: "center" }}>
-                  Creativity bonus
-                </span>
-                {[0, 1, 2].map((b) => (
-                  <button
-                    key={b}
-                    className={`btn btn-sm ${bonus === b ? "btn-primary" : ""}`}
-                    onClick={() => setBonus(b)}
-                  >
-                    {b === 0 ? "none" : `+${b}`}
-                  </button>
-                ))}
+              <div className="row" style={{ gap: 8, margin: "14px 0 10px", flexWrap: "wrap" }}>
+                <span className="stat-label">Creativity</span>
+                <div className="seg">
+                  {[0, 1, 2].map((b) => (
+                    <button key={b} className={bonus === b ? "on" : ""} onClick={() => setBonus(b)}>
+                      {b === 0 ? "none" : `+${b}`}
+                    </button>
+                  ))}
+                </div>
                 <button
-                  className={`btn btn-sm ${star ? "btn-primary" : ""}`}
+                  className={`btn btn-sm${star ? " btn-primary" : ""}`}
                   onClick={() => setStar((s) => !s)}
                   title="Flag as an award candidate"
                 >
@@ -387,18 +372,18 @@ function JudgeQueue() {
                 </button>
               </div>
 
-              <div style={{ display: "flex", gap: 8 }}>
+              <div className="row" style={{ gap: 8 }}>
                 <button
-                  className="btn btn-good"
+                  className="btn btn-lg btn-good"
                   style={{ flex: 2 }}
                   disabled={busy}
                   onClick={() => decide({ action: "approve", bonus, starred: star })}
                 >
                   {reviewing?.status === "approved" ? "Update to" : "Approve"}{" "}
-                  {current.taskPoints + bonus}
+                  <span className="num">{current.taskPoints + bonus}</span>
                 </button>
                 <button
-                  className="btn btn-bad"
+                  className="btn btn-lg btn-bad"
                   style={{ flex: 1 }}
                   disabled={busy}
                   onClick={() => setRejecting(true)}
@@ -408,11 +393,11 @@ function JudgeQueue() {
               </div>
             </>
           ) : (
-            <div style={{ marginTop: 12 }}>
-              <div className="muted tiny" style={{ marginBottom: 6 }}>
+            <div style={{ marginTop: 14 }}>
+              <div className="stat-label" style={{ marginBottom: 8 }}>
                 Why? (the team sees this)
               </div>
-              <div style={{ display: "grid", gap: 6 }}>
+              <div className="stack" style={{ gap: 6 }}>
                 {REASONS.map((r) => (
                   <button
                     key={r}
@@ -441,9 +426,7 @@ function JudgeQueue() {
 
       {history.length > 0 && (
         <>
-          <h2 className="muted" style={{ fontSize: 15, margin: "20px 0 6px" }}>
-            Judged this round ({history.length}) — tap any to change it
-          </h2>
+          <h2 className="eyebrow">Judged this round ({history.length}) — tap any to change it</h2>
 
           {history.length > 8 && (
             <input
@@ -455,58 +438,25 @@ function JudgeQueue() {
             />
           )}
 
-          <div style={{ display: "grid", gap: 6 }}>
+          <div className="stack" style={{ gap: 6 }}>
             {filteredHistory.map((r) => (
               <div
                 key={r.id}
-                className="card"
-                style={{
-                  margin: 0,
-                  padding: 10,
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  borderColor: r.id === reviewId ? "var(--accent)" : undefined,
-                }}
+                className={`card card-flat row${r.id === reviewId ? " card-accent" : ""}`}
+                style={{ padding: 10 }}
               >
-                <span
-                  className="pill"
-                  style={{
-                    borderColor: r.status === "approved" ? "var(--good)" : "var(--bad)",
-                    color: r.status === "approved" ? "var(--good)" : "var(--bad)",
-                  }}
-                >
+                <span className={`pill ${r.status === "approved" ? "pill-good" : "pill-bad"}`}>
                   {r.status === "approved" ? `+${(r.pointsAwarded ?? 0) + r.bonus}` : "✗"}
                 </span>
-                <button
-                  onClick={() => {
-                    setReviewId(r.id);
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    textAlign: "left",
-                    background: "none",
-                    border: 0,
-                    padding: 0,
-                    color: "var(--ink)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div
-                    className="tiny"
-                    style={{
-                      fontWeight: 600,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                <button className="btn-plain grow" style={{ minHeight: 40 }} onClick={() => {
+                  setReviewId(r.id);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}>
+                  <div className="tiny nowrap" style={{ fontWeight: 600 }}>
                     {r.starred ? "⭐ " : ""}
                     {r.taskTitle}
                   </div>
-                  <div className="muted tiny">
+                  <div className="muted tiny nowrap">
                     {r.teamName}
                     {r.status === "rejected" && r.rejectReason ? ` · ${r.rejectReason}` : ""}
                   </div>

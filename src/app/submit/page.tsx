@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, errorMessage, fmtBytes, getMe, setMe, usePoll, type Me } from "@/lib/client";
+import { api, errorMessage, fmtBytes, getMe, inkOn, setMe, usePoll, type Me } from "@/lib/client";
 import { isJwt, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
 
 type Task = {
@@ -266,44 +266,39 @@ export default function SubmitPage() {
           the realistic mistake here, and picking the wrong name can put you on
           the wrong TEAM -- which means your uploads credit the wrong
           scoreboard. So this has to be obvious, not buried at the bottom. */}
-      <header style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0 6px" }}>
+      <header className="row" style={{ margin: "18px 0 8px" }}>
         <button
+          className="btn-plain row"
+          style={{ gap: 8, minHeight: 44 }}
           onClick={() => setSwitching(true)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: "none",
-            border: 0,
-            padding: 0,
-            color: "var(--ink)",
-            cursor: "pointer",
-            minWidth: 0,
-          }}
           title="Not you? Tap to switch"
         >
-          <h1 style={{ fontSize: 26, margin: 0 }}>{me.name}</h1>
+          <h1 className="nowrap" style={{ margin: 0 }}>
+            {me.name}
+          </h1>
           <span className="pill muted">switch</span>
         </button>
         {data?.team ? (
-          // Team colours are fixed values from the plan and are all dark enough
-          // for white text in either theme.
+          // Team colours are organizer-editable, so the label colour is derived
+          // from the swatch rather than assumed to be white.
           <span
             className="pill"
-            style={{ background: data.team.color, color: "#fff", borderColor: data.team.color }}
+            style={{
+              background: data.team.color,
+              color: inkOn(data.team.color),
+              borderColor: data.team.color,
+            }}
           >
             {data.team.name}
           </span>
         ) : (
-          <span className="pill warn">no team</span>
+          <span className="pill pill-warn">no team</span>
         )}
-        <span className="muted tiny" style={{ marginLeft: "auto" }}>
-          R{data?.settings.round ?? "–"}
-        </span>
+        <span className="muted tiny push">R{data?.settings.round ?? "–"}</span>
       </header>
 
       {switching && (
-        <div className="card" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
+        <div className="card card-accent">
           <b>You&apos;re submitting as {me.name}</b>
           <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
             {s && s.submitted > 0
@@ -328,10 +323,10 @@ export default function SubmitPage() {
         </div>
       )}
 
-      {error && <div className="card bad tiny">Connection hiccup — retrying. ({error})</div>}
+      {error && <div className="card card-bad tiny bad">Connection hiccup — retrying. ({error})</div>}
 
       {data && !data.team && (
-        <div className="card">
+        <div className="card card-bad">
           <b className="warn">You&apos;re not on a Round {data.settings.round} team yet.</b>
           <p className="muted tiny" style={{ margin: "6px 0 0" }}>
             Grab an organizer. Until then your submissions can&apos;t be scored, so don&apos;t
@@ -341,13 +336,13 @@ export default function SubmitPage() {
       )}
 
       {closed && (
-        <div className="card">
+        <div className="card card-bad">
           <b className="warn">Submissions are closed right now.</b>
         </div>
       )}
 
       {s && (
-        <div className="card" style={{ display: "flex", gap: 14, justifyContent: "space-between" }}>
+        <div className="card row" style={{ gap: 14, justifyContent: "space-between" }}>
           <Stat label="points" value={s.points} big />
           <Stat label="scored" value={s.approved} />
           <Stat label="waiting" value={s.pending} />
@@ -360,15 +355,15 @@ export default function SubmitPage() {
           task gets an approved submission, at which point it disappears on its
           own. Tapping jumps to the task so the retry is one action. */}
       {(data?.rejections ?? []).length > 0 && (
-        <div className="card" style={{ borderColor: "var(--bad)", borderWidth: 2 }}>
+        <div className="card card-bad">
           <b className="bad">
             {data!.rejections.length} rejected — redo {data!.rejections.length === 1 ? "it" : "them"}{" "}
             to get the points
           </b>
-          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+          <div className="stack" style={{ marginTop: 10 }}>
             {data!.rejections.map((r) => (
-              <div key={r.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
+              <div key={r.id} className="row" style={{ gap: 8 }}>
+                <div className="grow">
                   <div style={{ fontWeight: 600, fontSize: 15 }}>{r.taskTitle}</div>
                   <div className="muted tiny">{r.reason || "No reason given"}</div>
                 </div>
@@ -401,14 +396,19 @@ export default function SubmitPage() {
         style={{ margin: "6px 0 4px" }}
       />
 
-      {data && grouped.length === 0 && <p className="muted">No tasks match.</p>}
+      {data && grouped.length === 0 && (
+        <div className="empty">
+          <b>No tasks match</b>
+          Try a shorter search.
+        </div>
+      )}
 
       {grouped.map(([points, list]) => (
         <section key={points}>
-          <h2 style={{ fontSize: 15, margin: "18px 0 6px" }} className="muted">
+          <h2 className="eyebrow">
             {points} point{points === 1 ? "" : "s"}
           </h2>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div className="stack">
             {list.map((t) => (
               <TaskRow
                 key={t.id}
@@ -429,8 +429,8 @@ export default function SubmitPage() {
 function Stat({ label, value, big }: { label: string; value: number; big?: boolean }) {
   return (
     <div>
-      <div style={{ fontSize: big ? 30 : 22, fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
-      <div className="muted tiny">{label}</div>
+      <div className={big ? "stat-value big" : "stat-value"}>{value}</div>
+      <div className="stat-label">{label}</div>
     </div>
   );
 }
@@ -451,32 +451,32 @@ function TaskRow({
   const rejected = subs.find((s) => s.status === "rejected");
 
   return (
-    <div className="card" style={{ margin: 0, padding: 12 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600 }}>{task.title}</div>
-          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+    <div className={`card card-flat${approved ? " card-done" : ""}`}>
+      <div className="row" style={{ alignItems: "flex-start" }}>
+        <div className="grow">
+          <div style={{ fontWeight: 600, lineHeight: 1.35 }}>{task.title}</div>
+          <div className="row" style={{ gap: 6, marginTop: 7, flexWrap: "wrap" }}>
             {task.requires_video && <span className="pill">video only</span>}
             {task.is_secret && (
-              <span className="pill" style={{ borderColor: "var(--warn)", color: "var(--warn)" }}>
-                secret · {task.points} pts
-              </span>
+              <span className="pill pill-warn">secret · {task.points} pts</span>
             )}
             {approved && (
-              <span className="pill" style={{ borderColor: "var(--good)", color: "var(--good)" }}>
+              <span className="pill pill-good">
                 ✓ {(approved.points_awarded ?? 0) + approved.bonus} pts
                 {approved.bonus > 0 ? ` (+${approved.bonus} bonus)` : ""}
               </span>
             )}
             {!approved && pending && <span className="pill">waiting on judge</span>}
             {!approved && !pending && rejected && (
-              <span className="pill" style={{ borderColor: "var(--bad)", color: "var(--bad)" }}>
-                ✗ {rejected.reject_reason || "rejected"}
-              </span>
+              <span className="pill pill-bad">✗ {rejected.reject_reason || "rejected"}</span>
             )}
           </div>
         </div>
-        <button className="btn btn-sm" disabled={disabled} onClick={onPick}>
+        <button
+          className="btn btn-sm"
+          disabled={disabled}
+          onClick={onPick}
+        >
           {approved || pending ? "Redo" : "Upload"}
         </button>
       </div>
@@ -486,11 +486,11 @@ function TaskRow({
 
 function JobCard({ job, onClose, onCancel }: { job: Job; onClose: () => void; onCancel: () => void }) {
   const tone =
-    job.status === "error" ? "var(--bad)" : job.status === "done" ? "var(--good)" : "var(--accent)";
+    job.status === "error" ? "card-bad" : job.status === "done" ? "card-good" : "card-accent";
   return (
-    <div className="card" style={{ borderColor: tone, borderWidth: 2 }}>
-      <div style={{ fontWeight: 700 }}>{job.taskTitle}</div>
-      <div className="muted tiny" style={{ marginBottom: 8 }}>
+    <div className={`card ${tone}`}>
+      <div style={{ fontWeight: 700, lineHeight: 1.3 }}>{job.taskTitle}</div>
+      <div className="muted tiny" style={{ marginBottom: 10 }}>
         {job.fileName} · {fmtBytes(job.size)}
         {job.retries > 0 && ` · retry ${job.retries}`}
       </div>
@@ -500,11 +500,9 @@ function JobCard({ job, onClose, onCancel }: { job: Job; onClose: () => void; on
           <div className="bar">
             <i style={{ width: `${job.pct}%` }} />
           </div>
-          <div
-            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}
-          >
-            <span className="tiny muted">
-              {job.pct}% — keep this screen open
+          <div className="row" style={{ marginTop: 10 }}>
+            <span className="tiny muted grow">
+              <b className="num">{job.pct}%</b> — keep this screen open
             </span>
             <button className="btn btn-sm" onClick={onCancel}>
               Cancel
@@ -514,8 +512,8 @@ function JobCard({ job, onClose, onCancel }: { job: Job; onClose: () => void; on
       )}
 
       {job.status === "done" && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <b className="good">Sent. It&apos;s in the judge&apos;s queue.</b>
+        <div className="row">
+          <b className="good grow">Sent. It&apos;s in the judge&apos;s queue.</b>
           <button className="btn btn-sm" onClick={onClose}>
             OK
           </button>

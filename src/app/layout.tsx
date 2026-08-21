@@ -30,8 +30,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
-        <Nav />
-        <Notice />
+        <header className="topbar">
+          <Nav />
+          <Notice />
+        </header>
         <div className="wrap">{children}</div>
       </body>
     </html>
