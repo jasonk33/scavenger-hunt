@@ -54,13 +54,13 @@ export default function FeedPage() {
             <div className="cardhead">
               <div className="row">
                 <span className="swatch" style={{ background: it.teamColor }} />
-                <b style={{ fontSize: 15 }}>{it.teamName}</b>
+                <b className="name" style={{ fontSize: 15 }}>{it.teamName}</b>
                 <span className={`pill push${it.starred ? " pill-warn" : ""}`}>
                   {it.starred ? "⭐ " : ""}
                   {it.points} pts
                 </span>
               </div>
-              <div className="byline muted tiny">{it.playerName}</div>
+              <div className="byline name muted tiny">{it.playerName}</div>
             </div>
 
             <div className="media-box">

@@ -109,12 +109,12 @@ export default function JoinPage() {
             className="btn btn-wide"
             disabled={busy}
             onClick={() => choose(p)}
-            style={{ justifyContent: "space-between", gap: 10 }}
+            style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "10px 18px" }}
           >
-            <span className="nowrap">{p.name}</span>
+            <span className="name">{p.name}</span>
             {p.team ? (
               <span
-                className="pill"
+                className="pill pill-wrap"
                 style={{
                   background: p.team.color,
                   borderColor: p.team.color,

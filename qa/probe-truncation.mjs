@@ -1,10 +1,11 @@
 /**
  * Is every name actually readable on a phone?
  *
- * Three screens lay a team name and a player name out on one flex row. A long
- * team name used to take its full content width first and leave the player name
- * whatever was left -- which on a 390px phone collapsed "Emerson Reid" to "E."
- * on /submit and rendered the player name at zero width on /feed and /judge.
+ * Team and player names used to share one flex row, where a long team name took
+ * its full content width first and left the player name whatever remained --
+ * which on a 390px phone collapsed "Emerson Reid" to "E." on /submit and laid
+ * the player name out at zero width on /feed and /judge. Every screen that shows
+ * a name is covered here, including /, which is where the QR code lands.
  *
  * The other drivers never caught it because they assert on text CONTENT, and the
  * DOM still holds the whole name after CSS has ellipsised it away. So this probe
@@ -36,20 +37,28 @@ const LONG_TEAM = "__qa The Pigeon Intelligence Agency";
 const MID_TEAM = "__qa The Birthday Bureau";
 const PLAYER = "__qa Quinn Barrett";
 
+// Every name above breaks at a space, so wrapping alone rescues them. A name
+// with no spaces cannot wrap, and a flex item's automatic minimum size is its
+// longest word -- so an unbreakable name forces its row wider than the screen
+// unless the CSS also breaks mid-word. Nothing stops an organizer typing one.
+const UNBROKEN_TEAM = "__qa ThePigeonIntelligenceAgencyOfManhattan";
+
 const CASES = [
-  { label: "mid  390px", team: MID_TEAM, width: 390 },
-  { label: "mid  300px", team: MID_TEAM, width: 300 },
-  { label: "long 390px", team: LONG_TEAM, width: 390 },
-  { label: "long 320px", team: LONG_TEAM, width: 320 },
-  { label: "long 300px", team: LONG_TEAM, width: 300 },
-  { label: "long 260px", team: LONG_TEAM, width: 260 },
+  { label: "mid    390px", team: MID_TEAM, width: 390 },
+  { label: "mid    300px", team: MID_TEAM, width: 300 },
+  { label: "long   390px", team: LONG_TEAM, width: 390 },
+  { label: "long   320px", team: LONG_TEAM, width: 320 },
+  { label: "long   300px", team: LONG_TEAM, width: 300 },
+  { label: "long   260px", team: LONG_TEAM, width: 260 },
+  { label: "1word  390px", team: UNBROKEN_TEAM, width: 390 },
+  { label: "1word  300px", team: UNBROKEN_TEAM, width: 300 },
 ];
 
 const before = await snapshot();
 await teardown();
 await teardownTasks();
 
-const fx = await setup({ players: [PLAYER], teams: [LONG_TEAM, MID_TEAM] });
+const fx = await setup({ players: [PLAYER], teams: [LONG_TEAM, MID_TEAM, UNBROKEN_TEAM] });
 const player = fx.player(PLAYER);
 
 const task = await call("/api/admin/tasks", {
@@ -83,6 +92,22 @@ async function putOnTeam(teamName) {
  */
 const SCREENS = [
   {
+    // The QR code points here, so it is the first thing every guest sees.
+    route: "/",
+    ready: ".btn-wide .pill",
+    row: ".btn-wide",
+    names: [
+      { sel: ".btn-wide .name", what: "player name" },
+      { sel: ".btn-wide .pill", what: "team name" },
+    ],
+  },
+  {
+    route: "/leaderboard",
+    ready: ".card-flat .swatch",
+    row: ".card-flat .row",
+    names: [{ sel: ".card-flat .name", what: "team name" }],
+  },
+  {
     route: "/submit",
     player: true,
     ready: "header .pill-wrap",
@@ -103,7 +128,6 @@ const SCREENS = [
   },
   {
     route: "/judge",
-    organizer: true,
     ready: ".card .swatch",
     row: ".cardhead",
     names: [

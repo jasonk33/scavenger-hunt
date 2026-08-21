@@ -268,7 +268,7 @@ function JudgeQueue() {
                   scoreboard -- usually because the player tapped the wrong name
                   when they joined. */}
               <button
-                className="btn-plain"
+                className="btn-plain name"
                 style={{ fontWeight: 700 }}
                 onClick={() => setReassigning((v) => !v)}
                 title="Wrong team? Tap to move it"
@@ -277,7 +277,7 @@ function JudgeQueue() {
               </button>
               <span className="pill pill-solid push">{current.taskPoints} pts</span>
             </div>
-            <div className="byline muted tiny">{current.playerName}</div>
+            <div className="byline name muted tiny">{current.playerName}</div>
           </div>
 
           {reassigning && (
@@ -331,7 +331,7 @@ function JudgeQueue() {
                 beats trying to enforce it at upload time and blocking a player
                 mid-round over a technicality. */}
             {current.requiresVideo && !current.isVideo && (
-              <span className="pill pill-bad">task is video-only — this is a photo</span>
+              <span className="pill pill-bad pill-wrap">task is video-only — this is a photo</span>
             )}
             {current.duplicate && (
               <span className="pill pill-warn pill-wrap">team already has this task approved</span>

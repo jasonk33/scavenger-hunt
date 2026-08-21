@@ -69,7 +69,7 @@ export default function LeaderboardPage() {
                 <span className={`rank${top ? " rank-1" : ""}`}>{place}</span>
                 <span className="swatch swatch-lg" style={{ background: r.color }} />
                 <div className="grow">
-                  <div className="nowrap" style={{ fontWeight: 700 }}>
+                  <div className="name" style={{ fontWeight: 700 }}>
                     {r.name}
                   </div>
                   <div className="muted tiny">

@@ -291,7 +291,7 @@ export default function SubmitPage() {
           onClick={() => setSwitching(true)}
           title="Not you? Tap to switch"
         >
-          <h1 style={{ margin: 0 }}>{me.name}</h1>
+          <h1 className="name" style={{ margin: 0 }}>{me.name}</h1>
           <span className="pill muted">switch</span>
         </button>
         <div className="row" style={{ marginTop: 2 }}>

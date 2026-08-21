@@ -201,17 +201,27 @@ h2 {
   margin-left: auto;
 }
 
-/* The team + player line that heads a feed card and the judge's review card.
+/* A person's or a team's name, wherever one is shown.
 
-   Both names used to share one flex row, where the longer one claimed its full
-   width first and the other was left with the remainder -- a player's own name
-   rendered as "E.", or at literally zero pixels. Making them share the loss
-   instead was still not enough: at the text size a phone actually uses, "The
-   Birthday Bureau / Alex Rivera" came out as "The Birthday Bur... / Alex Riv...".
+   Names are data: an organizer can type anything, and a name the reader cannot
+   see in full is precisely the bug this exists to prevent. It first showed up as
+   a player's own name rendered as "E." and as feed and judge cards laying the
+   player name out at zero pixels, because a long team name beside it claimed its
+   full width first. So names are never truncated -- they wrap instead, and break
+   mid-word when a single word is longer than the space available. `min-width: 0`
+   lets a name shrink to that wrap width inside a flex row rather than forcing
+   the row wider than the screen. */
+.name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
-   So they no longer compete. The team name gets the width of the card and wraps
-   if it needs to, and the player's name sits underneath on its own line, where
-   nothing can squeeze it. Neither is ever truncated, at any width or text size. */
+/* The team + player line heading a feed card and the judge's review card. The
+   two names used to share one flex row, which is what let the longer one starve
+   the other; making them share the loss was still not enough, since at the text
+   size a phone actually uses "The Birthday Bureau / Alex Rivera" still came out
+   as "The Birthday Bur... / Alex Riv...". They no longer compete: the team name
+   gets the width of the card, and the player's name sits underneath. */
 .cardhead {
   margin-bottom: 10px;
 }
@@ -475,10 +485,11 @@ h2 {
   color: var(--bg);
 }
 /* Pills default to one line, which is right for a short label but wrong for the
-   two that carry variable-length prose: the team chip on /submit and the judge's
-   duplicate-submission warning. Both wrap instead of running off the edge. */
+   few that carry a team name or a whole sentence. Those wrap instead of running
+   off the edge, and break mid-word when a name arrives with no spaces in it. */
 .pill-wrap {
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* A small square of team colour. Sized here so every screen agrees. */
