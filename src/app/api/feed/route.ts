@@ -9,7 +9,13 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const settings = await getSettings();
   const round = Number(url.searchParams.get("round")) || settings.active_round;
-  const limit = Math.min(120, Math.max(1, Number(url.searchParams.get("limit")) || 60));
+  /*
+   * The cap has to clear a whole round's approvals, or the feed silently stops
+   * showing the oldest ones with nothing on screen to say so. Five teams working
+   * through 79 tasks can produce a few hundred; the images are lazy-loaded, so a
+   * long list costs DOM nodes rather than bandwidth.
+   */
+  const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 400));
   const sb = db();
 
   const [{ data: subs }, { data: tasks }, { data: teams }, { data: players }] = await Promise.all([

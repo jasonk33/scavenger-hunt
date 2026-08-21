@@ -9,7 +9,8 @@
     "lint": "eslint",
     "smoke": "node scripts/smoke.mjs",
     "demo": "node scripts/demo-data.mjs",
-    "demo:reset": "node scripts/demo-data.mjs --reset"
+    "demo:reset": "node scripts/demo-data.mjs --reset",
+    "qa": "node qa/run-all.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

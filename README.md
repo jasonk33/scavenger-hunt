@@ -65,6 +65,20 @@ against anything but localhost, because it briefly switches rounds and closes
 submissions; `npm run smoke -- --allow-prod` overrides that once the event is
 not running.
 
+```bash
+npm run qa        # also with the dev server running
+```
+
+`qa` drives the app through a real browser with Playwright: picking files through
+the actual file chooser, cancelling mid-upload, judging, flipping to Round 2 with
+a Round 1 backlog still pending, and racing two judges against the same
+submission. `smoke` proves the API is right; `qa` proves the screens are.
+
+Each driver creates its own `__qa`-prefixed fixtures, restores every setting in a
+`finally`, and then diffs a snapshot of the real event data — including which
+secret challenges are revealed — so a run that quietly changes your event fails
+instead of passing.
+
 Open **Admin → health** for the same checks from the browser.
 
 ### 5. Deploy

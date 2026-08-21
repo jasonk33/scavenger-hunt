@@ -68,6 +68,10 @@ export default function SubmitPage() {
   const pendingTask = useRef<Task | null>(null);
   const handle = useRef<UploadHandle | null>(null);
   const currentSubmissionId = useRef<string | null>(null);
+  // Set the moment tus reports success. From that point the bytes are already in
+  // Storage and the row is being promoted, but the progress card is still
+  // rendering "uploading" -- so Cancel is still on screen and still tappable.
+  const settled = useRef(false);
   const wakeRef = useRef<ReturnType<typeof createWakeLock> | null>(null);
   if (!wakeRef.current) wakeRef.current = createWakeLock();
   const wake = wakeRef.current;
@@ -131,6 +135,10 @@ export default function SubmitPage() {
    * the page disabled and the progress card impossible to dismiss.
    */
   const cancelUpload = () => {
+    // Once tus has succeeded there is nothing left to cancel: the bytes are in
+    // Storage and the row is mid-promotion. Claiming "Nothing was sent" here
+    // would send the player off to re-upload something already in the queue.
+    if (settled.current) return;
     handle.current?.abort();
     handle.current = null;
     wake.release();
@@ -170,6 +178,7 @@ export default function SubmitPage() {
       retries: 0,
       status: "uploading",
     });
+    settled.current = false;
 
     let submissionId: string;
     let objectName: string;
@@ -219,6 +228,7 @@ export default function SubmitPage() {
         void api(`/api/submissions/${submissionId}`, { method: "DELETE" }).catch(() => {});
       },
       onSuccess: async () => {
+        settled.current = true;
         wake.release();
         handle.current = null;
         currentSubmissionId.current = null;
