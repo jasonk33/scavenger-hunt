@@ -10,21 +10,18 @@
  * DOM still holds the whole name after CSS has ellipsised it away. So this probe
  * measures geometry: clientWidth is what a player can actually read.
  *
- * "Nothing is ever clipped" is not an achievable invariant -- a 30-character team
- * name and a 13-character player name genuinely do not both fit on a 320px
- * phone, and an ellipsis is the right answer there. So each name declares how
- * much of itself has to survive:
+ * The assertion is simply that NO name is ever clipped, at any width. An earlier
+ * version of this probe only required each name to keep a "readable" 56px, on the
+ * theory that two long names cannot both fit on a narrow phone and an ellipsis is
+ * the honest answer. That was the wrong bar, and it passed a build that showed a
+ * real phone "The Birthday Bur... / Alex Riv...". Names now sit on separate lines
+ * and wrap, so full visibility is achievable and is what gets asserted.
  *
- *   whole     never clipped at any width. Only the player's own name on
- *             /submit, which is how they check they picked the right person --
- *             it gets its own line and wraps rather than truncating, so this
- *             holds however long a name gets.
- *   readable  may ellipsise once space runs out, but must never be squeezed
- *             below a legible width by the name next to it.
- *
- * Widths are real devices, not round numbers: 390 is an iPhone 14/15, 360 a
- * common Android, and 320 is what an iPhone reports with Display Zoom on --
- * which is also the closest thing to the enlarged text in the bug report.
+ * The widths go far below any real device on purpose. Safari page zoom and iOS
+ * larger-text settings scale the whole page, so a 390px phone with the text
+ * turned up lays out like a much narrower one -- the bug report screenshot had
+ * the nav bar overflowing, which reproduces here at about 300px. Testing down to
+ * 260px covers that headroom.
  */
 import { chromium } from "@playwright/test";
 import {
@@ -39,14 +36,13 @@ const LONG_TEAM = "__qa The Pigeon Intelligence Agency";
 const MID_TEAM = "__qa The Birthday Bureau";
 const PLAYER = "__qa Quinn Barrett";
 
-// Below this a name is not a name any more -- roughly seven characters.
-const FLOOR_PX = 56;
-
 const CASES = [
-  { label: "typical 390px", team: MID_TEAM, width: 390, typical: true },
-  { label: "worst   390px", team: LONG_TEAM, width: 390, typical: false },
-  { label: "worst   360px", team: LONG_TEAM, width: 360, typical: false },
-  { label: "worst   320px", team: LONG_TEAM, width: 320, typical: false },
+  { label: "mid  390px", team: MID_TEAM, width: 390 },
+  { label: "mid  300px", team: MID_TEAM, width: 300 },
+  { label: "long 390px", team: LONG_TEAM, width: 390 },
+  { label: "long 320px", team: LONG_TEAM, width: 320 },
+  { label: "long 300px", team: LONG_TEAM, width: 300 },
+  { label: "long 260px", team: LONG_TEAM, width: 260 },
 ];
 
 const before = await snapshot();
@@ -89,30 +85,30 @@ const SCREENS = [
   {
     route: "/submit",
     player: true,
-    ready: "header .pill.name",
+    ready: "header .pill-wrap",
     row: "header",
     names: [
-      { sel: "header h1", what: "player name", show: "whole" },
-      { sel: "header .pill.name", what: "team name", show: "readable" },
+      { sel: "header h1", what: "player name" },
+      { sel: "header .pill-wrap", what: "team name" },
     ],
   },
   {
     route: "/feed",
     ready: ".card .swatch",
-    row: ".card .row",
+    row: ".cardhead",
     names: [
-      { sel: ".card .row b.name", what: "team name", show: "readable" },
-      { sel: ".card .row span.name", what: "player name", show: "readable" },
+      { sel: ".cardhead b", what: "team name" },
+      { sel: ".cardhead .byline", what: "player name" },
     ],
   },
   {
     route: "/judge",
     organizer: true,
     ready: ".card .swatch",
-    row: ".card .row",
+    row: ".cardhead",
     names: [
-      { sel: ".card .row button.name", what: "team name", show: "readable" },
-      { sel: ".card .row span.name", what: "player name", show: "readable" },
+      { sel: ".cardhead button", what: "team name" },
+      { sel: ".cardhead .byline", what: "player name" },
     ],
   },
 ];
@@ -165,20 +161,14 @@ try {
         const e = m.els[i];
         if (!e) { check(`${c.label} ${s.route} has a ${n.what}`, false, `no element for ${n.sel}`); return; }
 
-        if (n.show === "whole") {
-          // 1px of slack: sub-pixel text metrics round up on some glyphs even
-          // when nothing is actually hidden.
-          check(`${c.label} ${s.route} shows the whole ${n.what}`, e.clipped <= 1,
-            `"${e.text}" clipped by ${e.clipped}px (visible ${e.w}px of ${e.natural}px)`);
-        } else {
-          check(`${c.label} ${s.route} keeps the ${n.what} readable`,
-            e.w >= Math.min(e.natural, FLOOR_PX),
-            `"${e.text}" is only ${e.w}px wide (needs ${e.natural}px) -- starved by the other name`);
-        }
+        // 1px of slack: sub-pixel text metrics round up on some glyphs even when
+        // nothing is actually hidden.
+        check(`${c.label} ${s.route} shows the whole ${n.what}`, e.clipped <= 1,
+          `"${e.text}" clipped by ${e.clipped}px (visible ${e.w}px of ${e.natural}px)`);
       });
 
       note(`${c.label} ${s.route.padEnd(8)} ${s.names.map((n, i) => `${n.what}=${m.els[i]?.w ?? "?"}px`).join("  ")}`);
-      await shot(page, `trunc-${s.route.slice(1)}-${c.width}-${c.typical ? "typical" : "worst"}`);
+      await shot(page, `trunc-${s.route.slice(1)}-${c.width}-${c.team === LONG_TEAM ? "long" : "mid"}`);
       await ctx.close();
     }
   }

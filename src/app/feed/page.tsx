@@ -51,14 +51,16 @@ export default function FeedPage() {
       <div style={{ display: "grid", gap: 14 }}>
         {items.map((it) => (
           <div key={it.id} className="card" style={{ margin: 0 }}>
-            <div className="row" style={{ marginBottom: 10 }}>
-              <span className="swatch" style={{ background: it.teamColor }} />
-              <b className="nowrap name" style={{ fontSize: 15 }}>{it.teamName}</b>
-              <span className="muted tiny nowrap name">{it.playerName}</span>
-              <span className={`pill push${it.starred ? " pill-warn" : ""}`}>
-                {it.starred ? "⭐ " : ""}
-                {it.points} pts
-              </span>
+            <div className="cardhead">
+              <div className="row">
+                <span className="swatch" style={{ background: it.teamColor }} />
+                <b style={{ fontSize: 15 }}>{it.teamName}</b>
+                <span className={`pill push${it.starred ? " pill-warn" : ""}`}>
+                  {it.starred ? "⭐ " : ""}
+                  {it.points} pts
+                </span>
+              </div>
+              <div className="byline muted tiny">{it.playerName}</div>
             </div>
 
             <div className="media-box">

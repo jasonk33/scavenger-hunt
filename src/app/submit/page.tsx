@@ -299,7 +299,7 @@ export default function SubmitPage() {
             // Team colours are organizer-editable, so the label colour is derived
             // from the swatch rather than assumed to be white.
             <span
-              className="pill nowrap name"
+              className="pill pill-wrap"
               style={{
                 background: data.team.color,
                 color: inkOn(data.team.color),

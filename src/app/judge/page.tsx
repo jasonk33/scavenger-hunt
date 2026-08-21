@@ -261,21 +261,23 @@ function JudgeQueue() {
 
       {current && (
         <div className="card">
-          <div className="row" style={{ marginBottom: 10 }}>
-            <span className="swatch" style={{ background: current.teamColor }} />
-            {/* Tap the team name to move a submission that landed on the wrong
-                scoreboard -- usually because the player tapped the wrong name
-                when they joined. */}
-            <button
-              className="btn-plain nowrap name"
-              style={{ fontWeight: 700 }}
-              onClick={() => setReassigning((v) => !v)}
-              title="Wrong team? Tap to move it"
-            >
-              {current.teamName}
-            </button>
-            <span className="muted tiny nowrap name">{current.playerName}</span>
-            <span className="pill pill-solid push">{current.taskPoints} pts</span>
+          <div className="cardhead">
+            <div className="row">
+              <span className="swatch" style={{ background: current.teamColor }} />
+              {/* Tap the team name to move a submission that landed on the wrong
+                  scoreboard -- usually because the player tapped the wrong name
+                  when they joined. */}
+              <button
+                className="btn-plain"
+                style={{ fontWeight: 700 }}
+                onClick={() => setReassigning((v) => !v)}
+                title="Wrong team? Tap to move it"
+              >
+                {current.teamName}
+              </button>
+              <span className="pill pill-solid push">{current.taskPoints} pts</span>
+            </div>
+            <div className="byline muted tiny">{current.playerName}</div>
           </div>
 
           {reassigning && (
@@ -332,7 +334,7 @@ function JudgeQueue() {
               <span className="pill pill-bad">task is video-only — this is a photo</span>
             )}
             {current.duplicate && (
-              <span className="pill pill-warn">team already has this task approved</span>
+              <span className="pill pill-warn pill-wrap">team already has this task approved</span>
             )}
             <span className="pill muted">{fmtBytes(current.sizeBytes)}</span>
           </div>
@@ -379,7 +381,10 @@ function JudgeQueue() {
                 </button>
               </div>
 
-              <div className="row" style={{ gap: 8 }}>
+              {/* Wraps rather than overflowing: at a large text size these two
+                  stop fitting side by side, and the judge's primary control
+                  scrolling off the edge is not an acceptable failure. */}
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <button
                   className="btn btn-lg btn-good"
                   style={{ flex: 2 }}
