@@ -10,7 +10,8 @@
     "smoke": "node scripts/smoke.mjs",
     "demo": "node scripts/demo-data.mjs",
     "demo:reset": "node scripts/demo-data.mjs --reset",
-    "qa": "node qa/run-all.mjs"
+    "qa": "node qa/run-all.mjs",
+    "ready": "node scripts/ready.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

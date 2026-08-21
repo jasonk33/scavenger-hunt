@@ -301,8 +301,13 @@ export default function SubmitPage() {
           >
             {data.team.name}
           </span>
-        ) : (
+        ) : data ? (
           <span className="pill pill-warn">no team</span>
+        ) : (
+          // Before the first poll lands `data` is null, which is not the same as
+          // "not on a team". Warning here would tell every player they were
+          // unrostered for as long as the request takes.
+          <span className="pill muted">…</span>
         )}
         <span className="muted tiny push">R{data?.settings.round ?? "–"}</span>
       </header>

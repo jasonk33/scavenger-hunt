@@ -85,6 +85,17 @@ Each driver creates its own `__qa`-prefixed fixtures, restores every setting in 
 secret challenges are revealed — so a run that quietly changes your event fails
 instead of passing.
 
+```bash
+npm run ready     # no dev server needed
+```
+
+`ready` is the one to run on the morning of. It doesn't test the app — it checks
+that *your event* is set up: submissions open, no stale banner, every player on a
+team, secret challenges still hidden, no test fixtures left behind, upload key
+valid. A crashed test run once left submissions closed, and nothing about the app
+looks broken in that state — every player just sees "Submissions are closed" and
+assumes it's them.
+
 Open **Admin → health** for the same checks from the browser.
 
 ### 5. Deploy

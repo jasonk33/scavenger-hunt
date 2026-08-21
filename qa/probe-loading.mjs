@@ -14,7 +14,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, asOrganizer, check, note, summary, snapshot,
+  BASE, asOrganizer, asPlayer, setup, teardown, call, check, note, summary, snapshot,
 } from "./lib.mjs";
 
 const HOLD_MS = 4000;
@@ -26,14 +26,24 @@ const SCREENS = [
   { route: "/leaderboard", api: "**/api/leaderboard**", skipFirst: 0, heading: "Scores" },
   { route: "/feed", api: "**/api/feed**", skipFirst: 0, heading: "Feed" },
   { route: "/judge", api: "**/api/judge/queue**", skipFirst: 1, heading: "Judge" },
+  { route: "/submit", api: "**/api/state**", skipFirst: 0, heading: "", player: true },
 ];
 
 const before = await snapshot();
+await teardown();
+const fx = await setup({ players: ["__qa Loader"], teams: ["__qa LoadTeam"] });
+const player = fx.player("__qa Loader");
+await call("/api/admin/roster", {
+  method: "POST",
+  body: JSON.stringify({ round: 1, entries: [{ playerId: player.id, teamId: fx.teamOf("__qa LoadTeam", 1).id }] }),
+});
+
 const browser = await chromium.launch();
 try {
   for (const s of SCREENS) {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await asOrganizer(ctx);
+    if (s.player) await asPlayer(ctx, player);
     const page = await ctx.newPage();
 
     let seen = 0;
@@ -59,7 +69,8 @@ try {
       const wrap = document.querySelector(".wrap");
       return wrap ? wrap.innerText.replace(/\s+/g, " ").trim() : "";
     }))
-      .replace(new RegExp(`^${s.heading}`), "")
+      .replace(new RegExp(`^${s.heading || "\\u0000"}`), "")
+      .replace(/^__qa Loader switch/, "")
       .replace(/Round 1 Round 2/, "")
       .replace(/\d+ waiting/, "")
       .trim();
@@ -72,7 +83,7 @@ try {
     // The one that actually matters: a screen may say nothing, but it must never
     // assert a result it does not have.
     check(`${s.route} does not claim a result before its data has loaded`,
-      !/Queue is empty|Nothing approved yet|Nothing waiting|Nothing scored/i.test(body),
+      !/Queue is empty|Nothing approved yet|Nothing waiting|Nothing scored|no team|not on a Round/i.test(body),
       `claimed "${body.slice(0, 70)}" while its data request was still in flight`);
 
     // And it must recover once the data lands.
@@ -85,6 +96,7 @@ try {
   }
 } finally {
   await browser.close();
+  await teardown();
   const after = await snapshot();
   console.log(`\nreal data intact: ${JSON.stringify(before) === JSON.stringify(after)}`);
   summary("Loading states");
