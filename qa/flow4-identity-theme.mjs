@@ -4,7 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
+  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
   seed, check, note, summary, call,
 } from "./lib.mjs";
 

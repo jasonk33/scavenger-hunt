@@ -51,6 +51,11 @@ export default function LeaderboardPage() {
 
       {error && <div className="card card-bad tiny bad">Connection hiccup — retrying.</div>}
 
+      {/* On a weak signal the first poll can take several seconds. Without this
+          the two screens everyone watches sit completely blank under their
+          heading, which reads as "the app is broken" rather than "it's loading". */}
+      {!data && !error && <p className="muted" style={{ marginTop: 16 }}>Loading…</p>}
+
       <div className="stack">
         {rows.map((r) => {
           // Ties genuinely share the lead, so this highlights every team on the

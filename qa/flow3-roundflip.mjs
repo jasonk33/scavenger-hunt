@@ -48,7 +48,7 @@ try {
 
   /* ================= Round 1: bank some score ================= */
   console.log("\n1. Round 1 — bank a score, leave a backlog");
-  const banked = await seed({ playerId: alice.id, taskId: r1tasks[0].id });
+  await seed({ playerId: alice.id, taskId: r1tasks[0].id });
   const backlog1 = await seed({ playerId: alice.id, taskId: r1tasks[1].id });
   const backlog2 = await seed({ playerId: bob.id, taskId: r1tasks[2].id });
 

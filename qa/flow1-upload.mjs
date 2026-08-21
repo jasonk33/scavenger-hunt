@@ -9,7 +9,7 @@ import { chromium } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
   BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings,
-  check, bug, note, summary, asPlayer, call,
+  check, note, summary, call,
 } from "./lib.mjs";
 
 const MEDIA = new URL("./media/", import.meta.url).pathname;

@@ -8,7 +8,7 @@ import {
 
 const MEDIA = new URL("./media/", import.meta.url).pathname;
 // A genuinely large file so a throttled upload is unambiguously mid-flight.
-const HUGE = "/tmp/qa/huge.jpg";
+const HUGE = "/tmp/qa-cancel-huge.jpg";
 const base = readFileSync(`${MEDIA}big.jpg`);
 writeFileSync(HUGE, Buffer.concat([base, Buffer.alloc(3 * 1024 * 1024, 0x20)]));
 

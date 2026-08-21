@@ -45,6 +45,11 @@ export function bug(name, detail) {
   results.push({ name, ok: false, detail, bug: true });
   console.log(`  \x1b[33mBUG \x1b[0m ${name} — ${detail}`);
 }
+/** Shallow copy without the given keys -- for cloning a DB row minus its identity. */
+export function omit(obj, ...keys) {
+  return Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k)));
+}
+
 export function note(msg) {
   console.log(`  \x1b[36m··  \x1b[0m ${msg}`);
 }

@@ -20,8 +20,8 @@ try {
   });
 
   const { data: tasks } = await admin.from("tasks").select("id,title").eq("round", 1).order("sort_order").limit(2);
-  const photo = await seed({ playerId: alice.id, taskId: tasks[0].id, file: "photo.jpg" });
-  const video = await seed({ playerId: alice.id, taskId: tasks[1].id, file: "clip.mp4", name: "IMG_1.mov" });
+  await seed({ playerId: alice.id, taskId: tasks[0].id, file: "photo.jpg" });
+  await seed({ playerId: alice.id, taskId: tasks[1].id, file: "clip.mp4", name: "IMG_1.mov" });
 
   browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });

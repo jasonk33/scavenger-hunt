@@ -37,6 +37,8 @@ export default function FeedPage() {
         ))}
       </div>
 
+      {!data && <p className="muted" style={{ marginTop: 16 }}>Loading…</p>}
+
       {data && items.length === 0 && (
         <div className="empty">
           <b>Nothing approved yet</b>
