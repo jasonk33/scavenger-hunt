@@ -93,6 +93,42 @@ const TAG = "__qa";
 // the integrity diff could never see it. Match exactly in JS instead.
 const isQa = (s) => typeof s === "string" && s.startsWith(TAG);
 
+/**
+ * Refuse to run while a real submission is waiting for review.
+ *
+ * The drivers that judge through the UI review whatever sits at the FRONT of
+ * the queue and assume it is their own fixture. The queue is ordered oldest
+ * first, so one real submission awaiting review sits ahead of every `__qa` one
+ * -- and the driver approves that instead. This is not hypothetical: a suite run
+ * approved one of Jason's photos at +1 with a +2 bonus and starred it, and
+ * because the integrity snapshot only counted rows back then, every driver still
+ * reported "real data intact: true".
+ *
+ * A convention for drivers to follow would not have caught it, so this is a hard
+ * stop at import time -- it fires for a single driver as much as for `npm run qa`.
+ */
+if (!process.argv.includes("--allow-real-data")) {
+  const { data: allPlayers } = await admin.from("players").select("id,name");
+  const qaPlayers = new Set((allPlayers ?? []).filter((p) => isQa(p.name)).map((p) => p.id));
+  const { data: waiting } = await admin
+    .from("submissions")
+    .select("id,player_id")
+    .in("status", ["pending", "uploading"]);
+  const real = (waiting ?? []).filter((s) => !qaPlayers.has(s.player_id));
+  if (real.length > 0) {
+    const names = new Map((allPlayers ?? []).map((p) => [p.id, p.name]));
+    console.error(
+      `\nRefusing to run: ${real.length} real submission${real.length === 1 ? "" : "s"} ` +
+        `${real.length === 1 ? "is" : "are"} still waiting to be judged.\n` +
+        real.map((s) => `  - ${names.get(s.player_id) ?? s.player_id} (${s.id.slice(0, 8)})`).join("\n") +
+        `\n\nThe judging drivers act on the front of the queue, which is one of these.` +
+        `\nJudge them at /judge first, or clear them, then run again.` +
+        `\nPass --allow-real-data to override.\n`
+    );
+    process.exit(1);
+  }
+}
+
 /** Creates an isolated team (both rounds) plus players rostered into round 1. */
 export async function setup({ players = ["__qa Alice", "__qa Bob"], teams = ["__qa Red", "__qa Blue"] } = {}) {
   for (const name of teams) {
@@ -184,13 +220,18 @@ export async function snapshot() {
     // nothing countable but spoils a secret challenge, and deactivating a task
     // silently removes it from every player's list.
     admin.from("tasks").select("id,title,points,round,is_secret,revealed_at,active,requires_video").order("id"),
-    admin.from("submissions").select("id,status,team_id,points_awarded,bonus"),
+    admin.from("submissions").select("id,status,team_id,player_id,points_awarded,bonus").order("id"),
     admin.from("settings").select("key,value"),
   ]);
   const realPlayers = (players.data ?? []).filter((p) => !isQa(p.name));
   const realTeams = (teams.data ?? []).filter((t) => !isQa(t.name));
   const realTasks = (tasks.data ?? []).filter((t) => !isQa(t.title));
   const qaPlayers = new Set((players.data ?? []).filter((p) => isQa(p.name)).map((p) => p.id));
+  // A driver that judged one of Jason's own submissions instead of its own
+  // fixture leaves the row COUNT unchanged, so counting alone reported that as
+  // intact. Status, team and points are the fields a stray click actually
+  // moves, and they are what decides the scoreboard.
+  const realSubs = (subs.data ?? []).filter((s) => !qaPlayers.has(s.player_id));
   return {
     players: realPlayers.length,
     teams: realTeams.length,
@@ -201,7 +242,10 @@ export async function snapshot() {
     taskFingerprint: realTasks
       .map((t) => `${t.id}:${t.points}:${t.requires_video}:${t.is_secret}`)
       .join("|"),
-    submissions: (subs.data ?? []).length,
+    submissions: realSubs.length,
+    submissionFingerprint: realSubs
+      .map((s) => `${s.id}:${s.status}:${s.team_id}:${s.points_awarded}:${s.bonus}`)
+      .join("|"),
     settings: Object.fromEntries((settings.data ?? []).map((s) => [s.key, s.value])),
   };
 }
@@ -240,6 +284,20 @@ export async function asOrganizer(context) {
 
 export async function shot(page, name) {
   await page.screenshot({ path: new URL(`./shots/${name}.png`, import.meta.url).pathname, fullPage: false });
+}
+
+/**
+ * How many Upload/Redo buttons on /submit are still tappable.
+ *
+ * Scoped by label rather than counting every enabled button in a task row: those
+ * rows also carry a "See" button, and that one deliberately stays live when
+ * uploading is blocked. During the 3:30 break submissions are closed and looking
+ * back at what you sent is exactly what people want to do.
+ */
+export function enabledUploadButtons(page) {
+  return page
+    .locator(".card-flat button:not(:disabled)")
+    .evaluateAll((els) => els.filter((e) => /^(Upload|Redo)$/.test(e.textContent.trim())).length);
 }
 
 /* ---------- seeding ---------- */
