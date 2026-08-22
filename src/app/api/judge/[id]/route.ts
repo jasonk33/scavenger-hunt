@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, groupMemberIds } from "@/lib/db";
 import { isOrganizer } from "@/lib/settings";
 import { json, fail } from "@/lib/http";
 import type { Database } from "@/lib/database.types";
@@ -33,10 +33,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const { data: existing } = await sb
     .from("submissions")
-    .select("id,task_points,bonus,starred,status,round,team_id,judged_at")
+    .select("id,group_id,task_points,bonus,starred,status,round,team_id,judged_at")
     .eq("id", id)
     .maybeSingle();
   if (!existing) return fail("Submission not found.", 404);
+
+  /*
+   * A decision applies to every file in the group, not just the one the judge
+   * happened to tap.
+   *
+   * Under once-per-team scoring, approving one photo of three and rejecting the
+   * others would mean nothing -- the task still scores once at its best result.
+   * So the set is the unit, and the write below covers all of it in a single
+   * statement rather than a loop that could half-finish.
+   *
+   * A group of one -- every submission that predates this, and every ordinary
+   * single-file upload -- resolves to `[id]` and behaves exactly as before.
+   */
+  const memberIds = await groupMemberIds(existing);
 
   /*
    * Secondary edits (star, bonus, reassign) bump judged_at so the
@@ -140,18 +154,30 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
    * transition, so a status-only check matches for both and the second write
    * silently overwrites the first's bonus and star. judged_at changes on every
    * decision, so it distinguishes them.
+   *
+   * Applied to the whole group. The guard is what scopes it: only the members
+   * actually sitting in the state this screen last saw are written. A file that
+   * finished uploading a moment ago and joined the group late is simply not
+   * matched -- the judge's decision still lands on everything they were looking
+   * at, and the straggler comes back round as its own pending item rather than
+   * turning the whole call into an error. Requiring every member to match would
+   * have made that late arrival block the decision outright.
    */
-  let write = sb.from("submissions").update(patch).eq("id", id).eq("status", existing.status);
+  let write = sb.from("submissions").update(patch).in("id", memberIds).eq("status", existing.status);
   write =
     existing.judged_at === null
       ? write.is("judged_at", null)
       : write.eq("judged_at", existing.judged_at);
 
-  const { data, error } = await write
-    .select("id,status,points_awarded,bonus,starred")
-    .maybeSingle();
+  const { data, error } = await write.select("id,status,points_awarded,bonus,starred");
 
   if (error) return fail(error.message, 500);
-  if (!data) return fail("Someone else just judged this one. Refresh to see the decision.", 409);
-  return json({ ok: true, submission: data });
+  // Nothing matched: another organizer moved this out from under us. Unchanged
+  // from the single-row behaviour, because a group is written in lockstep -- if
+  // the row the judge tapped still matches, its siblings do too.
+  if (!data || data.length === 0) {
+    return fail("Someone else just judged this one. Refresh to see the decision.", 409);
+  }
+  const decided = data.find((r) => r.id === id) ?? data[0];
+  return json({ ok: true, submission: decided, files: data.length });
 }

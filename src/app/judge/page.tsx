@@ -6,9 +6,11 @@ import { api, errorMessage, fmtBytes, usePoll } from "@/lib/client";
 type Item = {
   id: string;
   status: string;
+  media: Array<{ id: string; url: string; isVideo: boolean; sizeBytes: number | null }>;
   mediaUrl: string;
   isVideo: boolean;
   sizeBytes: number | null;
+  note: string | null;
   taskTitle: string;
   taskPoints: number;
   requiresVideo: boolean;
@@ -381,34 +383,63 @@ function JudgeQueue() {
                 beats trying to enforce it at upload time and blocking a player
                 mid-round over a technicality. */}
             {current.requiresVideo && !current.isVideo && (
-              <span className="pill pill-bad pill-wrap">task is video-only — this is a photo</span>
+              <span className="pill pill-bad pill-wrap">
+                {current.media.length > 1
+                  ? "task is video-only — none of these is a clip"
+                  : "task is video-only — this is a photo"}
+              </span>
             )}
             {current.duplicate && (
               <span className="pill pill-warn pill-wrap">team already has this task approved</span>
             )}
+            {current.media.length > 1 && (
+              <span className="pill pill-accent">{current.media.length} files — one decision</span>
+            )}
             <span className="pill muted">{fmtBytes(current.sizeBytes)}</span>
           </div>
 
-          <div className="media-box">
-            {current.isVideo ? (
-              <video
-                key={current.id}
-                className="media"
-                controls
-                playsInline
-                preload="auto"
-                src={`${current.mediaUrl}#t=0.1`}
-              />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={current.id} className="media" src={current.mediaUrl} alt={current.taskTitle} />
-            )}
+          {/* What the team says the judge is looking at. Sits ABOVE the media,
+              because a photo whose point isn't obvious is exactly the case this
+              exists for -- read first, then look. */}
+          {current.note && (
+            <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
+              <div className="stat-label" style={{ marginBottom: 4 }}>
+                They said
+              </div>
+              <div style={{ overflowWrap: "anywhere", lineHeight: 1.4 }}>{current.note}</div>
+            </div>
+          )}
+
+          {/* Every file in the set, stacked. A carousel would hide evidence
+              behind a swipe the judge has no reason to expect, and approving a
+              set on the strength of the one photo that happened to be on top is
+              exactly the mistake this has to prevent. */}
+          <div className="stack" style={{ gap: 8 }}>
+            {current.media.map((m) => (
+              <div className="media-box" key={m.id}>
+                {m.isVideo ? (
+                  <video
+                    key={m.id}
+                    className="media"
+                    controls
+                    playsInline
+                    preload="auto"
+                    src={`${m.url}#t=0.1`}
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={m.id} className="media" src={m.url} alt={current.taskTitle} />
+                )}
+              </div>
+            ))}
           </div>
 
-          {/* Quietly warms the next item's media so the queue feels instant. */}
-          {next && !next.isVideo && (
+          {/* Quietly warms the next item's media so the queue feels instant.
+              Only its first file: warming a whole set would spend the egress
+              budget on evidence the judge may never reach. */}
+          {next && !next.media[0].isVideo && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={next.mediaUrl} alt="" style={{ display: "none" }} />
+            <img src={next.media[0].url} alt="" style={{ display: "none" }} />
           )}
 
           {!rejecting ? (
@@ -528,6 +559,11 @@ function JudgeQueue() {
                     {r.teamName} · {r.playerName}
                   </div>
                 </button>
+                {/* Says what is behind the tap without fetching any of it: a
+                    set is more work than a single photo, and a note is often
+                    the reason a confusing one makes sense. */}
+                {r.media.length > 1 && <span className="pill">{r.media.length}📎</span>}
+                {r.note && <span className="pill" title={r.note}>note</span>}
                 <span className="pill">{r.taskPoints}</span>
               </div>
             ))}

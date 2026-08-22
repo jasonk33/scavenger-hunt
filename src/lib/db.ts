@@ -41,6 +41,24 @@ export function mediaUrl(objectName: string): string {
 }
 
 /**
+ * Every submission id that shares a group with this row, the row itself
+ * included. This is what turns "one row is one file" into "the judge decides a
+ * set", without any of the reads or writes having to know how grouping works.
+ *
+ * A row whose `group_id` is null is its own group, and is answered without a
+ * query -- that is every row written before the column existed, and it is what
+ * makes a missing backfill harmless rather than an outage.
+ */
+export async function groupMemberIds(row: { id: string; group_id: string | null }): Promise<string[]> {
+  if (!row.group_id) return [row.id];
+  const { data } = await db().from("submissions").select("id").eq("group_id", row.group_id);
+  const ids = (data ?? []).map((r) => r.id);
+  // Never return an empty set: a failed read would otherwise turn a judging
+  // write into a no-op that looks like someone else got there first.
+  return ids.length > 0 ? ids : [row.id];
+}
+
+/**
  * Upload credentials handed to the browser at runtime rather than baked in as
  * NEXT_PUBLIC_* at build time, so a wrong key is fixed by changing one env var
  * instead of hunting a stale bundle.

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, errorMessage, fmtBytes, getMe, inkOn, setMe, usePoll, type Me } from "@/lib/client";
+import { groupBy, NOTE_MAX } from "@/lib/groups";
 import { isJwt, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
 
 type Task = {
@@ -21,6 +22,10 @@ type Sub = {
   points_awarded: number | null;
   bonus: number;
   reject_reason: string | null;
+  created_at: string;
+  /** Files sharing this are one piece of evidence, judged as a unit. */
+  groupId: string;
+  note: string | null;
   mediaUrl: string;
   isVideo: boolean;
   playerName: string;
@@ -52,13 +57,27 @@ type State = {
 };
 
 type Job = {
-  taskTitle: string;
+  task: Task;
   fileName: string;
   size: number;
   pct: number;
   retries: number;
   status: "uploading" | "done" | "error";
   message?: string;
+  /**
+   * The submission every file in this batch hangs off, set as soon as the row is
+   * reserved rather than when the bytes land -- so the note field is live while
+   * the upload is still running, which is the dead time the player would
+   * otherwise spend watching a progress bar.
+   */
+  anchorId: string | null;
+  /**
+   * Whether anything in this batch actually reached the queue. A failure after
+   * one file has landed is a very different message from a failure on the
+   * first: telling the player nothing was sent would have them re-upload
+   * something that is already waiting to be judged.
+   */
+  sent: boolean;
 };
 
 export default function SubmitPage() {
@@ -69,6 +88,9 @@ export default function SubmitPage() {
   const [switching, setSwitching] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingTask = useRef<Task | null>(null);
+  // Set when the picker was opened by "Add another": the submission the next
+  // file should join rather than stand beside.
+  const pendingGroup = useRef<string | null>(null);
   const handle = useRef<UploadHandle | null>(null);
   const currentSubmissionId = useRef<string | null>(null);
   // Set the moment tus reports success. From that point the bytes are already in
@@ -126,8 +148,15 @@ export default function SubmitPage() {
     return [...g.entries()].sort((a, b) => a[0] - b[0]);
   }, [tasks]);
 
-  const pickFor = (task: Task) => {
+  /**
+   * Open the file picker for a task. `groupWith` names a submission the new file
+   * is another angle on, rather than a separate piece of evidence -- passed
+   * straight through to the server, which decides whether the two may actually
+   * be grouped.
+   */
+  const pickFor = (task: Task, groupWith?: string) => {
     pendingTask.current = task;
+    pendingGroup.current = groupWith ?? null;
     fileInput.current?.click();
   };
 
@@ -148,7 +177,20 @@ export default function SubmitPage() {
     const id = currentSubmissionId.current;
     currentSubmissionId.current = null;
     if (id) void api(`/api/submissions/${id}`, { method: "DELETE" }).catch(() => {});
-    setJob((j) => j && { ...j, status: "error", message: "Cancelled. Nothing was sent." });
+    setJob(
+      (j) =>
+        j && {
+          ...j,
+          status: "error",
+          message: j.sent
+            ? "Cancelled. The file before it is still in the queue."
+            : "Cancelled. Nothing was sent.",
+          // The row this note would have been saved against has just been
+          // deleted. Unless an earlier file in the batch survived, there is
+          // nothing left to attach a note to.
+          anchorId: j.sent ? j.anchorId : null,
+        }
+    );
   };
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -156,31 +198,39 @@ export default function SubmitPage() {
     // Reset immediately so picking the SAME file twice still fires a change event.
     e.target.value = "";
     const task = pendingTask.current;
+    const groupWith = pendingGroup.current;
     pendingTask.current = null;
+    pendingGroup.current = null;
     if (!file || !task || !me || !data) return;
 
     if (!isJwt(data.upload.anonKey)) {
       setJob({
-        taskTitle: task.title,
+        task,
         fileName: file.name,
         size: file.size,
         pct: 0,
         retries: 0,
         status: "error",
+        anchorId: null,
+        sent: false,
         message:
           "The upload key on the server isn't valid. Tell an organizer: it must be the legacy anon key.",
       });
       return;
     }
 
-    setJob({
-      taskTitle: task.title,
+    setJob((prev) => ({
+      task,
       fileName: file.name,
       size: file.size,
       pct: 0,
       retries: 0,
       status: "uploading",
-    });
+      // Another angle on the batch already on screen keeps its anchor, so the
+      // note the player has been typing stays attached to the same group.
+      anchorId: groupWith && prev?.anchorId === groupWith ? prev.anchorId : null,
+      sent: Boolean(groupWith && prev?.anchorId === groupWith && prev.sent),
+    }));
     settled.current = false;
 
     let submissionId: string;
@@ -198,6 +248,7 @@ export default function SubmitPage() {
             taskId: task.id,
             fileName: file.name,
             fileType: file.type,
+            groupWith: groupWith ?? undefined,
           }),
         }
       );
@@ -205,8 +256,14 @@ export default function SubmitPage() {
       objectName = init.objectName;
       contentType = init.contentType;
       currentSubmissionId.current = submissionId;
+      // The row exists from here, so a note can be saved against it even though
+      // the bytes are still moving.
+      setJob((j) => j && { ...j, anchorId: j.anchorId ?? submissionId });
     } catch (err) {
-      setJob((j) => j && { ...j, status: "error", message: errorMessage(err, "Could not start.") });
+      setJob(
+        (j) =>
+          j && { ...j, status: "error", message: errorMessage(err, "Could not start."), anchorId: j.sent ? j.anchorId : null }
+      );
       return;
     }
 
@@ -226,7 +283,9 @@ export default function SubmitPage() {
         wake.release();
         handle.current = null;
         currentSubmissionId.current = null;
-        setJob((j) => j && { ...j, status: "error", message });
+        setJob(
+          (j) => j && { ...j, status: "error", message, anchorId: j.sent ? j.anchorId : null }
+        );
         // Drop the placeholder row so it doesn't linger as a phantom submission.
         void api(`/api/submissions/${submissionId}`, { method: "DELETE" }).catch(() => {});
       },
@@ -240,7 +299,7 @@ export default function SubmitPage() {
             method: "PATCH",
             body: JSON.stringify({ sizeBytes: file.size, mediaType: contentType }),
           });
-          setJob((j) => j && { ...j, pct: 100, status: "done" });
+          setJob((j) => j && { ...j, pct: 100, status: "done", sent: true });
           reload();
         } catch (err) {
           // The bytes ARE in Storage; only the registration failed. Say so, and
@@ -250,6 +309,7 @@ export default function SubmitPage() {
               j && {
                 ...j,
                 status: "error",
+                sent: true,
                 message: `Uploaded, but couldn't register it: ${errorMessage(err)}. Tell an organizer — the file did arrive.`,
               }
           );
@@ -411,7 +471,13 @@ export default function SubmitPage() {
       )}
 
       {job && (
-        <JobCard job={job} onClose={() => setJob(null)} onCancel={cancelUpload} />
+        <JobCard
+          job={job}
+          onClose={() => setJob(null)}
+          onCancel={cancelUpload}
+          onAddAnother={() => pickFor(job.task, job.anchorId ?? undefined)}
+          addAnotherBlocked={uploadBlocked}
+        />
       )}
 
       <input
@@ -444,6 +510,8 @@ export default function SubmitPage() {
                 disabled={uploadBlocked}
                 meId={me.id}
                 onPick={() => pickFor(t)}
+                onAddTo={(groupAnchorId) => pickFor(t, groupAnchorId)}
+                onChanged={reload}
               />
             ))}
           </div>
@@ -469,12 +537,16 @@ function TaskRow({
   disabled,
   meId,
   onPick,
+  onAddTo,
+  onChanged,
 }: {
   task: Task;
   subs: Sub[];
   disabled: boolean;
   meId: string;
   onPick: () => void;
+  onAddTo: (groupAnchorId: string) => void;
+  onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const approved = subs.find((s) => s.status === "approved");
@@ -485,6 +557,19 @@ function TaskRow({
      URL would 404. Everything else is viewable. Newest first, matching the
      order the server sends. */
   const viewable = subs.filter((s) => s.status !== "uploading");
+  // Several files sent as one piece of evidence are one thing to look at, and
+  // one thing the judge will decide. Counting groups rather than files keeps
+  // "See 2" meaning two submissions rather than two photos of the same moment.
+  const groups = useMemo(
+    () =>
+      // Oldest file first WITHIN a group, so the player sees the set in the same
+      // order the judge did. The list itself stays newest-group-first, which is
+      // the order the server sends.
+      groupBy(viewable, (s) => s.groupId).map((files) =>
+        [...files].sort((a, b) => a.created_at.localeCompare(b.created_at))
+      ),
+    [viewable]
+  );
 
   return (
     <div className={`card card-flat${approved ? " card-done" : ""}`}>
@@ -521,9 +606,9 @@ function TaskRow({
           >
             {approved || pending ? "Redo" : "Upload"}
           </button>
-          {viewable.length > 0 && (
+          {groups.length > 0 && (
             <button className="btn btn-sm" onClick={() => setOpen((v) => !v)}>
-              {open ? "Hide" : viewable.length > 1 ? `See ${viewable.length}` : "See"}
+              {open ? "Hide" : groups.length > 1 ? `See ${groups.length}` : "See"}
             </button>
           )}
         </div>
@@ -531,8 +616,15 @@ function TaskRow({
 
       {open && (
         <div className="stack" style={{ marginTop: 12 }}>
-          {viewable.map((s) => (
-            <SubmissionView key={s.id} sub={s} mine={s.player_id === meId} />
+          {groups.map((files) => (
+            <SubmissionView
+              key={files[0].groupId}
+              files={files}
+              mine={files[0].player_id === meId}
+              disabled={disabled}
+              onAddTo={onAddTo}
+              onChanged={onChanged}
+            />
           ))}
         </div>
       )}
@@ -541,8 +633,31 @@ function TaskRow({
 }
 
 /** One of the team's submissions for a task: what was sent, by whom, and where
-    it got to. Rendered only while expanded, so nothing downloads until asked. */
-function SubmissionView({ sub, mine }: { sub: Sub; mine: boolean }) {
+    it got to. Rendered only while expanded, so nothing downloads until asked.
+
+    "One" can be several files -- a photo and the clip that explains it -- which
+    the judge sees and decides together. They are laid out one under another
+    rather than in a carousel: a carousel hides evidence behind a gesture, and
+    the person reviewing this has already told us they want to look. */
+function SubmissionView({
+  files,
+  mine,
+  disabled,
+  onAddTo,
+  onChanged,
+}: {
+  files: Sub[];
+  mine: boolean;
+  disabled: boolean;
+  onAddTo: (groupAnchorId: string) => void;
+  onChanged: () => void;
+}) {
+  const sub = files[0];
+  const waiting = sub.status === "pending" || sub.status === "uploading";
+  // Read off whichever file carries it rather than off the first, so the note
+  // survives a member that predates it -- the same rule the judge screen and
+  // the feed follow.
+  const groupNote = files.find((f) => f.note)?.note ?? null;
   const label =
     sub.status === "approved"
       ? `✓ ${(sub.points_awarded ?? 0) + sub.bonus} pts`
@@ -554,6 +669,11 @@ function SubmissionView({ sub, mine }: { sub: Sub; mine: boolean }) {
     <div>
       <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
         <span className="name tiny muted">{mine ? "you" : sub.playerName}</span>
+        {files.length > 1 && (
+          <span className="pill">
+            {files.length} files
+          </span>
+        )}
         <span
           className={`pill pill-wrap push ${
             sub.status === "approved" ? "pill-good" : sub.status === "rejected" ? "pill-bad" : ""
@@ -562,26 +682,139 @@ function SubmissionView({ sub, mine }: { sub: Sub; mine: boolean }) {
           {label}
         </span>
       </div>
-      <div className="media-box">
-        {sub.isVideo ? (
-          /* Same iOS rule as the feed: preload="auto" and the #t=0.1 fragment,
-             or Safari renders an untappable black box. */
-          <video className="media" controls playsInline preload="auto" src={`${sub.mediaUrl}#t=0.1`} />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className="media" src={sub.mediaUrl} alt="Your submission" />
+
+      <div className="stack" style={{ gap: 8 }}>
+        {files.map((f) => (
+          <div className="media-box" key={f.id}>
+            {f.isVideo ? (
+              /* Same iOS rule as the feed: preload="auto" and the #t=0.1
+                 fragment, or Safari renders an untappable black box. */
+              <video className="media" controls playsInline preload="auto" src={`${f.mediaUrl}#t=0.1`} />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="media" src={f.mediaUrl} alt="Your submission" />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Still waiting means the note can still change the judge's mind, so it
+          stays editable. Once judged it is shown as it was, because a caption
+          rewritten under a decision is something the judge never saw. */}
+      {waiting ? (
+        <NoteEditor submissionId={sub.id} initial={groupNote ?? ""} onSaved={onChanged} />
+      ) : (
+        groupNote && (
+          <p className="tiny muted" style={{ margin: "8px 0 0", overflowWrap: "anywhere" }}>
+            “{groupNote}”
+          </p>
+        )
+      )}
+
+      {waiting && (
+        <button
+          className="btn btn-sm"
+          style={{ marginTop: 8 }}
+          disabled={disabled}
+          onClick={() => onAddTo(sub.id)}
+        >
+          Add another file to this
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The player's own note on a submission: what the judge is looking at.
+ *
+ * Saved on blur rather than behind a Save button, because the realistic ending
+ * to typing a note on a phone mid-scavenger-hunt is putting the phone away, not
+ * tapping one more control. Blur fires before the click that dismisses the card,
+ * so tapping OK saves too. The state line exists so a save that fails is
+ * visible: silently losing the note would be worse than not offering one.
+ */
+function NoteEditor({
+  submissionId,
+  initial,
+  onSaved,
+}: {
+  submissionId: string;
+  initial: string;
+  onSaved?: () => void;
+}) {
+  const [text, setText] = useState(initial);
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // What the server is known to hold. Compared against on every blur so
+  // re-blurring an unchanged box doesn't fire a pointless write.
+  const stored = useRef(initial);
+
+  const save = async () => {
+    const value = text.trim();
+    if (value === stored.current) return;
+    setState("saving");
+    try {
+      await api(`/api/submissions/${submissionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ noteOnly: true, note: value }),
+      });
+      stored.current = value;
+      setState("saved");
+      onSaved?.();
+    } catch {
+      setState("error");
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <textarea
+        className="field"
+        rows={2}
+        maxLength={NOTE_MAX}
+        placeholder="Add a note for the judge (optional)"
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setState("idle");
+        }}
+        onBlur={save}
+        style={{ resize: "none" }}
+      />
+      <div className="row" style={{ marginTop: 4 }}>
+        <span className="tiny muted grow">
+          {state === "saving" && "Saving…"}
+          {state === "saved" && "Note saved."}
+          {state === "error" && <span className="bad">Couldn&apos;t save that note.</span>}
+        </span>
+        {state === "error" && (
+          <button className="btn btn-sm" onClick={save}>
+            Retry
+          </button>
         )}
       </div>
     </div>
   );
 }
 
-function JobCard({ job, onClose, onCancel }: { job: Job; onClose: () => void; onCancel: () => void }) {
+function JobCard({
+  job,
+  onClose,
+  onCancel,
+  onAddAnother,
+  addAnotherBlocked,
+}: {
+  job: Job;
+  onClose: () => void;
+  onCancel: () => void;
+  onAddAnother: () => void;
+  addAnotherBlocked: boolean;
+}) {
   const tone =
     job.status === "error" ? "card-bad" : job.status === "done" ? "card-good" : "card-accent";
   return (
     <div className={`card ${tone}`}>
-      <div style={{ fontWeight: 700, lineHeight: 1.3 }}>{job.taskTitle}</div>
+      <div style={{ fontWeight: 700, lineHeight: 1.3 }}>{job.task.title}</div>
       <div className="muted tiny" style={{ marginBottom: 10 }}>
         {job.fileName} · {fmtBytes(job.size)}
         {job.retries > 0 && ` · retry ${job.retries}`}
@@ -625,6 +858,29 @@ function JobCard({ job, onClose, onCancel }: { job: Job; onClose: () => void; on
             Dismiss
           </button>
         </div>
+      )}
+
+      {/* The note goes here, next to the progress bar, because the upload is
+          dead time the player is already spending looking at this card. The row
+          exists from the moment it is reserved, so this is live before the bytes
+          have finished moving. */}
+      {job.anchorId && job.status !== "error" && (
+        <NoteEditor key={job.anchorId} submissionId={job.anchorId} initial="" />
+      )}
+
+      {/* Some tasks need two photos, or a photo and the clip that explains it.
+          Adding one at a time reuses the upload path exactly as it is rather
+          than introducing a batch, and a file that fails still leaves the ones
+          before it safely in the queue. */}
+      {job.anchorId && job.status !== "uploading" && (
+        <button
+          className="btn btn-sm btn-wide"
+          style={{ marginTop: 8 }}
+          disabled={addAnotherBlocked}
+          onClick={onAddAnother}
+        >
+          Add another photo or clip to this
+        </button>
       )}
     </div>
   );

@@ -50,6 +50,12 @@ type SubmissionRow = {
   bonus: number;
   starred: boolean;
   reject_reason: string | null;
+  // Several files that make up one piece of evidence. One row is still one file;
+  // this is what the judge reviews and decides as a unit. Nullable because rows
+  // created before the column exists have none -- read it as `group_id ?? id`.
+  group_id: string | null;
+  // Player-written, optional: what the judge is looking at.
+  note: string | null;
   created_at: Timestamp;
   judged_at: Timestamp | null;
 };
@@ -94,6 +100,8 @@ export type Database = {
         | "bonus"
         | "starred"
         | "reject_reason"
+        | "group_id"
+        | "note"
         | "created_at"
         | "judged_at"
       >;

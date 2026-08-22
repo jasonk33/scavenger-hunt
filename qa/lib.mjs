@@ -50,6 +50,23 @@ export function omit(obj, ...keys) {
   return Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k)));
 }
 
+/**
+ * An independent copy of a submission row, for drivers that need many of them
+ * without paying for a real tus upload each time.
+ *
+ * `group_id` has to go along with `id`. Files that share one are the SAME piece
+ * of evidence, and every screen collapses them into a single card -- so a clone
+ * that keeps it produces one post and one queue entry no matter how many rows
+ * are inserted. That silently guts any assertion about feed volume or queue
+ * length: three drivers asserted against 71, 41 and 9 rows and were really
+ * looking at one. Leaving it unset makes each clone its own group, which also
+ * exercises the null-group_id path that every row written before the column
+ * existed still takes.
+ */
+export function cloneSubmission(template, overrides = {}) {
+  return { ...omit(template, "id", "created_at", "group_id"), ...overrides };
+}
+
 export function note(msg) {
   console.log(`  \x1b[36m··  \x1b[0m ${msg}`);
 }
@@ -305,12 +322,20 @@ export function enabledUploadButtons(page) {
 import * as tus from "tus-js-client";
 
 /** Creates a real pending submission the same way a phone does. */
-export async function seed({ playerId, taskId, file = "photo.jpg", name }) {
+export async function seed({ playerId, taskId, file = "photo.jpg", name, groupWith, note: noteText }) {
   const bytes = readFileSync(new URL(`./media/${file}`, import.meta.url));
   const fileName = name ?? file;
   const init = await call("/api/submissions", {
     method: "POST",
-    body: JSON.stringify({ playerId, taskId, fileName, fileType: file.endsWith(".mp4") ? "video/mp4" : "image/jpeg" }),
+    body: JSON.stringify({
+      playerId,
+      taskId,
+      fileName,
+      fileType: file.endsWith(".mp4") ? "video/mp4" : "image/jpeg",
+      // Another angle on an existing submission rather than a separate one.
+      // The server decides whether the two may actually be grouped.
+      groupWith,
+    }),
   });
   if (init.status !== 200) throw new Error(`seed reserve failed: ${JSON.stringify(init.body)}`);
   const { submissionId, objectName, contentType } = init.body;
@@ -336,5 +361,15 @@ export async function seed({ playerId, taskId, file = "photo.jpg", name }) {
     body: JSON.stringify({ sizeBytes: bytes.length, mediaType: contentType }),
   });
   if (done.status !== 200) throw new Error(`seed promote failed: ${JSON.stringify(done.body)}`);
+
+  // Notes are never carried by the finalize call -- there is one way to write
+  // one, and the harness uses the same one the app does.
+  if (noteText !== undefined) {
+    const wrote = await call(`/api/submissions/${submissionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ noteOnly: true, note: noteText }),
+    });
+    if (wrote.status !== 200) throw new Error(`seed note failed: ${JSON.stringify(wrote.body)}`);
+  }
   return submissionId;
 }

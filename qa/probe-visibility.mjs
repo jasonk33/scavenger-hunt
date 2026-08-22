@@ -17,7 +17,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, admin, omit, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings,
+  BASE, admin, cloneSubmission, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings,
   asOrganizer, asPlayer, check, note, summary, call, seed, shot,
 } from "./lib.mjs";
 
@@ -342,19 +342,60 @@ try {
      nothing with no way back, which on the feed hides every approved post and
      on the judge screen hides the backlog. */
 
+  /* Run in ROUND 2, which this probe can hold empty.
+     
+     The reset only fires when a round has zero rejected submissions, and Round 1
+     no longer can: it holds Jason's own testing, including a rejected one, so the
+     app quite correctly keeps the filter on screen and keeps honouring the
+     reader's choice. Asserting against Round 1 made this check fail for a reason
+     that was not a bug, and it would fail again every time he tests on his phone
+     -- a permanently red check is worse than no check, because it teaches you to
+     ignore the suite. Round 2 has no real data and this probe is the only writer,
+     so the precondition is one it actually controls. */
+  await call("/api/admin/roster", {
+    method: "POST",
+    body: JSON.stringify({
+      round: 2,
+      entries: [{ playerId: alice.id, teamId: fx.teamOf("__qa Red", 2).id }],
+    }),
+  });
+  const r2Titles = ["__qa R2 kept", "__qa R2 tossed"];
+  const r2TaskIds = [];
+  for (const title of r2Titles) {
+    const made = await call("/api/admin/tasks", {
+      method: "POST",
+      body: JSON.stringify({ round: 2, title, points: 3 }),
+    });
+    r2TaskIds.push(made.body.id);
+  }
+  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ active_round: 2 }) });
+
+  const keptSub = await seed({ playerId: alice.id, taskId: r2TaskIds[0] });
+  const tossedSub = await seed({ playerId: alice.id, taskId: r2TaskIds[1] });
+  await call(`/api/judge/${keptSub}`, { method: "POST", body: JSON.stringify({ action: "approve", bonus: 0 }) });
+  await call(`/api/judge/${tossedSub}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reject", reason: "Doesn't match the task" }),
+  });
+
+  const r2Rejected = (await (await fetch(`${BASE}/api/feed?round=2`)).json()).items
+    .filter((i) => i.status === "rejected").length;
+  check("round 2 holds exactly the one rejection this probe made", r2Rejected === 1,
+    `${r2Rejected} rejected items — the precondition this check needs is not met`);
+
   const fctx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const feed2 = await fctx2.newPage();
   await feed2.goto(`${BASE}/feed`, { waitUntil: "networkidle" });
-  await waitForText(feed2, "__qa Visible task C");
+  await waitForText(feed2, "__qa R2 tossed");
   await feed2.waitForTimeout(1500);
   await feed2.getByRole("button", { name: "Rejected", exact: true }).click();
   await feed2.waitForTimeout(800);
   check("filtered to Rejected, the rejected post is the one on screen",
-    await feed2.getByText("__qa Visible task C", { exact: false }).count() > 0);
+    await feed2.getByText("__qa R2 tossed", { exact: false }).count() > 0);
 
   // The judge approves it on a re-review, so nothing in this round is rejected
   // any more and the filter disappears out from under the reader.
-  await call(`/api/judge/${cSub}`, {
+  await call(`/api/judge/${tossedSub}`, {
     method: "POST",
     body: JSON.stringify({ action: "approve", bonus: 0, expectedStatus: "rejected" }),
   });
@@ -365,9 +406,10 @@ try {
     !/Nothing rejected yet/.test(strandedText),
     "the filter control is gone but the feed is still filtered to rejected");
   check("the approved posts are visible again once nothing is rejected",
-    await feed2.getByText("__qa Visible task D", { exact: false }).count() > 0,
+    await feed2.getByText("__qa R2 kept", { exact: false }).count() > 0,
     "approved posts stayed hidden behind a filter with no control to clear it");
   await fctx2.close();
+  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ active_round: 1 }) });
 
   // Nine waiting, so the judge's queue gets a search box; the ninth has a title
   // nothing else shares.
@@ -386,16 +428,17 @@ try {
   const { data: template } = await admin.from("submissions").select("*").eq("id", dSub).single();
   await admin.from("submissions").delete().in("id", [aliceSub, bobSub, cSub, dSub]);
   await admin.from("submissions").insert(
-    bulkTaskIds.map((taskId) => ({
-      ...omit(template, "id", "created_at"),
-      task_id: taskId,
-      status: "pending",
-      judged_at: null,
-      points_awarded: null,
-      bonus: 0,
-      starred: false,
-      reject_reason: null,
-    }))
+    bulkTaskIds.map((taskId) =>
+      cloneSubmission(template, {
+        task_id: taskId,
+        status: "pending",
+        judged_at: null,
+        points_awarded: null,
+        bonus: 0,
+        starred: false,
+        reject_reason: null,
+      })
+    )
   );
 
   const jctx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });

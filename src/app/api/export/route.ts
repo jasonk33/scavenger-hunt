@@ -43,6 +43,9 @@ export async function GET(req: Request) {
     total: s.status === "approved" ? (s.points_awarded ?? 0) + (s.bonus ?? 0) : 0,
     starred: s.starred,
     rejectReason: s.reject_reason,
+    note: s.note,
+    // Files sharing this are one piece of evidence, judged as a unit.
+    groupId: s.group_id ?? s.id,
     mediaType: s.media_type,
     sizeBytes: s.size_bytes,
     mediaUrl: mediaUrl(s.object_name),
@@ -68,7 +71,7 @@ export async function GET(req: Request) {
 
     const cols = [
       "round", "team", "player", "task", "status", "pointsAwarded",
-      "bonus", "total", "counts", "starred", "rejectReason", "mediaUrl",
+      "bonus", "total", "counts", "starred", "rejectReason", "note", "mediaUrl",
     ] as const;
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const withCounts = rows.map((r) => ({ ...r, counts: counted.has(r.id) ? 1 : 0 }));
@@ -100,14 +103,36 @@ export async function GET(req: Request) {
       "set -euo pipefail",
       "",
     ];
+    /*
+     * Filenames have to be unique or `curl -o` silently overwrites.
+     *
+     * task--player is NOT unique: a submission with several files repeats it
+     * once per file, and so does the same player redoing a task after a
+     * rejection. Either way the script reports success while leaving a single
+     * file on disk, and the evidence that went missing is invisible -- the same
+     * failure the random suffix in the storage path exists to prevent, just
+     * moved to download time. A counter on the second and later collisions
+     * leaves the ordinary one-file name untouched.
+     */
+    const used = new Set<string>();
+    const unique = (base: string, ext: string) => {
+      let name = `${base}.${ext}`;
+      for (let n = 2; used.has(name); n += 1) name = `${base}--${n}.${ext}`;
+      used.add(name);
+      return name;
+    };
+
     for (const r of rows) {
       if (r.status === "rejected") continue;
       const dir = `round-${r.round}/${slug(r.team || "unknown")}`;
       const ext = r.objectName.split(".").pop() || "bin";
       const star = r.starred ? "STAR--" : "";
-      const name = `${star}${slug(r.task || "task", 60)}--${slug(r.player || "x", 20)}.${ext}`;
+      const name = unique(
+        `${dir}/${star}${slug(r.task || "task", 60)}--${slug(r.player || "x", 20)}`,
+        ext
+      );
       lines.push(`mkdir -p ${JSON.stringify(dir)}`);
-      lines.push(`curl -fsSL ${JSON.stringify(r.mediaUrl)} -o ${JSON.stringify(`${dir}/${name}`)}`);
+      lines.push(`curl -fsSL ${JSON.stringify(r.mediaUrl)} -o ${JSON.stringify(name)}`);
     }
     lines.push('echo "Done. $(find . -type f | wc -l) files."');
     return new Response(lines.join("\n") + "\n", {

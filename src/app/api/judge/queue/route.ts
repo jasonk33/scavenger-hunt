@@ -1,5 +1,6 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings, isOrganizer } from "@/lib/settings";
+import { groupBy, groupKey } from "@/lib/groups";
 import { json, fail, isVideoObject } from "@/lib/http";
 import type { Database } from "@/lib/database.types";
 
@@ -10,6 +11,11 @@ export const dynamic = "force-dynamic";
 /**
  * The judging queue, plus the last few decisions so a misclick during live
  * scoring is one tap from being undone rather than a hunt through the database.
+ *
+ * One entry per GROUP, not per file. A team that sent three angles on one task
+ * is one decision, so it has to be one card -- three cards would triple the
+ * judge's work, and under once-per-team scoring approving them separately would
+ * not even mean anything.
  */
 export async function GET(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
@@ -30,6 +36,10 @@ export async function GET(req: Request) {
       // Everything judged this round, not just the last few. Any call can be
       // reopened and changed at any point, so the whole history has to be
       // reachable -- a 12-item window is useless an hour later.
+      //
+      // The limit counts FILES while the list shows groups. That is the safe
+      // direction to be wrong in: it can only show fewer groups than the cap,
+      // and a group is written in lockstep so its files sort together.
       sb
         .from("submissions")
         .select("*")
@@ -59,17 +69,34 @@ export async function GET(req: Request) {
     (approved ?? []).map((s) => `${s.team_id}:${s.task_id}`)
   );
 
-  const shape = (s: SubmissionRow) => {
+  const shape = (group: SubmissionRow[]) => {
+    // Oldest file first, so the judge sees them in the order they were shot.
+    // `recent` arrives ordered by judged_at, which is identical across a group
+    // and therefore says nothing about the order within one.
+    const files = [...group].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const s = files[0];
     const task = taskById.get(s.task_id);
     const team = teamById.get(s.team_id);
+    const media = files.map((f) => ({
+      id: f.id,
+      url: mediaUrl(f.object_name),
+      isVideo: isVideoObject(f.media_type, f.object_name),
+      sizeBytes: f.size_bytes,
+    }));
     return {
+      // The anchor's id. Judging it applies to the whole group server-side, so
+      // every existing caller keeps working unchanged.
       id: s.id,
       status: s.status,
       createdAt: s.created_at,
-      mediaUrl: mediaUrl(s.object_name),
-      mediaType: s.media_type,
-      sizeBytes: s.size_bytes,
-      isVideo: isVideoObject(s.media_type, s.object_name),
+      media,
+      mediaUrl: media[0].url,
+      // True if ANY file is a video. This only drives the "task is video-only"
+      // warning, and one clip in the set does satisfy that task.
+      isVideo: media.some((m) => m.isVideo),
+      sizeBytes: files.reduce((sum, f) => sum + (f.size_bytes ?? 0), 0) || null,
+      // Whichever file carries it -- the note is written across the whole group.
+      note: files.find((f) => f.note)?.note ?? null,
       taskTitle: task?.title ?? "(deleted task)",
       taskPoints: s.task_points,
       requiresVideo: Boolean(task?.requires_video),
@@ -89,23 +116,28 @@ export async function GET(req: Request) {
     };
   };
 
+  const queue = groupBy(pending ?? [], groupKey).map(shape);
+  const recentGroups = groupBy(recent ?? [], groupKey).map(shape);
+
   // Pending count for the OTHER round. After the 3:30pm flip there is normally
   // still a Round 1 backlog, and if the judge screen never mentions it those
-  // submissions quietly never get scored.
-  const { count: otherRoundPending } = await sb
+  // submissions quietly never get scored. Counted in DECISIONS, so it means the
+  // same thing as the count shown for the round on display.
+  const { data: otherPending } = await sb
     .from("submissions")
-    .select("id", { count: "exact", head: true })
+    .select("id,group_id")
     .eq("round", round === 1 ? 2 : 1)
     .eq("status", "pending");
+  const otherRoundPending = new Set((otherPending ?? []).map(groupKey)).size;
 
   return json({
     round,
     // Sent so the judge can move a submission that landed on the wrong team --
     // the realistic cause being a player tapping the wrong name when joining.
     teams: teams ?? [],
-    queue: (pending ?? []).map(shape),
-    recent: (recent ?? []).map(shape),
-    pendingCount: (pending ?? []).length,
-    otherRoundPending: otherRoundPending ?? 0,
+    queue,
+    recent: recentGroups,
+    pendingCount: queue.length,
+    otherRoundPending,
   });
 }

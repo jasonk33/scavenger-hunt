@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { groupKey } from "@/lib/groups";
 import { json, fail, slug, playableType, extOf } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,9 @@ export async function POST(req: Request) {
   const taskId = String(body?.taskId ?? "");
   const fileName = String(body?.fileName ?? "upload");
   const fileType = String(body?.fileType ?? "");
+  // Optional: the id of a submission this file is another angle on. Never a
+  // group id -- see the lookup below for why.
+  const groupWith = String(body?.groupWith ?? "");
   if (!playerId || !taskId) return fail("playerId and taskId are required.");
 
   const settings = await getSettings();
@@ -70,6 +74,44 @@ export async function POST(req: Request) {
   const contentType = playableType(fileName, fileType);
   const ext = extOf(fileName, contentType);
 
+  /*
+   * "Another angle on the thing I just sent."
+   *
+   * The client names a SUBMISSION it already owns, not a group id, and the
+   * server reads that row's group off the database. So a client cannot invent a
+   * group id and staple its file onto another team's evidence: the row it names
+   * has to be in this same round, on this same team, for this same task, and
+   * still unjudged. Anything else silently starts a fresh group instead of
+   * failing -- the worst case is the judge seeing two cards where one was
+   * intended, which is a cosmetic problem, whereas rejecting the upload would
+   * cost a player their photo in the field.
+   *
+   * `groupKey` rather than `.group_id` directly, so a row that predates the
+   * column still anchors a group.
+   */
+  let groupId: string = randomUUID();
+  // A file joining a group inherits its note. Every read that looks at a single
+  // row -- the export CSV is one row per file -- would otherwise show the
+  // explanation against the first photo and nothing against the rest.
+  let note: string | null = null;
+  if (groupWith) {
+    const { data: anchor } = await sb
+      .from("submissions")
+      .select("id,group_id,round,team_id,task_id,status,note")
+      .eq("id", groupWith)
+      .maybeSingle();
+    if (
+      anchor &&
+      anchor.round === round &&
+      anchor.team_id === teamId &&
+      anchor.task_id === t.id &&
+      (anchor.status === "uploading" || anchor.status === "pending")
+    ) {
+      groupId = groupKey(anchor);
+      note = anchor.note;
+    }
+  }
+
   // Path is organized so the post-event bulk download unzips into round/team
   // folders with readable filenames, instead of a flat pile of UUIDs.
   //
@@ -80,6 +122,9 @@ export async function POST(req: Request) {
   // submission rows pointing at one file, the judge shown the same photo twice,
   // and a player's evidence gone with nothing anywhere reporting a failure.
   // Measured at ~10% duplicates in a burst of 30 before the random suffix.
+  //
+  // Two files added to the SAME group are the tightest version of that race, so
+  // the random suffix matters more now, not less.
   const stamp = Date.now().toString(36);
   const objectName = `round-${round}/${slug(team?.name ?? "team")}/${slug(
     t.title,
@@ -96,6 +141,8 @@ export async function POST(req: Request) {
       task_points: t.points,
       object_name: objectName,
       media_type: contentType,
+      group_id: groupId,
+      note,
       status: "uploading",
     })
     .select("id")
@@ -105,6 +152,7 @@ export async function POST(req: Request) {
 
   return json({
     submissionId: created.id,
+    groupId,
     objectName,
     contentType,
     task: { id: t.id, title: t.title, points: t.points },

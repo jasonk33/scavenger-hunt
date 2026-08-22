@@ -4,7 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, omit, asOrganizer,
+  BASE, PIN, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, cloneSubmission, asOrganizer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -132,7 +132,7 @@ try {
   await call(`/api/judge/${sub}`, { method: "POST", body: JSON.stringify({ action: "approve", bonus: 0 }) });
   const { data: template } = await admin.from("submissions").select("*").eq("id", sub).single();
   const clones = Array.from({ length: 70 }, (_, i) => {
-    return { ...omit(template, "id", "created_at"), judged_at: new Date(Date.now() - (70 - i) * 60000).toISOString() };
+    return cloneSubmission(template, { judged_at: new Date(Date.now() - (70 - i) * 60000).toISOString() });
   });
   await admin.from("submissions").insert(clones);
   const total = (await admin.from("submissions").select("id", { count: "exact", head: true })

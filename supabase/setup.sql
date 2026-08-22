@@ -79,8 +79,26 @@ create table if not exists submissions (
   judged_at      timestamptz
 );
 
+-- Added after the first deploy, so these are ALTERs rather than columns in the
+-- CREATE above: `create table if not exists` does nothing to a table that
+-- already exists, and this file has to stay re-runnable against a live database.
+--
+-- group_id ties several files into one thing the judge reviews and decides ONCE.
+-- A submission is still one row = one file; grouping is what the judge and the
+-- player see. Nullable on purpose -- every read does `group_id ?? id`, so a row
+-- that somehow misses one degrades to a group of one, which is the old behaviour.
+alter table submissions add column if not exists group_id uuid;
+
+-- Free text the player attaches to say what the judge is looking at.
+alter table submissions add column if not exists note text;
+
+-- Rows that predate the column are each their own group of one.
+update submissions set group_id = id where group_id is null;
+
 create index if not exists submissions_queue_idx
   on submissions (status, created_at);
+create index if not exists submissions_group_idx
+  on submissions (group_id);
 create index if not exists submissions_round_team_idx
   on submissions (round, team_id);
 create index if not exists submissions_task_idx

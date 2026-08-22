@@ -4,7 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, omit, asOrganizer,
+  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, cloneSubmission, asOrganizer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -107,8 +107,8 @@ try {
   console.log("\n7. How heavy is the feed on a phone?");
   const { data: template } = await admin.from("submissions").select("*").eq("id", s1).single();
   const clones = Array.from({ length: 40 }, (_, i) => {
-    return { ...omit(template, "id", "created_at"), status: "approved", points_awarded: 5, bonus: 0,
-             judged_at: new Date(Date.now() - i * 60000).toISOString() };
+    return cloneSubmission(template, { status: "approved", points_awarded: 5, bonus: 0,
+             judged_at: new Date(Date.now() - i * 60000).toISOString() });
   });
   await admin.from("submissions").insert(clones);
 

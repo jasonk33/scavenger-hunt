@@ -1,8 +1,13 @@
 import { db, mediaUrl, uploadConfig } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { groupKey } from "@/lib/groups";
 import { json, isVideoObject } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
+
+/** How many distinct pieces of evidence these rows amount to. */
+const countGroups = (rows: Array<{ id: string; group_id: string | null }>) =>
+  new Set(rows.map(groupKey)).size;
 
 /**
  * The single endpoint the player app polls every 5 seconds. One round trip
@@ -47,6 +52,8 @@ export async function GET(req: Request) {
     player_id: string;
     object_name: string;
     media_type: string | null;
+    group_id: string | null;
+    note: string | null;
   }> = [];
   // Names of whoever on the team actually sent each submission. Progress is
   // team-wide, so "you already submitted this" is often really a teammate --
@@ -74,7 +81,7 @@ export async function GET(req: Request) {
         const { data: subs } = await sb
           .from("submissions")
           .select(
-            "id,task_id,status,points_awarded,bonus,created_at,reject_reason,player_id,object_name,media_type"
+            "id,task_id,status,points_awarded,bonus,created_at,reject_reason,player_id,object_name,media_type,group_id,note"
           )
           .eq("round", round)
           .eq("team_id", team.id)
@@ -143,17 +150,23 @@ export async function GET(req: Request) {
     // screen only fetches the bytes for a submission the player opens. The
     // object path itself is dropped -- the URL already contains it, and this
     // endpoint is polled by every phone every 5 seconds.
-    submissions: mine.map(({ object_name, media_type, ...s }) => ({
+    submissions: mine.map(({ object_name, media_type, group_id, ...s }) => ({
       ...s,
+      // What ties several files into one piece of evidence. `?? id` so a row
+      // written before the column existed still stands on its own.
+      groupId: group_id ?? s.id,
       mediaUrl: mediaUrl(object_name),
       isVideo: isVideoObject(media_type, object_name),
       playerName: submitterName.get(s.player_id) ?? "a teammate",
     })),
     stats: {
-      submitted: mine.filter((s) => s.status !== "uploading").length,
-      pending: mine.filter((s) => s.status === "pending").length,
-      approved: scored.length,
-      rejected: mine.filter((s) => s.status === "rejected").length,
+      // Counted in pieces of evidence rather than files, so "waiting" means the
+      // same number of decisions the judge sees. Three angles on one task are
+      // one thing the team did, not three.
+      submitted: countGroups(mine.filter((s) => s.status !== "uploading")),
+      pending: countGroups(mine.filter((s) => s.status === "pending")),
+      approved: countGroups(scored),
+      rejected: countGroups(mine.filter((s) => s.status === "rejected")),
       points: [...bestByTask.values()].reduce((a, b) => a + b, 0),
     },
     upload: { endpoint: up.endpoint, anonKey: up.anonKey, bucket: up.bucket },
