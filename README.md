@@ -13,11 +13,20 @@ No app install, no accounts, no passwords for players.
 ### 1. Supabase
 
 Open the SQL editor in your Supabase project, paste in the whole of
-`supabase/setup.sql`, and run it. Re-run it after pulling any change that
-touches that file — the schema and the scoring view do not update themselves. That one file creates the tables and the
+`supabase/setup.sql`, and run it. That one file creates the tables and the
 scoring view, turns on RLS, makes the `hunt` bucket with a 500 MB limit and the
 right upload policies, and seeds 5 teams per round plus the 79 tasks from the
-source doc. It is safe to re-run.
+source doc.
+
+**Run the whole of `setup.sql` only on a fresh project.** Once the event has
+been seeded, re-running it puts back every task that has since been removed —
+the ones `scripts/seed-event.mjs` deletes because the doc struck them through,
+and anything deleted from the Admin screen. After a change that touches the
+schema, run the matching file in `supabase/` instead; each one is a small,
+re-runnable set of `ALTER`s that carries no seed data:
+
+- `supabase/migrate-groups-and-notes.sql` — several files per submission, and
+  player-written notes.
 
 Then get your keys from **Settings → API Keys → the "Legacy anon, service_role
 API keys" tab**.

@@ -152,9 +152,8 @@ export async function GET(req: Request) {
     // endpoint is polled by every phone every 5 seconds.
     submissions: mine.map(({ object_name, media_type, group_id, ...s }) => ({
       ...s,
-      // What ties several files into one piece of evidence. `?? id` so a row
-      // written before the column existed still stands on its own.
-      groupId: group_id ?? s.id,
+      // What ties several files into one piece of evidence.
+      groupId: groupKey({ id: s.id, group_id }),
       mediaUrl: mediaUrl(object_name),
       isVideo: isVideoObject(media_type, object_name),
       playerName: submitterName.get(s.player_id) ?? "a teammate",

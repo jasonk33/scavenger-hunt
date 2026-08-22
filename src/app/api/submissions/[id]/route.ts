@@ -59,10 +59,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     // Written across every file in the group: the queue and the feed both read
     // rows on their own, so each file has to carry its own explanation.
+    const memberIds = await groupMemberIds(anchor);
+    if (!memberIds) return fail("Couldn't save that note just now. Try again.", 503);
     const { error } = await sb
       .from("submissions")
       .update({ note })
-      .in("id", await groupMemberIds(anchor))
+      .in("id", memberIds)
       .in("status", ["uploading", "pending"]);
     if (error) return fail(error.message, 500);
     return json({ ok: true, note });

@@ -71,6 +71,9 @@ type Job = {
    * otherwise spend watching a progress bar.
    */
   anchorId: string | null;
+  /** The note the group already carries, so the editor never opens blank over
+      an explanation the team has already written. */
+  note: string;
   /**
    * Whether anything in this batch actually reached the queue. A failure after
    * one file has landed is a very different message from a failure on the
@@ -89,8 +92,10 @@ export default function SubmitPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingTask = useRef<Task | null>(null);
   // Set when the picker was opened by "Add another": the submission the next
-  // file should join rather than stand beside.
-  const pendingGroup = useRef<string | null>(null);
+  // file joins rather than stands beside, plus the note that group already
+  // carries. Without the note the editor would open blank over an explanation
+  // the team had already written, and typing would replace it unseen.
+  const pendingGroup = useRef<{ anchorId: string; note: string } | null>(null);
   const handle = useRef<UploadHandle | null>(null);
   const currentSubmissionId = useRef<string | null>(null);
   // Set the moment tus reports success. From that point the bytes are already in
@@ -154,9 +159,9 @@ export default function SubmitPage() {
    * straight through to the server, which decides whether the two may actually
    * be grouped.
    */
-  const pickFor = (task: Task, groupWith?: string) => {
+  const pickFor = (task: Task, group?: { anchorId: string; note: string }) => {
     pendingTask.current = task;
-    pendingGroup.current = groupWith ?? null;
+    pendingGroup.current = group ?? null;
     fileInput.current?.click();
   };
 
@@ -198,7 +203,8 @@ export default function SubmitPage() {
     // Reset immediately so picking the SAME file twice still fires a change event.
     e.target.value = "";
     const task = pendingTask.current;
-    const groupWith = pendingGroup.current;
+    const group = pendingGroup.current;
+    const groupWith = group?.anchorId;
     pendingTask.current = null;
     pendingGroup.current = null;
     if (!file || !task || !me || !data) return;
@@ -212,6 +218,7 @@ export default function SubmitPage() {
         retries: 0,
         status: "error",
         anchorId: null,
+        note: "",
         sent: false,
         message:
           "The upload key on the server isn't valid. Tell an organizer: it must be the legacy anon key.",
@@ -229,7 +236,11 @@ export default function SubmitPage() {
       // Another angle on the batch already on screen keeps its anchor, so the
       // note the player has been typing stays attached to the same group.
       anchorId: groupWith && prev?.anchorId === groupWith ? prev.anchorId : null,
-      sent: Boolean(groupWith && prev?.anchorId === groupWith && prev.sent),
+      note: groupWith && prev?.anchorId === groupWith ? prev.note : (group?.note ?? ""),
+      // Joining a group that is ALREADY in the queue counts as sent: cancelling
+      // this file must not claim nothing was sent while its siblings wait to be
+      // judged. That is the message this flag exists to prevent.
+      sent: Boolean(groupWith) && (prev?.anchorId === groupWith ? Boolean(prev?.sent) : true),
     }));
     settled.current = false;
 
@@ -475,7 +486,9 @@ export default function SubmitPage() {
           job={job}
           onClose={() => setJob(null)}
           onCancel={cancelUpload}
-          onAddAnother={() => pickFor(job.task, job.anchorId ?? undefined)}
+          onAddAnother={() =>
+            pickFor(job.task, job.anchorId ? { anchorId: job.anchorId, note: job.note } : undefined)
+          }
           addAnotherBlocked={uploadBlocked}
         />
       )}
@@ -510,7 +523,7 @@ export default function SubmitPage() {
                 disabled={uploadBlocked}
                 meId={me.id}
                 onPick={() => pickFor(t)}
-                onAddTo={(groupAnchorId) => pickFor(t, groupAnchorId)}
+                onAddTo={(anchorId, note) => pickFor(t, { anchorId, note })}
                 onChanged={reload}
               />
             ))}
@@ -545,7 +558,7 @@ function TaskRow({
   disabled: boolean;
   meId: string;
   onPick: () => void;
-  onAddTo: (groupAnchorId: string) => void;
+  onAddTo: (anchorId: string, note: string) => void;
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -649,7 +662,7 @@ function SubmissionView({
   files: Sub[];
   mine: boolean;
   disabled: boolean;
-  onAddTo: (groupAnchorId: string) => void;
+  onAddTo: (anchorId: string, note: string) => void;
   onChanged: () => void;
 }) {
   const sub = files[0];
@@ -716,7 +729,7 @@ function SubmissionView({
           className="btn btn-sm"
           style={{ marginTop: 8 }}
           disabled={disabled}
-          onClick={() => onAddTo(sub.id)}
+          onClick={() => onAddTo(sub.id, groupNote ?? "")}
         >
           Add another file to this
         </button>
@@ -865,7 +878,7 @@ function JobCard({
           exists from the moment it is reserved, so this is live before the bytes
           have finished moving. */}
       {job.anchorId && job.status !== "error" && (
-        <NoteEditor key={job.anchorId} submissionId={job.anchorId} initial="" />
+        <NoteEditor key={job.anchorId} submissionId={job.anchorId} initial={job.note} />
       )}
 
       {/* Some tasks need two photos, or a photo and the clip that explains it.

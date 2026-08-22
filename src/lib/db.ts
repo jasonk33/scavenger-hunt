@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
+import { groupKey } from "./groups";
 
 /**
  * Server-only Supabase client using the service_role key.
@@ -45,17 +46,26 @@ export function mediaUrl(objectName: string): string {
  * included. This is what turns "one row is one file" into "the judge decides a
  * set", without any of the reads or writes having to know how grouping works.
  *
- * A row whose `group_id` is null is its own group, and is answered without a
- * query -- that is every row written before the column existed, and it is what
- * makes a missing backfill harmless rather than an outage.
+ * Returns null if the group could not be read, so a caller never mistakes a
+ * failed lookup for a group of one.
  */
-export async function groupMemberIds(row: { id: string; group_id: string | null }): Promise<string[]> {
-  if (!row.group_id) return [row.id];
-  const { data } = await db().from("submissions").select("id").eq("group_id", row.group_id);
-  const ids = (data ?? []).map((r) => r.id);
-  // Never return an empty set: a failed read would otherwise turn a judging
-  // write into a no-op that looks like someone else got there first.
-  return ids.length > 0 ? ids : [row.id];
+export async function groupMemberIds(
+  row: { id: string; group_id: string | null }
+): Promise<string[] | null> {
+  // `groupKey`, not `row.group_id`: a row written before the column existed has
+  // none, but a file added to it was given `group_id = <that row's id>`. Reading
+  // the raw column would miss those children and judge the anchor alone --
+  // exactly the half-applied decision the single-statement write exists to
+  // prevent. The anchor is unioned in because it does not match its own key.
+  const { data, error } = await db()
+    .from("submissions")
+    .select("id")
+    .eq("group_id", groupKey(row));
+  // Null, never a partial set. A transient read failure that quietly returned
+  // just this row would judge one file of three, report success, and leave the
+  // rest waiting with nothing anywhere reporting a problem.
+  if (error) return null;
+  return [...new Set([row.id, ...(data ?? []).map((r) => r.id)])];
 }
 
 /**

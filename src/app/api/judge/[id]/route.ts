@@ -51,6 +51,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
    * single-file upload -- resolves to `[id]` and behaves exactly as before.
    */
   const memberIds = await groupMemberIds(existing);
+  if (!memberIds) {
+    return fail("Couldn't read the rest of this submission just now. Try again.", 503);
+  }
 
   /*
    * Secondary edits (star, bonus, reassign) bump judged_at so the

@@ -1,5 +1,6 @@
 import { db, mediaUrl } from "@/lib/db";
 import { isOrganizer } from "@/lib/settings";
+import { groupBy, groupKey } from "@/lib/groups";
 import { fail, slug } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +46,7 @@ export async function GET(req: Request) {
     rejectReason: s.reject_reason,
     note: s.note,
     // Files sharing this are one piece of evidence, judged as a unit.
-    groupId: s.group_id ?? s.id,
+    groupId: groupKey(s),
     mediaType: s.media_type,
     sizeBytes: s.size_bytes,
     mediaUrl: mediaUrl(s.object_name),
@@ -153,7 +154,9 @@ export async function GET(req: Request) {
         players: players ?? [],
         tasks: tasks ?? [],
         submissions: rows,
-        awardCandidates: rows.filter((r) => r.starred),
+        // One entry per starred SUBMISSION. Starring is group-wide, so filtering
+        // rows listed a three-file set three times in the shortlist.
+        awardCandidates: groupBy(rows.filter((r) => r.starred), (r) => r.groupId).map((g) => g[0]),
       },
       null,
       2
