@@ -4,15 +4,18 @@ import { json, isVideoObject } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
-/** Approved submissions, newest first. This is the "for laughs" screen. */
+/** Judged submissions, newest first. This is the "for laughs" screen, so the
+    rejected ones belong here too -- they are often the funniest thing anyone
+    sent, they just didn't satisfy the task. */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const settings = await getSettings();
   const round = Number(url.searchParams.get("round")) || settings.active_round;
   /*
-   * The cap has to clear a whole round's approvals, or the feed silently stops
-   * showing the oldest ones with nothing on screen to say so. Five teams working
-   * through 79 tasks can produce a few hundred.
+   * The cap has to clear a whole round's judged submissions, or the feed
+   * silently stops showing the oldest ones with nothing on screen to say so.
+   * Five teams working through 79 tasks can produce a few hundred, and every
+   * rejection now counts against this too.
    *
    * Photos are lazy-loaded so extra rows are nearly free, but videos render with
    * preload="auto" (required, or iOS shows an untappable black box), so each one
@@ -27,7 +30,7 @@ export async function GET(req: Request) {
       .from("submissions")
       .select("*")
       .eq("round", round)
-      .eq("status", "approved")
+      .in("status", ["approved", "rejected"])
       .order("judged_at", { ascending: false })
       .limit(limit),
     sb.from("tasks").select("id,title").eq("round", round),
@@ -43,12 +46,14 @@ export async function GET(req: Request) {
     round,
     items: (subs ?? []).map((s) => ({
       id: s.id,
+      status: s.status,
       mediaUrl: mediaUrl(s.object_name),
       isVideo: isVideoObject(s.media_type, s.object_name),
       taskTitle: taskById.get(s.task_id)?.title ?? "",
       points: (s.points_awarded ?? 0) + (s.bonus ?? 0),
       bonus: s.bonus,
       starred: s.starred,
+      rejectReason: s.reject_reason,
       teamName: teamById.get(s.team_id)?.name ?? "",
       teamColor: teamById.get(s.team_id)?.color ?? "#666",
       playerName: playerById.get(s.player_id)?.name ?? "",

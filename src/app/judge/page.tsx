@@ -34,6 +34,16 @@ type Queue = {
 
 const REASONS = ["No stranger in frame", "Doesn't match the task", "Can't tell what's happening", "Wrong round"];
 
+/** Shared by the waiting list and the history list, so the two search the same
+    three fields and can't drift apart. */
+function matches(item: Item, needle: string) {
+  return (
+    item.taskTitle.toLowerCase().includes(needle) ||
+    item.teamName.toLowerCase().includes(needle) ||
+    item.playerName.toLowerCase().includes(needle)
+  );
+}
+
 export default function JudgePage() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [pin, setPin] = useState("");
@@ -102,9 +112,11 @@ function JudgeQueue() {
   const [star, setStar] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reassigning, setReassigning] = useState(false);
-  // When set, the review card shows this already-judged item instead of the
-  // head of the queue, so any past call can be reopened and changed.
-  const [reviewId, setReviewId] = useState<string | null>(null);
+  // When set, the review card shows this specific submission instead of the head
+  // of the queue -- either a queued one the judge scrolled to, or an
+  // already-judged one being reopened to change the call.
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [queueQ, setQueueQ] = useState("");
   const [historyQ, setHistoryQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -117,20 +129,30 @@ function JudgeQueue() {
     [data, done]
   );
   const history = useMemo(() => data?.recent ?? [], [data]);
-  const reviewing = reviewId ? history.find((h) => h.id === reviewId) ?? null : null;
-  const current = reviewing ?? queue[0];
-  const next = reviewing ? undefined : queue[1];
+  // Queue first: if another judge decides the picked item while it is on screen
+  // it moves to history, and resolving it there keeps the card showing the same
+  // submission with its new status rather than silently jumping elsewhere.
+  const picked = pickedId
+    ? queue.find((i) => i.id === pickedId) ?? history.find((h) => h.id === pickedId) ?? null
+    : null;
+  const current = picked ?? queue[0];
+  // Only a judged item gets the "Re-reviewing" banner. A picked item that is
+  // still pending is an ordinary review, just not the one at the front.
+  const reviewing = picked && picked.status !== "pending" ? picked : null;
+  // Warm whatever comes after the item actually on screen, which is only
+  // meaningful while that item is itself in the queue.
+  const currentIndex = current ? queue.findIndex((i) => i.id === current.id) : -1;
+  const next = currentIndex >= 0 ? queue[currentIndex + 1] : undefined;
   const otherRoundPending = data?.otherRoundPending ?? 0;
+
+  const filteredQueue = useMemo(() => {
+    const needle = queueQ.trim().toLowerCase();
+    return needle ? queue.filter((i) => matches(i, needle)) : queue;
+  }, [queue, queueQ]);
 
   const filteredHistory = useMemo(() => {
     const needle = historyQ.trim().toLowerCase();
-    if (!needle) return history;
-    return history.filter(
-      (h) =>
-        h.taskTitle.toLowerCase().includes(needle) ||
-        h.teamName.toLowerCase().includes(needle) ||
-        h.playerName.toLowerCase().includes(needle)
-    );
+    return needle ? history.filter((h) => matches(h, needle)) : history;
   }, [history, historyQ]);
 
   // Reset the per-item controls whenever the item changes, so a bonus meant for
@@ -159,8 +181,11 @@ function JudgeQueue() {
         method: "POST",
         body: JSON.stringify({ expectedStatus: current.status, ...body }),
       });
-      if (reviewing) setReviewId(null);
-      else setDone((d) => new Set(d).add(id));
+      // Only a queued item needs suppressing: `done` filters the queue, and
+      // adding an already-judged id would hide it if another organizer sent it
+      // back. Either way the pick is spent.
+      if (queue.some((i) => i.id === id)) setDone((d) => new Set(d).add(id));
+      setPickedId((p) => (p === id ? null : p));
       reload();
     } catch (e) {
       setErr(errorMessage(e, "Failed"));
@@ -221,7 +246,7 @@ function JudgeQueue() {
 
       {err && <div className="card card-bad tiny bad">{err}</div>}
 
-      {!current && !reviewing && (
+      {!current && (
         data ? (
           <div className="empty">
             <b className="good">Queue is empty</b>
@@ -236,26 +261,38 @@ function JudgeQueue() {
         )
       )}
 
-      {reviewing && (
+      {/* Whenever the card below is showing something other than the front of
+          the queue, say so and offer the way back -- otherwise a judge who
+          taps into the middle of the backlog has no route to the front except
+          judging their way there. */}
+      {picked && (
         <div className="card card-accent">
-          <div className="row">
-            <b>Re-reviewing</b>
-            <span
-              className={`pill ${reviewing.status === "approved" ? "pill-good" : "pill-bad"}`}
-            >
-              currently{" "}
-              {reviewing.status === "approved"
-                ? `approved +${(reviewing.pointsAwarded ?? 0) + reviewing.bonus}`
-                : "rejected"}
-            </span>
-            <button className="btn btn-sm push" onClick={() => setReviewId(null)}>
-              Back to queue
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            {reviewing ? (
+              <>
+                <b>Re-reviewing</b>
+                <span
+                  className={`pill ${reviewing.status === "approved" ? "pill-good" : "pill-bad"}`}
+                >
+                  currently{" "}
+                  {reviewing.status === "approved"
+                    ? `approved +${(reviewing.pointsAwarded ?? 0) + reviewing.bonus}`
+                    : "rejected"}
+                </span>
+              </>
+            ) : (
+              <b>Picked out of the queue</b>
+            )}
+            <button className="btn btn-sm push" onClick={() => setPickedId(null)}>
+              Back to the front
             </button>
           </div>
-          <p className="muted tiny" style={{ margin: "8px 0 0" }}>
-            Approving or rejecting below replaces the earlier call. The team sees the change on
-            their next refresh.
-          </p>
+          {reviewing && (
+            <p className="muted tiny" style={{ margin: "8px 0 0" }}>
+              Approving or rejecting below replaces the earlier call. The team sees the change on
+              their next refresh.
+            </p>
+          )}
         </div>
       )}
 
@@ -436,6 +473,57 @@ function JudgeQueue() {
         </div>
       )}
 
+      {/* The whole backlog, not just its front. Text rows on purpose: a
+          thumbnail grid would fetch every queued photo the moment the judge
+          opens the screen. The queue is ordered by upload time and only ever
+          grows at the end, so a row never moves out from under a thumb. */}
+      {queue.length > 1 && (
+        <>
+          <h2 className="eyebrow">Waiting ({queue.length}) — tap any to review it now</h2>
+
+          {queue.length > 8 && (
+            <input
+              className="field"
+              placeholder="Search by task, team or player"
+              value={queueQ}
+              onChange={(e) => setQueueQ(e.target.value)}
+              style={{ marginBottom: 8 }}
+            />
+          )}
+
+          <div className="stack" style={{ gap: 6 }}>
+            {filteredQueue.map((r) => (
+              <div
+                key={r.id}
+                className={`card card-flat row${r.id === current?.id ? " card-accent" : ""}`}
+                style={{ padding: 10 }}
+              >
+                <span className="swatch" style={{ background: r.teamColor }} />
+                <button
+                  className="btn-plain grow"
+                  style={{ minHeight: 40 }}
+                  onClick={() => {
+                    setPickedId(r.id);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  <div className="tiny nowrap" style={{ fontWeight: 600 }}>
+                    {r.taskTitle}
+                  </div>
+                  <div className="muted tiny nowrap">
+                    {r.teamName} · {r.playerName}
+                  </div>
+                </button>
+                <span className="pill">{r.taskPoints}</span>
+              </div>
+            ))}
+            {filteredQueue.length === 0 && (
+              <span className="muted tiny">Nothing matches that.</span>
+            )}
+          </div>
+        </>
+      )}
+
       {history.length > 0 && (
         <>
           <h2 className="eyebrow">Judged this round ({history.length}) — tap any to change it</h2>
@@ -454,14 +542,14 @@ function JudgeQueue() {
             {filteredHistory.map((r) => (
               <div
                 key={r.id}
-                className={`card card-flat row${r.id === reviewId ? " card-accent" : ""}`}
+                className={`card card-flat row${r.id === pickedId ? " card-accent" : ""}`}
                 style={{ padding: 10 }}
               >
                 <span className={`pill ${r.status === "approved" ? "pill-good" : "pill-bad"}`}>
                   {r.status === "approved" ? `+${(r.pointsAwarded ?? 0) + r.bonus}` : "✗"}
                 </span>
                 <button className="btn-plain grow" style={{ minHeight: 40 }} onClick={() => {
-                  setReviewId(r.id);
+                  setPickedId(r.id);
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}>
                   <div className="tiny nowrap" style={{ fontWeight: 600 }}>

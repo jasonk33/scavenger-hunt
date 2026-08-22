@@ -137,7 +137,16 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(1500);
   check("judged history is listed", await page.getByText("Judged this round", { exact: false }).count() > 0);
-  const histRow = page.locator(".stack .card-flat").filter({ hasText: tasks[1].title.slice(0, 25) }).first();
+  // Both the waiting list and the history list are `.stack .card-flat` rows, and
+  // the retry uploaded in step 5 puts this same task in BOTH. Only a judged row
+  // can be undone, so that button is what tells them apart.
+  const judged = (title) =>
+    page
+      .locator(".stack .card-flat")
+      .filter({ hasText: title })
+      .filter({ has: page.getByRole("button", { name: "Undo" }) })
+      .first();
+  const histRow = judged(tasks[1].title.slice(0, 25));
   check("the rejected item appears in history", await histRow.count() > 0);
   await histRow.locator("button.btn-plain").click();
   await page.waitForTimeout(1000);
@@ -153,7 +162,7 @@ try {
   /* ---- undo ---- */
   console.log("\n7. Undo sends an item back to the queue");
   await page.waitForTimeout(1000);
-  const undoRow = page.locator(".stack .card-flat").filter({ hasText: tasks[1].title.slice(0, 25) }).first();
+  const undoRow = judged(tasks[1].title.slice(0, 25));
   await undoRow.getByRole("button", { name: "Undo" }).click();
   await page.waitForTimeout(1500);
   const { data: bRow3 } = await admin.from("submissions").select("status,points_awarded,bonus,starred").eq("id", subB).single();

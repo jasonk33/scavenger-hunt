@@ -1,6 +1,6 @@
-import { db, uploadConfig } from "@/lib/db";
+import { db, mediaUrl, uploadConfig } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
-import { json } from "@/lib/http";
+import { json, isVideoObject } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +45,13 @@ export async function GET(req: Request) {
     created_at: string;
     reject_reason: string | null;
     player_id: string;
+    object_name: string;
+    media_type: string | null;
   }> = [];
+  // Names of whoever on the team actually sent each submission. Progress is
+  // team-wide, so "you already submitted this" is often really a teammate --
+  // and telling the two apart is the whole point of being able to look.
+  let submitterName = new Map<string, string>();
 
   if (playerId) {
     const { data: p } = await sb.from("players").select("id,name").eq("id", playerId).maybeSingle();
@@ -67,11 +73,25 @@ export async function GET(req: Request) {
       if (team) {
         const { data: subs } = await sb
           .from("submissions")
-          .select("id,task_id,status,points_awarded,bonus,created_at,reject_reason,player_id")
+          .select(
+            "id,task_id,status,points_awarded,bonus,created_at,reject_reason,player_id,object_name,media_type"
+          )
           .eq("round", round)
           .eq("team_id", team.id)
           .order("created_at", { ascending: false });
         mine = subs ?? [];
+
+        // Scoped to the handful of people who actually submitted rather than
+        // selecting the whole players table: this endpoint is polled by every
+        // phone every 5 seconds.
+        const submitterIds = [...new Set(mine.map((s) => s.player_id))];
+        if (submitterIds.length > 0) {
+          const { data: submitters } = await sb
+            .from("players")
+            .select("id,name")
+            .in("id", submitterIds);
+          submitterName = new Map((submitters ?? []).map((p) => [p.id, p.name]));
+        }
       }
     }
   }
@@ -119,7 +139,16 @@ export async function GET(req: Request) {
     me,
     team,
     tasks,
-    submissions: mine,
+    // Media URLs are just strings, so sending them costs nothing; the Submit
+    // screen only fetches the bytes for a submission the player opens. The
+    // object path itself is dropped -- the URL already contains it, and this
+    // endpoint is polled by every phone every 5 seconds.
+    submissions: mine.map(({ object_name, media_type, ...s }) => ({
+      ...s,
+      mediaUrl: mediaUrl(object_name),
+      isVideo: isVideoObject(media_type, object_name),
+      playerName: submitterName.get(s.player_id) ?? "a teammate",
+    })),
     stats: {
       submitted: mine.filter((s) => s.status !== "uploading").length,
       pending: mine.filter((s) => s.status === "pending").length,

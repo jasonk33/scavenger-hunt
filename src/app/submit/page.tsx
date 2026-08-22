@@ -16,10 +16,14 @@ type Task = {
 type Sub = {
   id: string;
   task_id: string;
+  player_id: string;
   status: "uploading" | "pending" | "approved" | "rejected";
   points_awarded: number | null;
   bonus: number;
   reject_reason: string | null;
+  mediaUrl: string;
+  isVideo: boolean;
+  playerName: string;
 };
 
 type Rejection = {
@@ -438,6 +442,7 @@ export default function SubmitPage() {
                 task={t}
                 subs={byTask.get(t.id) ?? []}
                 disabled={uploadBlocked}
+                meId={me.id}
                 onPick={() => pickFor(t)}
               />
             ))}
@@ -462,16 +467,24 @@ function TaskRow({
   task,
   subs,
   disabled,
+  meId,
   onPick,
 }: {
   task: Task;
   subs: Sub[];
   disabled: boolean;
+  meId: string;
   onPick: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const approved = subs.find((s) => s.status === "approved");
   const pending = subs.find((s) => s.status === "pending" || s.status === "uploading");
   const rejected = subs.find((s) => s.status === "rejected");
+
+  /* An "uploading" row has a path reserved but no bytes in Storage yet, so its
+     URL would 404. Everything else is viewable. Newest first, matching the
+     order the server sends. */
+  const viewable = subs.filter((s) => s.status !== "uploading");
 
   return (
     <div className={`card card-flat${approved ? " card-done" : ""}`}>
@@ -491,17 +504,73 @@ function TaskRow({
             )}
             {!approved && pending && <span className="pill">waiting on judge</span>}
             {!approved && !pending && rejected && (
-              <span className="pill pill-bad">✗ {rejected.reject_reason || "rejected"}</span>
+              <span className="pill pill-bad pill-wrap">
+                ✗ {rejected.reject_reason || "rejected"}
+              </span>
             )}
           </div>
         </div>
-        <button
-          className="btn btn-sm"
-          disabled={disabled}
-          onClick={onPick}
+        {/* Both of this row's actions in one column. People forget what they
+            sent, and someone who uploaded to the wrong task has no other way to
+            find out -- but the media only downloads once "See" is tapped. */}
+        <div className="stack" style={{ gap: 6 }}>
+          <button
+            className="btn btn-sm"
+            disabled={disabled}
+            onClick={onPick}
+          >
+            {approved || pending ? "Redo" : "Upload"}
+          </button>
+          {viewable.length > 0 && (
+            <button className="btn btn-sm" onClick={() => setOpen((v) => !v)}>
+              {open ? "Hide" : viewable.length > 1 ? `See ${viewable.length}` : "See"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {open && (
+        <div className="stack" style={{ marginTop: 12 }}>
+          {viewable.map((s) => (
+            <SubmissionView key={s.id} sub={s} mine={s.player_id === meId} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One of the team's submissions for a task: what was sent, by whom, and where
+    it got to. Rendered only while expanded, so nothing downloads until asked. */
+function SubmissionView({ sub, mine }: { sub: Sub; mine: boolean }) {
+  const label =
+    sub.status === "approved"
+      ? `✓ ${(sub.points_awarded ?? 0) + sub.bonus} pts`
+      : sub.status === "rejected"
+        ? `✗ ${sub.reject_reason || "rejected"}`
+        : "waiting on judge";
+
+  return (
+    <div>
+      <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+        <span className="name tiny muted">{mine ? "you" : sub.playerName}</span>
+        <span
+          className={`pill pill-wrap push ${
+            sub.status === "approved" ? "pill-good" : sub.status === "rejected" ? "pill-bad" : ""
+          }`}
         >
-          {approved || pending ? "Redo" : "Upload"}
-        </button>
+          {label}
+        </span>
+      </div>
+      <div className="media-box">
+        {sub.isVideo ? (
+          /* Same iOS rule as the feed: preload="auto" and the #t=0.1 fragment,
+             or Safari renders an untappable black box. */
+          <video className="media" controls playsInline preload="auto" src={`${sub.mediaUrl}#t=0.1`} />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className="media" src={sub.mediaUrl} alt="Your submission" />
+        )}
       </div>
     </div>
   );

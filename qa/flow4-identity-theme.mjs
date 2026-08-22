@@ -4,7 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call,
+  BASE, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, enabledUploadButtons,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -82,7 +82,7 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(1500);
   check("unrostered player is warned", await page.getByText("not on a Round 1 team", { exact: false }).count() > 0);
-  const enabledNoTeam = await page.locator(".card-flat button:not(:disabled)").count();
+  const enabledNoTeam = await enabledUploadButtons(page);
   check("unrostered player cannot upload", enabledNoTeam === 0, `${enabledNoTeam} enabled`);
   await call("/api/admin/roster", { method: "POST", body: JSON.stringify({ round: 1, entries: [{ playerId: bob.id, teamId: red1.id }] }) });
 

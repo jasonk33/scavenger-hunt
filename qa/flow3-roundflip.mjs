@@ -10,7 +10,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, asOrganizer, asPlayer,
+  BASE, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, asOrganizer, asPlayer, enabledUploadButtons,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -179,8 +179,13 @@ try {
   await pp.waitForTimeout(1500);
   check("player sees a 'submissions are closed' banner",
     await pp.getByText("Submissions are closed", { exact: false }).count() > 0);
-  const enabled = await pp.locator(".card-flat button:not(:disabled)").count();
+  const enabled = await enabledUploadButtons(pp);
   check("upload buttons are disabled while closed", enabled === 0, `${enabled} still enabled`);
+  // Looking back at what your team already sent has to keep working through the
+  // break -- that is when people are standing around with nothing else to do.
+  const canStillLook = await pp.getByRole("button", { name: /^(See|Hide)/ }).count();
+  check("you can still open your own submissions while closed", canStillLook > 0,
+    "the See control disappeared or was disabled when submissions closed");
   const blocked = await call("/api/submissions", { method: "POST", body: JSON.stringify({
     playerId: alice.id, taskId: r2tasks[1].id, fileName: "x.jpg", fileType: "image/jpeg" }) });
   check("server also refuses submissions while closed", blocked.status >= 400, `${blocked.status} ${JSON.stringify(blocked.body)}`);
