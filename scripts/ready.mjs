@@ -68,10 +68,18 @@ const unrostered = (players ?? []).filter((p) => !rostered.has(p.id));
 check(unrostered.length === 0, `all ${players?.length ?? 0} players are on a Round ${round} team`,
   `not on a Round ${round} team (they cannot upload): ${unrostered.map((p) => p.name).join(", ")}`);
 
-const demo = /^(Alex Rivera|Avery Cruz|Blair Okafor|Casey Nguyen|Devon Park|Emerson Reid|Harper Lane|Jordan Blake|Micah Torres|Morgan Ellis|Noel Frost|Quinn Barrett|Riley Novak|Rowan Diaz|Sam Chen|Sasha Kim)$/;
-const demoLeft = (players ?? []).filter((p) => demo.test(p.name));
-check(demoLeft.length === 0, "roster is your real guest list",
-  `roster still has ${demoLeft.length} demo player(s) — replace with the real guest list in Admin → roster`, false);
+// The roster can change by hand on the day -- someone no-shows and gets pulled
+// in Admin -- and the doc's floor is four. A team that drops to three is still
+// playable, so this is a note rather than a blocker.
+const sizes = new Map();
+for (const r of roster ?? []) {
+  if (r.round !== round) continue;
+  sizes.set(r.team_id, (sizes.get(r.team_id) ?? 0) + 1);
+}
+const nameOf = new Map((teams ?? []).map((t) => [t.id, t.name]));
+const short = [...sizes.entries()].filter(([, n]) => n < 4);
+check(short.length === 0, `every Round ${round} team has at least 4 players`,
+  `short-handed: ${short.map(([id, n]) => `${nameOf.get(id) ?? id} (${n})`).join(", ")}`, false);
 
 const activeTasks = (tasks ?? []).filter((t) => t.active !== false && t.round === round);
 check(activeTasks.length > 0, `${activeTasks.length} active tasks in Round ${round}`, `no active tasks in Round ${round}`);

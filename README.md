@@ -37,16 +37,19 @@ npm install
 npm run dev
 ```
 
-### 3. Load some data to play with (optional)
+### 3. Load the event data
 
 ```bash
-npm run demo          # 16 test players across 4 teams, remixed between rounds
-npm run demo:reset    # remove them again
+npm run seed          # guest list, teams for both rounds, tasks from the doc
+npm run seed:reset    # remove them again
 ```
 
-`demo:reset` also deletes **every submission and every media file** in the
-project, so it refuses to run once real players have submitted anything. Use it
-to clear your own testing before the day.
+The guest list and the team split live at the top of `scripts/seed-event.mjs`.
+Edit them there and re-run as people RSVP, rather than clicking through Admin.
+
+Both commands delete **every submission and every media file** in the project,
+so they refuse to run once anyone outside that guest list has submitted
+something. Use `seed:reset` to clear your own testing before the day.
 
 ### 4. Verify it actually works
 
