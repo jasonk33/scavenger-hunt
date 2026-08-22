@@ -29,15 +29,20 @@ const FILTERS = [
 
 export default function FeedPage() {
   const [round, setRound] = useState(0);
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
+  const [filterPref, setFilterPref] = useState<(typeof FILTERS)[number]["key"]>("all");
   const { data, error } = usePoll<Feed>(round ? `/api/feed?round=${round}` : "/api/feed", 8000);
   const shown = round || data?.round || 1;
   const all = data?.items ?? [];
+  const rejectedCount = all.filter((it) => it.status === "rejected").length;
+  // The filter only appears while there is something to filter, so the choice is
+  // derived rather than trusted: switching to a round with no rejections yet, or
+  // a judge undoing the round's only rejection, would otherwise unmount the
+  // control and leave the screen filtered to nothing with no way back.
+  const filter = rejectedCount > 0 ? filterPref : "all";
   // Filtered here rather than at the API so switching is instant and doesn't
   // re-download anything. It also cuts what renders, which is what actually
   // costs bandwidth -- videos load eagerly.
   const items = filter === "all" ? all : all.filter((it) => it.status === filter);
-  const rejectedCount = all.filter((it) => it.status === "rejected").length;
 
   return (
     <>
@@ -60,7 +65,7 @@ export default function FeedPage() {
               <button
                 key={f.key}
                 className={filter === f.key ? "on" : ""}
-                onClick={() => setFilter(f.key)}
+                onClick={() => setFilterPref(f.key)}
               >
                 {f.label}
               </button>

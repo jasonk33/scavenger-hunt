@@ -44,6 +44,11 @@ function matches(item: Item, needle: string) {
   );
 }
 
+/** List length above which a list gets its own search box. One constant, because
+    the render gate and the filter have to agree: if the filter outlived the box,
+    a search would keep applying with nothing on screen to clear it. */
+const SEARCH_AT = 8;
+
 export default function JudgePage() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [pin, setPin] = useState("");
@@ -146,12 +151,17 @@ function JudgeQueue() {
   const otherRoundPending = data?.otherRoundPending ?? 0;
 
   const filteredQueue = useMemo(() => {
-    const needle = queueQ.trim().toLowerCase();
+    // Derived from the same condition that renders the box, so a search can never
+    // outlive the only control that clears it. The queue SHRINKS as the judge
+    // works, so it crosses the threshold downward mid-session -- leaving the
+    // needle applied would strand them on a short or empty list with no input.
+    const needle = queue.length > SEARCH_AT ? queueQ.trim().toLowerCase() : "";
     return needle ? queue.filter((i) => matches(i, needle)) : queue;
   }, [queue, queueQ]);
 
   const filteredHistory = useMemo(() => {
-    const needle = historyQ.trim().toLowerCase();
+    // Same rule: Undo moves a row back to the queue, so history shrinks too.
+    const needle = history.length > SEARCH_AT ? historyQ.trim().toLowerCase() : "";
     return needle ? history.filter((h) => matches(h, needle)) : history;
   }, [history, historyQ]);
 
@@ -159,14 +169,17 @@ function JudgeQueue() {
   // the last submission never lands on the next one.
   useEffect(() => {
     // Seed from the existing decision when reopening a judged item, so tapping
-    // "Update" doesn't silently wipe a bonus or an award flag.
+    // "Update" doesn't silently wipe a bonus or an award flag. Status is a
+    // dependency as well as id: a picked item keeps its id when another
+    // organizer judges it out from under this screen, and without it the
+    // controls would stay at 0/off and the next Update would erase their call.
     setBonus(current?.status === "approved" ? (current.bonus ?? 0) : 0);
     setStar(Boolean(current?.starred));
     setRejecting(false);
     setReassigning(false);
     setErr("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current?.id]);
+  }, [current?.id, current?.status]);
 
   const decide = async (body: Record<string, unknown>) => {
     if (!current || busy) return;
@@ -475,13 +488,14 @@ function JudgeQueue() {
 
       {/* The whole backlog, not just its front. Text rows on purpose: a
           thumbnail grid would fetch every queued photo the moment the judge
-          opens the screen. The queue is ordered by upload time and only ever
-          grows at the end, so a row never moves out from under a thumb. */}
+          opens the screen. The queue is ordered by upload time and a poll only
+          ever appends to it, so no row moves under a thumb on its own -- rows
+          shift up only as the direct result of the judge's own decision. */}
       {queue.length > 1 && (
         <>
           <h2 className="eyebrow">Waiting ({queue.length}) — tap any to review it now</h2>
 
-          {queue.length > 8 && (
+          {queue.length > SEARCH_AT && (
             <input
               className="field"
               placeholder="Search by task, team or player"
@@ -528,7 +542,7 @@ function JudgeQueue() {
         <>
           <h2 className="eyebrow">Judged this round ({history.length}) — tap any to change it</h2>
 
-          {history.length > 8 && (
+          {history.length > SEARCH_AT && (
             <input
               className="field"
               placeholder="Search by task, team or player"
