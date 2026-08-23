@@ -314,6 +314,11 @@ export async function asOrganizer(context) {
   ]);
 }
 
+/** Ask a visible page to perform the same immediate refresh used on tab return. */
+export async function pollNow(page) {
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+}
+
 export async function shot(page, name) {
   await page.screenshot({ path: new URL(`./shots/${name}.png`, import.meta.url).pathname, fullPage: false });
 }
