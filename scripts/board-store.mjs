@@ -226,7 +226,7 @@ export function createBoardClient(env = loadEnv(), fetchImpl = globalThis.fetch)
  * -- a check-constraint violation names the constraint -- and a bare status code
  * on the canvas banner is unactionable.
  */
-async function rest(client, { method = "GET", path, body, prefer }) {
+export async function rest(client, { method = "GET", path, body, prefer }) {
   const headers = {
     apikey: client.key,
     Authorization: `Bearer ${client.key}`,

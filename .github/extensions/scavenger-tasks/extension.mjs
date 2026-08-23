@@ -1,7 +1,6 @@
 // Extension: scavenger-tasks
-// A board for tuning the scavenger hunt task list: rate every task on the same
-// axes, let the point tier fall out of those ratings, and see where the tier in
-// the doc disagrees. Wording changes stay an agent job — the UI just flags them.
+// A planner for tuning the scavenger hunt task list and editing the live roster.
+// Tasks wait for Publish; people, team names and round assignments write live.
 //
 // extension.mjs is wiring only: store.mjs reads and writes the board in the
 // task_board table, tier.mjs owns the scoring model, and index.html/ui.js/ui.css
@@ -15,6 +14,18 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 import { addTask, loadBoard, summarize, updateModel, updateTask } from "./store.mjs";
+import {
+  addPlayers,
+  addTeam,
+  assignRoster,
+  copyRoster,
+  deletePlayer,
+  deleteTeam,
+  getRosterClient,
+  loadRoster,
+  updatePlayer,
+  updateTeam,
+} from "./roster-store.mjs";
 import { mainCheckout } from "../../../scripts/board-store.mjs";
 import { scoreOf, suggestedPoints } from "./tier.mjs";
 
@@ -22,6 +33,7 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ASSETS = {
   "/": "index.html",
   "/ui.js": "ui.js",
+  "/roster.js": "roster.js",
   "/ui.css": "ui.css",
   "/publish-state.mjs": "publish-state.mjs",
   "/tier.mjs": "tier.mjs",
@@ -182,6 +194,10 @@ async function boardPayload() {
   };
 }
 
+async function rosterPayload() {
+  return loadRoster();
+}
+
 /**
  * Pushes the board to every panel this process is serving.
  *
@@ -203,6 +219,23 @@ async function broadcast() {
   for (const res of streams) {
     try {
       res.write(`event: board\ndata: ${data}\n\n`);
+    } catch {
+      streams.delete(res);
+    }
+  }
+}
+
+async function broadcastRoster() {
+  if (!streams.size) return;
+  let data;
+  try {
+    data = JSON.stringify(await rosterPayload());
+  } catch {
+    return;
+  }
+  for (const res of streams) {
+    try {
+      res.write(`event: roster\ndata: ${data}\n\n`);
     } catch {
       streams.delete(res);
     }
@@ -235,12 +268,18 @@ async function handle(req, res) {
       Connection: "keep-alive",
     });
     res.write(`event: board\ndata: ${JSON.stringify(await boardPayload())}\n\n`);
+    try {
+      res.write(`event: roster\ndata: ${JSON.stringify(await rosterPayload())}\n\n`);
+    } catch {
+      // The roster poll reports this in the panel without taking down the task board.
+    }
     streams.add(res);
     req.on("close", () => streams.delete(res));
     return;
   }
 
   if (path === "/api/board") return json(res, 200, await boardPayload());
+  if (path === "/api/roster") return json(res, 200, await rosterPayload());
 
   if (path === "/api/publish/status") return json(res, 200, await runSync(false));
 
@@ -266,6 +305,69 @@ async function handle(req, res) {
     if (!task) return json(res, 404, { error: "unknown task" });
     await broadcast();
     return json(res, 200, task);
+  }
+
+  if (path === "/api/roster/players" && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    const result = await addPlayers(getRosterClient(), body.names ?? body.name);
+    await broadcastRoster();
+    return json(res, 200, result);
+  }
+
+  if (path === "/api/roster/players" && req.method === "PATCH") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    const player = await updatePlayer(getRosterClient(), body.id, body.name);
+    await broadcastRoster();
+    return json(res, 200, player);
+  }
+
+  if (path === "/api/roster/players" && req.method === "DELETE") {
+    const id = new URL(req.url, "http://127.0.0.1").searchParams.get("id");
+    const result = await deletePlayer(getRosterClient(), id);
+    await broadcastRoster();
+    return json(res, 200, result);
+  }
+
+  if (path === "/api/roster/teams" && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    const result = await addTeam(getRosterClient(), body);
+    await broadcastRoster();
+    return json(res, 200, result);
+  }
+
+  if (path === "/api/roster/teams" && req.method === "PATCH") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    const { id, ...patch } = body;
+    const result = await updateTeam(getRosterClient(), id, patch);
+    await broadcastRoster();
+    return json(res, 200, result);
+  }
+
+  if (path === "/api/roster/teams" && req.method === "DELETE") {
+    const id = new URL(req.url, "http://127.0.0.1").searchParams.get("id");
+    const result = await deleteTeam(getRosterClient(), id);
+    await broadcastRoster();
+    return json(res, 200, result);
+  }
+
+  if (path === "/api/roster/assign" && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    const result = await assignRoster(getRosterClient(), body.round, body.entries);
+    await broadcastRoster();
+    return json(res, 200, result);
+  }
+
+  if (path === "/api/roster/copy" && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    const result = await copyRoster(getRosterClient(), body.from, body.to);
+    await broadcastRoster();
+    return json(res, 200, result);
   }
 
   const asset = ASSETS[path];
@@ -394,16 +496,212 @@ const summaryAction = {
   handler: async () => summarize(await loadBoard()),
 };
 
+const listRosterAction = {
+  name: "list_roster",
+  description:
+    "Read the current people, teams and assignments. Optionally limit the result to one round so every player includes their assigned team name.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      round: { type: "integer", enum: [1, 2], description: "Round to inspect; omit for both rounds" },
+    },
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const data = await rosterPayload();
+    const requested = ctx.input?.round;
+    const rounds = requested ? [requested] : [1, 2];
+    const byId = new Map(data.players.map((player) => [player.id, player]));
+    return {
+      rounds: rounds.map((round) => {
+        const teams = data.teams.filter((team) => team.round === round);
+        const names = new Map(teams.map((team) => [team.id, team.name]));
+        const assignments = new Map(
+          data.roster.filter((entry) => entry.round === round).map((entry) => [entry.player_id, entry.team_id])
+        );
+        return {
+          round,
+          teams,
+          players: data.players.map((player) => ({
+            ...player,
+            teamId: assignments.get(player.id) ?? null,
+            teamName: names.get(assignments.get(player.id)) ?? null,
+          })),
+        };
+      }),
+      playerCount: byId.size,
+    };
+  },
+};
+
+const addPlayersAction = {
+  name: "add_players",
+  description: "Add one or more people to the guest list. Pass a comma- or newline-separated names string; duplicates are ignored.",
+  inputSchema: {
+    type: "object",
+    properties: { names: { type: "string" } },
+    required: ["names"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const result = await addPlayers(getRosterClient(), ctx.input.names);
+    await broadcastRoster();
+    return result;
+  },
+};
+
+const updatePlayerAction = {
+  name: "update_player",
+  description: "Rename one person without changing their id or any submission history.",
+  inputSchema: {
+    type: "object",
+    properties: { playerId: { type: "string" }, name: { type: "string" } },
+    required: ["playerId", "name"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const player = await updatePlayer(getRosterClient(), ctx.input.playerId, ctx.input.name);
+    await broadcastRoster();
+    return player;
+  },
+};
+
+const deletePlayerAction = {
+  name: "delete_player",
+  description: "Remove one person only when they have no submissions; the store refuses to delete evidence.",
+  inputSchema: {
+    type: "object",
+    properties: { playerId: { type: "string" } },
+    required: ["playerId"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const result = await deletePlayer(getRosterClient(), ctx.input.playerId);
+    await broadcastRoster();
+    return result;
+  },
+};
+
+const assignPlayersAction = {
+  name: "assign_players",
+  description:
+    "Assign or unassign people for one round. Pass teamId as an empty string to clear an assignment; team ids must belong to that round.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      round: { type: "integer", enum: [1, 2] },
+      entries: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { playerId: { type: "string" }, teamId: { type: "string" } },
+          required: ["playerId", "teamId"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["round", "entries"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const result = await assignRoster(getRosterClient(), ctx.input.round, ctx.input.entries);
+    await broadcastRoster();
+    return result;
+  },
+};
+
+const addTeamAction = {
+  name: "add_team",
+  description: "Add a named team to both rounds so the roster remix can keep the two rounds paired.",
+  inputSchema: {
+    type: "object",
+    properties: { name: { type: "string" }, color: { type: "string" } },
+    required: ["name"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const result = await addTeam(getRosterClient(), ctx.input);
+    await broadcastRoster();
+    return result;
+  },
+};
+
+const updateTeamAction = {
+  name: "update_team",
+  description: "Rename or recolor a team; the matching team row in the other round is updated atomically too.",
+  inputSchema: {
+    type: "object",
+    properties: { teamId: { type: "string" }, name: { type: "string" }, color: { type: "string" } },
+    required: ["teamId"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const { teamId, ...patch } = ctx.input;
+    const result = await updateTeam(getRosterClient(), teamId, patch);
+    await broadcastRoster();
+    return result;
+  },
+};
+
+const deleteTeamAction = {
+  name: "delete_team",
+  description: "Remove a team from both rounds only when it has no submissions; roster members become unassigned.",
+  inputSchema: {
+    type: "object",
+    properties: { teamId: { type: "string" } },
+    required: ["teamId"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const result = await deleteTeam(getRosterClient(), ctx.input.teamId);
+    await broadcastRoster();
+    return result;
+  },
+};
+
+const copyRosterAction = {
+  name: "copy_roster",
+  description: "Copy all assignments from one round to the other by paired team name.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      from: { type: "integer", enum: [1, 2] },
+      to: { type: "integer", enum: [1, 2] },
+    },
+    required: ["from", "to"],
+    additionalProperties: false,
+  },
+  handler: async (ctx) => {
+    const result = await copyRoster(getRosterClient(), ctx.input.from, ctx.input.to);
+    await broadcastRoster();
+    return result;
+  },
+};
+
 // ── Registration ─────────────────────────────────────────────────────────────
 
 await joinSession({
   canvases: [
     createCanvas({
       id: "scavenger-tasks",
-      displayName: "Scavenger hunt tasks",
+      displayName: "Scavenger hunt planner",
       description:
-        "Rate, re-tier, and cut scavenger hunt tasks — shows where each task's assigned point value disagrees with its difficulty/guts/luck ratings.",
-      actions: [listTasks, updateTaskAction, addTaskAction, summaryAction],
+        "Plan tasks and edit the live scavenger hunt roster: people, paired team names, and Round 1/2 assignments.",
+      actions: [
+        listTasks,
+        updateTaskAction,
+        addTaskAction,
+        summaryAction,
+        listRosterAction,
+        addPlayersAction,
+        updatePlayerAction,
+        deletePlayerAction,
+        assignPlayersAction,
+        addTeamAction,
+        updateTeamAction,
+        deleteTeamAction,
+        copyRosterAction,
+      ],
       open: async (ctx) => {
         // Idempotent: re-opens and provider reconnects both land here, and the
         // board is read from the database rather than kept per instance.
@@ -422,7 +720,7 @@ await joinSession({
         } catch {
           // Reported in the panel, which is where it can actually be read.
         }
-        return { title: "Scavenger hunt tasks", status, url: entry.url };
+        return { title: "Scavenger hunt planner", status, url: entry.url };
       },
       onClose: async (ctx) => {
         const entry = servers.get(ctx.instanceId);

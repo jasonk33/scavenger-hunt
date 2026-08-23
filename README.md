@@ -75,9 +75,12 @@ npm run sync:tasks -- --json  # the same run as one JSON object, for the canvas
 ```
 
 Tasks are edited on the planning board — titles, point tiers, which need a clip,
-and which are cut — through the Copilot canvas in
-`.github/extensions/scavenger-tasks/`. The board is the `task_board` table, and
-`sync:tasks` is the only thing that carries those edits to players.
+and which are cut — through the Tasks tab of the Copilot canvas in
+`.github/extensions/scavenger-tasks/`. The same canvas's Roster tab edits people,
+paired team names and Round 1/2 assignments live. The board is the `task_board`
+table, and `sync:tasks` is the only thing that carries task edits to players.
+Roster assignments apply on selection; person names and team names/colours auto-save
+to the live tables.
 
 The canvas has a banner showing how many board edits are not yet live and a
 button that publishes them, which just runs the command above — so it refuses
@@ -93,9 +96,9 @@ Because the extension lives in `.github/extensions/`, it is **only available in
 a session opened on this repo** — it will not appear in a general chat session.
 That is deliberate: publishing needs this repo's `.env.local` anyway.
 
-Unlike `seed`, it is safe during the event: it writes to the `tasks` table and
-nothing else, so submissions, media, the roster and any revealed secrets are
-untouched. A task cut on the board is hidden (`active = false`), never deleted,
+Unlike `seed`, task publishing is safe during the event: it writes to the `tasks`
+table and nothing else, so submissions, media, the roster and any revealed secrets
+are untouched. A task cut on the board is hidden (`active = false`), never deleted,
 so points already awarded against it still stand and anything already in the
 judge's queue can still be decided.
 

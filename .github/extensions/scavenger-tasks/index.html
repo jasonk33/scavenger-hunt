@@ -3,74 +3,136 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Scavenger hunt task board</title>
+    <title>Scavenger hunt planner</title>
     <link rel="stylesheet" href="/ui.css" />
   </head>
   <body>
     <header class="bar">
       <div class="bar-top">
-        <h1>Task board</h1>
+        <h1>Scavenger hunt planner</h1>
         <div class="stats" id="stats"></div>
       </div>
 
-      <div class="controls">
-        <div class="seg" id="round-filter" role="group" aria-label="Round">
-          <button class="on" data-round="all">All</button>
-          <button data-round="1">R1</button>
-          <button data-round="2">R2</button>
-          <button data-round="0">Secret</button>
-        </div>
-
-        <div class="seg" id="status-filter" role="group" aria-label="Status">
-          <button class="on" data-status="all">In</button>
-          <button data-status="keep">Keep</button>
-          <button data-status="maybe">Maybe</button>
-          <button data-status="cut">Cut</button>
-        </div>
-
-        <select id="sort" aria-label="Sort by">
-          <option value="doc">Doc order</option>
-          <option value="score">Hardest first</option>
-          <option value="mismatch">Tier disagreement</option>
-          <option value="payoff">Weakest payoff first</option>
-          <option value="risk">Riskiest first</option>
-          <option value="luck">Luckiest first</option>
-        </select>
-
-        <input id="search" type="search" placeholder="Filter…" aria-label="Filter tasks" />
-
-        <label class="check"><input type="checkbox" id="only-flagged" /> Flagged</label>
-        <button id="toggle-balance" class="ghost">Balance</button>
+      <div class="tabs" role="tablist" aria-label="Planner">
+        <button id="tasks-tab" class="tab on" role="tab" aria-selected="true" aria-controls="list">
+          Tasks
+        </button>
+        <button id="roster-tab" class="tab" role="tab" aria-selected="false" aria-controls="roster-view">
+          Roster
+        </button>
       </div>
 
-      <section id="publish" class="publish" data-kind="unknown">
-        <div class="publish-line">
-          <span class="publish-dot" aria-hidden="true"></span>
-          <div class="publish-text">
-            <b id="publish-headline">Checking what's live&hellip;</b>
-            <span id="publish-detail"></span>
+      <div id="tasks-tools">
+        <div class="controls">
+          <div class="seg" id="round-filter" role="group" aria-label="Round">
+            <button class="on" data-round="all">All</button>
+            <button data-round="1">R1</button>
+            <button data-round="2">R2</button>
+            <button data-round="0">Secret</button>
           </div>
-          <button id="publish-recheck" class="ghost" title="Check again now">Recheck</button>
-          <button id="publish-review" class="ghost primary" hidden>Review &amp; publish</button>
-        </div>
-        <div id="publish-preview" class="publish-preview" hidden>
-          <p class="publish-warn">
-            This writes to the live task list players are looking at right now. Submissions,
-            media, scores and the roster are never touched.
-          </p>
-          <ul id="publish-changes"></ul>
-          <div id="publish-warnings" class="publish-warnings" hidden></div>
-          <div class="publish-actions">
-            <button id="publish-confirm" class="ghost danger">Publish</button>
-            <button id="publish-cancel" class="ghost">Cancel</button>
-          </div>
-        </div>
-      </section>
 
-      <section id="balance" class="balance" hidden></section>
+          <div class="seg" id="status-filter" role="group" aria-label="Status">
+            <button class="on" data-status="all">In</button>
+            <button data-status="keep">Keep</button>
+            <button data-status="maybe">Maybe</button>
+            <button data-status="cut">Cut</button>
+          </div>
+
+          <select id="sort" aria-label="Sort by">
+            <option value="doc">Doc order</option>
+            <option value="score">Hardest first</option>
+            <option value="mismatch">Tier disagreement</option>
+            <option value="payoff">Weakest payoff first</option>
+            <option value="risk">Riskiest first</option>
+            <option value="luck">Luckiest first</option>
+          </select>
+
+          <input id="search" type="search" placeholder="Filter…" aria-label="Filter tasks" />
+
+          <label class="check"><input type="checkbox" id="only-flagged" /> Flagged</label>
+          <button id="toggle-balance" class="ghost">Balance</button>
+        </div>
+
+        <section id="publish" class="publish" data-kind="unknown">
+          <div class="publish-line">
+            <span class="publish-dot" aria-hidden="true"></span>
+            <div class="publish-text">
+              <b id="publish-headline">Checking what's live&hellip;</b>
+              <span id="publish-detail"></span>
+            </div>
+            <button id="publish-recheck" class="ghost" title="Check again now">Recheck</button>
+            <button id="publish-review" class="ghost primary" hidden>Review &amp; publish</button>
+          </div>
+          <div id="publish-preview" class="publish-preview" hidden>
+            <p class="publish-warn">
+              This writes to the live task list players are looking at right now. Submissions,
+              media, scores and the roster are never touched.
+            </p>
+            <ul id="publish-changes"></ul>
+            <div id="publish-warnings" class="publish-warnings" hidden></div>
+            <div class="publish-actions">
+              <button id="publish-confirm" class="ghost danger">Publish</button>
+              <button id="publish-cancel" class="ghost">Cancel</button>
+            </div>
+          </div>
+
+          <section id="balance" class="balance" hidden></section>
+      </div>
     </header>
 
-    <main id="list" class="list"></main>
+    <main id="list" class="list" aria-labelledby="tasks-tab"></main>
+
+    <main id="roster-view" class="roster" hidden aria-labelledby="roster-tab">
+      <section class="roster-toolbar">
+        <div class="seg" id="roster-round-filter" role="group" aria-label="Roster round">
+          <button class="on" data-round="1">R1</button>
+          <button data-round="2">R2</button>
+        </div>
+        <button id="copy-roster" class="ghost">Copy from Round 2</button>
+        <span id="roster-assignment-summary" class="roster-summary"></span>
+      </section>
+
+      <div id="roster-error" class="roster-error" hidden></div>
+
+      <div class="roster-grid">
+        <section class="roster-card">
+          <div class="section-head">
+            <div>
+              <h2>People</h2>
+              <p>Assignments apply immediately. Names save automatically as you type.</p>
+            </div>
+            <span id="roster-player-count" class="roster-summary"></span>
+          </div>
+          <div id="player-list" class="roster-list"></div>
+          <div class="add-box">
+            <label class="field grow">
+              <span>Add people</span>
+              <textarea id="add-players" rows="3" placeholder="One name per line"></textarea>
+            </label>
+            <button id="add-players-button" class="ghost primary">Add</button>
+          </div>
+        </section>
+
+        <section class="roster-card">
+          <div class="section-head">
+            <div>
+              <h2>Teams</h2>
+              <p>Names and colours stay paired across both rounds and save automatically.</p>
+            </div>
+            <span id="roster-team-count" class="roster-summary"></span>
+          </div>
+          <div id="team-list" class="roster-list"></div>
+          <div class="add-box">
+            <label class="field grow">
+              <span>Add team</span>
+              <input id="new-team" type="text" placeholder="Team name" />
+            </label>
+            <input id="new-team-color" class="color" type="color" value="#6b7280" title="Team colour" />
+            <button id="add-team-button" class="ghost primary">Add</button>
+          </div>
+        </section>
+      </div>
+    </main>
 
     <template id="row-tpl">
       <article class="row">
@@ -118,5 +180,6 @@
     </template>
 
     <script type="module" src="/ui.js"></script>
+    <script type="module" src="/roster.js"></script>
   </body>
 </html>

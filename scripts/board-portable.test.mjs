@@ -42,7 +42,7 @@ function bareCheckout() {
   for (const file of ["board-store.mjs"]) {
     cpSync(new URL(file, HERE), join(root, "scripts", file));
   }
-  for (const file of ["store.mjs", "tier.mjs", "publish-state.mjs"]) {
+  for (const file of ["store.mjs", "roster-store.mjs", "tier.mjs", "publish-state.mjs"]) {
     cpSync(new URL(`../.github/extensions/scavenger-tasks/${file}`, HERE), join(root, ".github", "extensions", "scavenger-tasks", file));
   }
   return root;
@@ -58,6 +58,17 @@ test("the canvas store imports with no node_modules and no .env.local", async ()
     // never registers, and a canvas the user cannot open at all.
     assert.equal(typeof store.loadBoard, "function");
     assert.equal(typeof store.summarize, "function");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the roster store imports with no node_modules and no .env.local", async () => {
+  const root = bareCheckout();
+  try {
+    const roster = await load(root, ".github/extensions/scavenger-tasks/roster-store.mjs");
+    assert.equal(typeof roster.loadRoster, "function");
+    assert.equal(typeof roster.assignRoster, "function");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

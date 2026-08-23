@@ -1,7 +1,7 @@
 /**
- * Canvas renderer. Talks to the extension over plain HTTP on the same origin:
+ * Task renderer. Talks to the extension over plain HTTP on the same origin:
  * GET /api/board, PATCH /api/task/:id, PATCH /api/model, and an SSE stream at
- * /events.
+ * /events. The Roster tab is rendered by roster.js and shares that stream.
  *
  * The board is a database table any session can write, so the page POLLS
  * /api/board. The stream only reaches panels served by the same extension
@@ -31,6 +31,10 @@ const ROUND_RANK = { 1: 0, 2: 1, 0: 2 };
 const el = {
   list: document.getElementById("list"),
   stats: document.getElementById("stats"),
+  tasksTab: document.getElementById("tasks-tab"),
+  rosterTab: document.getElementById("roster-tab"),
+  tasksTools: document.getElementById("tasks-tools"),
+  rosterView: document.getElementById("roster-view"),
   balance: document.getElementById("balance"),
   search: document.getElementById("search"),
   sort: document.getElementById("sort"),
@@ -48,6 +52,22 @@ const el = {
 };
 
 const filters = { round: "all", status: "all", q: "", sort: "doc", flagged: false };
+
+function setView(view) {
+  const roster = view === "roster";
+  el.tasksTools.hidden = roster;
+  el.list.hidden = roster;
+  el.rosterView.hidden = !roster;
+  el.stats.hidden = roster;
+  el.tasksTab.classList.toggle("on", !roster);
+  el.rosterTab.classList.toggle("on", roster);
+  el.tasksTab.setAttribute("aria-selected", String(!roster));
+  el.rosterTab.setAttribute("aria-selected", String(roster));
+}
+
+el.tasksTab.addEventListener("click", () => setView("tasks"));
+el.rosterTab.addEventListener("click", () => setView("roster"));
+setView("tasks");
 
 let board = { tasks: [], model: { weights: {}, thresholds: {} } };
 /**
@@ -688,7 +708,12 @@ await refreshBoard();
 schedulePoll();
 refreshStatus();
 
-new EventSource("/events").addEventListener("board", (e) => {
+const events = new EventSource("/events");
+events.addEventListener("roster", (e) => {
+  window.dispatchEvent(new CustomEvent("roster-update", { detail: e.data }));
+});
+
+events.addEventListener("board", (e) => {
   // Ignore pushes while an edit is in flight; the local copy is newer.
   if (pending.size) return;
   let next;
