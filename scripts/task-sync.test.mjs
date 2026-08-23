@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeTitle, effectiveTitle, desiredRows, planTaskSync, applyPlan } from "./task-sync.mjs";
+import { normalizeTitle, effectiveTitle, desiredRows, planTaskSync, applyPlan, worktreeRefusal } from "./task-sync.mjs";
 
 /** Minimal board task; every field the planner reads has a default. */
 function task(over = {}) {
@@ -516,4 +516,66 @@ test("applyPlan refuses a plan with a genuine title collision and writes nothing
   assert.equal(plan.collisions.length, 1);
   await assert.rejects(() => applyPlan(db, plan, { migrated: true }), /collision|duplicate/i);
   assert.deepEqual(db.calls, [], "nothing may be written");
+});
+
+// ------------------------------------------------------- wrong-checkout guard
+
+/**
+ * The canvas resolves the board by an absolute path into the main checkout, so a
+ * run from a linked worktree would read that worktree's committed copy and
+ * publish a plan computed from a stale board. `worktreeRefusal` is the pure half
+ * of the guard: it takes the two git answers rather than shelling out, so every
+ * branch here is reachable from a fixture.
+ */
+const MAIN = { gitDir: ".git", gitCommonDir: ".git", cwd: "/repo", boardPath: "/repo/data/task-board.json" };
+const LINKED = {
+  gitDir: "/repo/.git/worktrees/wt",
+  gitCommonDir: "/repo/.git",
+  cwd: "/wt",
+  boardPath: "/wt/data/task-board.json",
+};
+
+test("the guard stays quiet in the main checkout, where both git dirs are the same", () => {
+  assert.equal(worktreeRefusal(MAIN), null);
+  // Absolute and relative forms of the same directory must not read as a split.
+  assert.equal(worktreeRefusal({ ...MAIN, gitCommonDir: "/repo/.git" }), null);
+});
+
+test("the guard fires in a linked worktree and names both boards", () => {
+  const msg = worktreeRefusal(LINKED);
+  assert.ok(msg, "a linked worktree must refuse");
+  assert.ok(msg.includes("/wt/data/task-board.json"), "must name the board it would have read");
+  assert.ok(msg.includes("/repo/data/task-board.json"), "must name the canonical board");
+  assert.match(msg, /canvas/i, "must explain that the canvas writes to the main checkout");
+  // Different paths entirely: the canonical board must be derived, not hardcoded.
+  const other = worktreeRefusal({
+    gitDir: "/a/b/.git/worktrees/z",
+    gitCommonDir: "/a/b/.git",
+    cwd: "/x/y",
+    boardPath: "/x/y/data/task-board.json",
+  });
+  assert.ok(other.includes("/a/b/data/task-board.json"), "the canonical board is derived");
+});
+
+test("the guard degrades to quiet when git cannot answer", () => {
+  // No git binary, a tarball, or any other non-repo: refusing here would break a
+  // fresh clone and CI, and a guard that cries wolf gets disabled.
+  assert.equal(worktreeRefusal({ ...MAIN, gitDir: null, gitCommonDir: null }), null);
+  assert.equal(worktreeRefusal({ ...MAIN, gitDir: "", gitCommonDir: "" }), null);
+  // A git too old for --git-common-dir echoes the flag back instead of failing.
+  assert.equal(worktreeRefusal({ ...MAIN, gitCommonDir: "--git-common-dir" }), null);
+});
+
+test("the guard still refuses when the main checkout cannot be located", () => {
+  // A common dir that is not named `.git` (bare, or a relocated git dir) leaves
+  // nothing to point at, but the read is no less wrong, so it must not pass.
+  const msg = worktreeRefusal({ ...LINKED, gitCommonDir: "/repo/bare.git" });
+  assert.ok(msg, "an unlocatable main checkout must still refuse");
+  assert.ok(msg.includes("/wt/data/task-board.json"));
+});
+
+test("a submodule is not mistaken for a worktree", () => {
+  // `git rev-parse` gives a submodule the same answer twice, just not `.git`.
+  const g = "/repo/.git/modules/sub";
+  assert.equal(worktreeRefusal({ gitDir: g, gitCommonDir: g, cwd: "/repo/sub", boardPath: "/repo/sub/data/task-board.json" }), null);
 });

@@ -53,6 +53,10 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
   (`store.mjs` holds the schema and validators), and reaches players **only** via
   `npm run sync:tasks`. Nothing else writes task rows. Editing a title in Admin is a
   field-day escape hatch; the next sync will put the board's wording back.
+- **Task work belongs in a branch session, not a worktree.** The canvas resolves the board by
+  absolute path into the main checkout, so a worktree's copy is always the stale committed one.
+  `sync:tasks` now refuses there — `git rev-parse --git-dir` vs `--git-common-dir`; override with
+  `TASK_SYNC_ALLOW_WORKTREE=1`.
 - Board tasks carry a stable `id` (`r1-01`, `s-04`) mirrored onto `tasks.board_id`. That is
   the sync key — **never match tasks on their title**, which 8 tasks have already outgrown.
 - **Secrets sit at `round: 0` on the board but `tasks.round` is `check (round in (1, 2))`**,
