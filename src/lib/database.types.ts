@@ -4,7 +4,7 @@
  * Without these the client infers `never` for every table and silently accepts
  * nothing. Written by hand rather than generated so the app has no dependency on
  * the Supabase CLI being installed and linked; keep in sync with
- * supabase/01-schema.sql.
+ * supabase/setup.sql and the supabase/migrate-*.sql files.
  */
 
 type Timestamp = string;
@@ -35,6 +35,31 @@ type TaskRow = {
   sort_order: number;
   active: boolean;
   created_at: Timestamp;
+};
+
+/**
+ * One task on the planning board.
+ *
+ * The board is the source of truth for task content, points and cuts, and
+ * reaches players only through `scripts/task-sync.mjs`. The app reads it in one
+ * place: Admin mirrors an emergency edit back onto it, so the next publish does
+ * not silently revert what was just set. Nothing else in the app touches it.
+ *
+ * Only the columns the app actually uses are listed -- the ratings, prop, note
+ * and tier model belong to the canvas, which reads this table through
+ * `scripts/board-store.mjs` rather than through this client.
+ */
+type TaskBoardRow = {
+  /** Stable board id (`r1-01`, `s-04`), mirrored onto `tasks.board_id`. */
+  board_id: string;
+  /** 0 is a secret, offered in both rounds. `tasks.round` only allows 1 and 2. */
+  round: number;
+  title: string;
+  /** Constrained to the 1/3/5/7/10 tiers, unlike `tasks.points`. */
+  points: number;
+  needs_clip: boolean;
+  status: "keep" | "maybe" | "cut";
+  updated_at: Timestamp;
 };
 
 type SubmissionRow = {
@@ -108,6 +133,9 @@ export type Database = {
         | "judged_at"
       >;
       settings: Table<SettingRow, never>;
+      // Only the columns Admin's mirror writes are modelled; the canvas reaches
+      // the rest of this table through scripts/board-store.mjs.
+      task_board: Table<TaskBoardRow, "round" | "title" | "points" | "needs_clip" | "status" | "updated_at">;
     };
     Views: {
       team_scores: { Row: TeamScoreRow; Relationships: [] };

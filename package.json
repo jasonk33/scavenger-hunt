@@ -11,7 +11,7 @@
     "seed": "node scripts/seed-event.mjs",
     "seed:reset": "node scripts/seed-event.mjs --reset",
     "sync:tasks": "node scripts/task-sync.mjs",
-    "test": "node --test scripts/*.test.mjs .github/extensions/scavenger-tasks/*.test.mjs",
+    "test": "node --test scripts/*.test.mjs src/lib/*.test.mjs .github/extensions/scavenger-tasks/*.test.mjs",
     "qa": "node qa/run-all.mjs",
     "ready": "node scripts/ready.mjs"
   },

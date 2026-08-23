@@ -607,9 +607,10 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
           anything already judged — each submission keeps the points it was worth at the time.
         </p>
         <p className="warn tiny" style={{ margin: "0 0 8px" }}>
-          Wording, points, video and secret belong to the task board. Publishing from the board
-          overwrites whatever you set here, without asking. Change it on the board instead unless
-          this is an emergency — and if you do change it here, make the same change on the board.
+          Wording, points and video-only are saved back to the task board too, so publishing
+          won&apos;t undo them. <b>Secret and Remove are not</b> — the board still owns those, and
+          publishing overwrites whatever you set here. On a secret challenge, an edit changes the
+          board entry both rounds share.
         </p>
         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
           {tasks.map((t) =>
