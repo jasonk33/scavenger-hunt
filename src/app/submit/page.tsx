@@ -603,8 +603,8 @@ function TaskRow({
 
   return (
     <div className={`card card-flat${approved ? " card-done" : ""}`}>
-      <div className="row" style={{ alignItems: "flex-start" }}>
-        <div className="grow">
+      <div className="task-content">
+        <div>
           <div style={{ fontWeight: 600, lineHeight: 1.35 }}>{task.title}</div>
           <div className="row" style={{ gap: 6, marginTop: 7, flexWrap: "wrap" }}>
             {task.requires_video && <span className="pill">video only</span>}
@@ -622,24 +622,30 @@ function TaskRow({
             )}
           </div>
         </div>
-        {/* Upload and visibility actions stay in one column. People forget what
-            they sent, and someone who uploaded to the wrong task has no other
-            way to find out -- but media only downloads after a visibility tap. */}
-        <div className="stack" style={{ gap: 6 }}>
+        {/* Keep all task wording readable before presenting the controls. The
+            long "other teams" action gets its own wrapped line, while shorter
+            actions can share the row below it. */}
+        <div className="row task-actions" style={{ gap: 6, flexWrap: "wrap", marginTop: 10 }}>
           <button
             className="btn btn-sm"
+            style={{ flex: "1 1 120px" }}
             disabled={disabled}
             onClick={onPick}
           >
             {approved || pending ? "Redo" : "Upload"}
           </button>
           {groups.length > 0 && (
-            <button className="btn btn-sm" onClick={() => setOpen((v) => !v)}>
+            <button
+              className="btn btn-sm"
+              style={{ flex: "1 1 120px" }}
+              onClick={() => setOpen((v) => !v)}
+            >
               {open ? "Hide" : groups.length > 1 ? `See ${groups.length}` : "See"}
             </button>
           )}
           <button
             className="btn btn-sm"
+            style={{ flex: "1 1 100%" }}
             onClick={() => setOtherOpen((v) => !v)}
             aria-expanded={otherOpen}
           >
