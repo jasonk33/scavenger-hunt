@@ -18,7 +18,7 @@
 import { chromium } from "@playwright/test";
 import {
   BASE, admin, cloneSubmission, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings,
-  asOrganizer, asPlayer, check, note, summary, call, seed, shot,
+  asOrganizer, asPlayer, check, note, summary, call, seed, shot, pollNow,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -399,7 +399,8 @@ try {
     method: "POST",
     body: JSON.stringify({ action: "approve", expectedStatus: "rejected" }),
   });
-  await feed2.waitForTimeout(11000); // the feed polls every 8s
+  await pollNow(feed2);
+  await waitForText(feed2, "__qa R2 kept");
 
   const strandedText = await feed2.locator("body").innerText();
   check("the feed does not strand the reader on an empty rejected view",
@@ -476,7 +477,8 @@ try {
     method: "POST",
     body: JSON.stringify({ action: "approve", expectedStatus: "pending" }),
   });
-  await judge2.waitForTimeout(8000); // the judge screen polls every 5s
+  await pollNow(judge2);
+  await search.waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
 
   check("the search box goes away once the queue is short", await search.count() === 0);
   const afterDrain = await waitingRows();
