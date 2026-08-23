@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Loads the real event data: the guest list, the team split, and the task list
- * from the planning doc.
+ * from the planning board.
  *
  *   npm run seed         load guests + teams, reconcile tasks, clear scoring
  *   npm run seed:reset   remove the guests, every submission and every file
@@ -11,10 +11,14 @@
  * clicking through Admin. Both commands clear every submission, which is what
  * makes a re-run safe -- a roster change would otherwise leave Round 1 scores
  * credited to teams that no longer exist.
+ *
+ * Tasks are NOT defined here. To change a task without touching anyone's
+ * submissions, edit the board and run `npm run sync:tasks` instead.
  */
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
+import { buildPlan, applyPlan } from "./task-sync.mjs";
 
 const env = Object.fromEntries(
   readFileSync(new URL("../.env.local", import.meta.url), "utf8")
@@ -81,13 +85,10 @@ function remix(round1) {
 const ROUND_2 = remix(ROUND_1);
 
 /*
- * Tasks cut from the doc. They are struck through there rather than deleted, so
- * they have to be named to stay out of the app.
+ * The task list is not defined here. It lives on the planning board at
+ * `data/task-board.json` and is published by `scripts/task-sync.mjs`, which this
+ * calls so a seed and a sync can never leave the app in different states.
  */
-const CUT_TASKS = [
-  "Cover a stranger's eyes from behind, say “guess who,” and commit until they play along",
-  "Carry two gallons of milk through a store, wipe out, and burst them",
-];
 
 const GUESTS = ROUND_1.flat();
 const reset = process.argv.includes("--reset");
@@ -191,14 +192,20 @@ async function wipe() {
   );
 }
 
-/** Takes the tasks the doc struck through back out of the app. */
+/**
+ * Brings the task list in line with the planning board. Keyed on `board_id`, so
+ * rewording a task does not lose track of it, and a task the board cuts is
+ * deactivated rather than deleted -- this must not take submissions with it.
+ */
 async function reconcileTasks() {
-  const { data } = await db.from("tasks").select("id,title");
-  const ids = (data ?? []).filter((t) => CUT_TASKS.includes(t.title)).map((t) => t.id);
-  if (!ids.length) return 0;
-  await db.from("submissions").delete().in("task_id", ids);
-  await db.from("tasks").delete().in("id", ids);
-  return ids.length;
+  const { plan, migrated } = await buildPlan(db);
+  await applyPlan(db, plan, { migrated });
+  for (const w of plan.warnings) console.log(`  ! ${w}`);
+  return {
+    inserted: plan.insert.length,
+    updated: plan.update.length + plan.reactivate.length,
+    hidden: plan.deactivate.length,
+  };
 }
 
 async function seed() {
@@ -256,7 +263,7 @@ async function seed() {
   console.log(
     `\n${GUESTS.length} players across ${ROUND_1.length} teams, remixed at the break.` +
       (staleIds.length ? `\nRemoved ${staleIds.length} player(s) no longer on the guest list.` : "") +
-      (cut ? `\nRemoved ${cut} task(s) struck through in the doc.` : "") +
+      `\nTasks: ${cut.inserted} added, ${cut.updated} updated, ${cut.hidden} hidden from the board.` +
       `\nCleared ${cleared.submissions} submission(s) and ${cleared.objects} media file(s).` +
       `\n${taskCount} tasks live. Secrets hidden, submissions open, Round 1.` +
       `\n\nStart over with:  npm run seed:reset`

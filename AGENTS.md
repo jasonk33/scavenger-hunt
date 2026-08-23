@@ -44,13 +44,29 @@ fail on the day**, and that outranks code cleanliness, tidiness and elegance eve
 ## Domain model
 
 Schema and the `team_scores` view live in `supabase/setup.sql`; incremental changes go in
-`supabase/migrate-*.sql`. Never re-run `setup.sql` against the live project — it restores
-every task since deleted.
+`supabase/migrate-*.sql`, and are folded back into `setup.sql` as
+`alter table ... add column if not exists` so it stays the whole picture.
 
+- **`data/task-board.json` is the source of truth for task content, points and cuts** — not
+  `setup.sql`, which no longer seeds tasks at all. It is edited through a Copilot canvas
+  extension living outside this repo at `~/.copilot/extensions/scavenger-tasks/`
+  (`store.mjs` holds the schema and validators), and reaches players **only** via
+  `npm run sync:tasks`. Nothing else writes task rows. Editing a title in Admin is a
+  field-day escape hatch; the next sync will put the board's wording back.
+- Board tasks carry a stable `id` (`r1-01`, `s-04`) mirrored onto `tasks.board_id`. That is
+  the sync key — **never match tasks on their title**, which 8 tasks have already outgrown.
+- **Secrets sit at `round: 0` on the board but `tasks.round` is `check (round in (1, 2))`**,
+  so each one fans out to one row per round sharing a `board_id`. That is the entire reason
+  the board counts 76 tasks and the table holds more; it is not corruption.
+- Board `status` is `keep`/`maybe`/`cut`. `cut` means `active = false` — **never a delete**,
+  which would cascade to submissions. `maybe` publishes as live and warns, matching the
+  extension's own `summarize()`.
 - `teams(round, name, color)` — R1 and R2 teams are **separate rows**. `players(name)`.
 - `roster(round, player_id, team_id)` — the remix lives here and nowhere else.
-- `tasks(round, title, points, is_secret, revealed_at, active)`. Point tiers **1/3/5/7/10**;
-  7-pointers are the secret challenges, revealed manually from Admin (never on a timer).
+- `tasks(round, board_id, title, points, is_secret, revealed_at, active)`. Point tiers
+  **1/3/5/7/10**; 7-pointers are the secret challenges, revealed manually from Admin (never
+  on a timer). `sort_order` is derived by the sync (tier ascending, secrets last) and is the
+  only thing ordering the player's task list.
 - `submissions` — one row is **one file**. `status`: `uploading → pending → approved | rejected`.
   Carries `points_awarded`, `bonus` (0–2 discretionary), `starred` (award candidate),
   `reject_reason`, `note`, `group_id`.
@@ -111,8 +127,11 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
 
 - `npm run qa` — 17 Playwright drivers in `qa/` driving the real UI.
 - `npm run smoke` — API-level suite; self-contained, doesn't import `qa/lib.mjs`.
+- `npm test` — `node --test` over `scripts/*.test.mjs`. Pure functions, no DB, no dev server;
+  this is where the task-sync planner is proved.
 - `npm run ready` — read-only, ~2s, no dev server. Checks *the event* is configured, not that
-  the app works. Run it after anything that touches settings.
+  the app works, including whether the live task list still matches the board. Run it after
+  anything that touches settings.
 - `npm run build`, `npx tsc --noEmit`, `npx eslint src scripts qa --max-warnings=0`.
 
 **Playwright screenshots in `qa/shots/` (gitignored) are readable with the `view` tool** and
@@ -150,10 +169,13 @@ real device.
 - `npm run seed` **and** `npm run seed:reset` both delete every submission and every object in
   the bucket. They refuse if submissions exist from anyone outside the guest list in
   `scripts/seed-event.mjs` (`--force` overrides). **Never run either once the party has
-  started.** The guest list, `ROUND_1` split and `CUT_TASKS` are arrays at the top of that
+  started.** The guest list, `ROUND_1` split and `PAIRS` are arrays at the top of that
   script and are the source of truth — edit there, not in Admin.
   Round 2 is derived by rotation and the script hard-fails if the layout breaks the doc's
   rules (team sizes, split plus-one `PAIRS`, total remix).
+  **To change a task, do not use these** — edit the board and run `npm run sync:tasks`,
+  which only ever writes to `tasks` and leaves submissions, media, roster and `revealed_at`
+  alone. It is dry-run by default; `--apply` publishes.
 - The `notice` banner is sticky and eats viewport. If you set one for testing, clear it.
 - `api()` in `src/lib/client.ts` has **no timeout**. A request that hangs forever leaves
   Upload buttons disabled with Cancel a no-op.
