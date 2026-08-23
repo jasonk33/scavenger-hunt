@@ -372,7 +372,7 @@ try {
 
   const keptSub = await seed({ playerId: alice.id, taskId: r2TaskIds[0] });
   const tossedSub = await seed({ playerId: alice.id, taskId: r2TaskIds[1] });
-  await call(`/api/judge/${keptSub}`, { method: "POST", body: JSON.stringify({ action: "approve", bonus: 0 }) });
+  await call(`/api/judge/${keptSub}`, { method: "POST", body: JSON.stringify({ action: "approve" }) });
   await call(`/api/judge/${tossedSub}`, {
     method: "POST",
     body: JSON.stringify({ action: "reject", reason: "Doesn't match the task" }),
@@ -397,7 +397,7 @@ try {
   // any more and the filter disappears out from under the reader.
   await call(`/api/judge/${tossedSub}`, {
     method: "POST",
-    body: JSON.stringify({ action: "approve", bonus: 0, expectedStatus: "rejected" }),
+    body: JSON.stringify({ action: "approve", expectedStatus: "rejected" }),
   });
   await feed2.waitForTimeout(11000); // the feed polls every 8s
 
@@ -434,8 +434,6 @@ try {
         status: "pending",
         judged_at: null,
         points_awarded: null,
-        bonus: 0,
-        starred: false,
         reject_reason: null,
       })
     )
@@ -455,7 +453,11 @@ try {
       .filter({ hasNot: judge2.getByRole("button", { name: "Undo" }) })
       .count();
 
-  const search = judge2.getByPlaceholder("Search by task, team or player").first();
+  // Deliberately NOT `.first()` on a placeholder both lists share: the judged
+  // list has a search box of its own, and with a long history `.first()` kept
+  // matching it after the queue's box had already gone -- so this assertion
+  // could not fail for the reason it exists.
+  const search = judge2.getByPlaceholder("Search what's waiting");
   check("a long queue gets a search box", await search.count() > 0);
   await search.fill("Needle");
   await judge2.waitForTimeout(800);
@@ -472,7 +474,7 @@ try {
   const doomed = victims.find((v) => v.task_id !== bulkTaskIds[bulkTaskIds.length - 1]);
   await call(`/api/judge/${doomed.id}`, {
     method: "POST",
-    body: JSON.stringify({ action: "approve", bonus: 0, expectedStatus: "pending" }),
+    body: JSON.stringify({ action: "approve", expectedStatus: "pending" }),
   });
   await judge2.waitForTimeout(8000); // the judge screen polls every 5s
 

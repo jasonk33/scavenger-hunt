@@ -283,7 +283,7 @@ async function main() {
 
   const approve = await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "approve", bonus: 2, starred: true }),
+    body: JSON.stringify({ action: "approve" }),
   });
   check("approve succeeds", approve.status === 200, JSON.stringify(approve.body));
   check(
@@ -292,11 +292,23 @@ async function main() {
     `${approve.body?.submission?.points_awarded} vs ${taskPoints}`
   );
 
-  const overBonus = await call(`/api/judge/${submissionId}`, {
+  // The client does not get to say what a task is worth. Nothing in the request
+  // body should be able to move the number.
+  const inflated = await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "bonus", bonus: 99, expectedStatus: "approved" }),
+    body: JSON.stringify({
+      action: "approve",
+      expectedStatus: "approved",
+      points_awarded: 999,
+      pointsAwarded: 999,
+      bonus: 99,
+    }),
   });
-  check("bonus is clamped to 2", overBonus.body?.submission?.bonus === 2, String(overBonus.body?.submission?.bonus));
+  check(
+    "a client-supplied point value is ignored",
+    inflated.body?.submission?.points_awarded === taskPoints,
+    `${inflated.body?.submission?.points_awarded} vs ${taskPoints}`
+  );
 
   // Two organizers judging at once always see the same oldest item. The second
   // decision must be refused, not silently overwrite the first.
@@ -353,8 +365,8 @@ async function main() {
   );
   check(
     "editing a task does not rescore what was already judged",
-    afterEdit?.points === taskPoints + 2,
-    `expected ${taskPoints + 2}, got ${afterEdit?.points}`
+    afterEdit?.points === taskPoints,
+    `expected ${taskPoints}, got ${afterEdit?.points}`
   );
   await call("/api/admin/tasks", {
     method: "PATCH",
@@ -381,6 +393,30 @@ async function main() {
   check("the team is told which task was rejected", Boolean(seen), JSON.stringify(rejectedState.rejections));
   check("the rejection carries the reason", seen?.reason === "changed my mind", seen?.reason);
 
+  // The reason is free text the judge types, so the cap lives on the server. It
+  // renders on the player's task list and in the feed, where a pasted essay
+  // would push everything else off a phone screen.
+  const capped = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reject", reason: "x".repeat(400), expectedStatus: "rejected" }),
+  });
+  check("a too-long rejection reason is capped, not refused", capped.status === 200, JSON.stringify(capped.body));
+  check(
+    "the stored reason is capped at 200 characters",
+    capped.body?.submission?.reject_reason?.length === 200,
+    String(capped.body?.submission?.reject_reason?.length)
+  );
+
+  const blank = await call(`/api/judge/${submissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "reject", reason: "   ", expectedStatus: "rejected" }),
+  });
+  check(
+    "a whitespace-only reason is stored as no reason at all",
+    blank.body?.submission?.reject_reason === null,
+    JSON.stringify(blank.body?.submission?.reject_reason)
+  );
+
   const zeroed = (await call("/api/leaderboard?round=1")).body.rows.find(
     (r) => r.teamId === teamA.id
   );
@@ -388,24 +424,18 @@ async function main() {
 
   const back = await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "approve", bonus: 2, starred: true, expectedStatus: "rejected" }),
+    body: JSON.stringify({ action: "approve", expectedStatus: "rejected" }),
   });
   check("a rejected submission can be re-reviewed and approved", back.status === 200, JSON.stringify(back.body));
 
-  // Changing an already-approved call again (raising the bonus, say) must work:
-  // approved -> approved is a legitimate transition, not a collision.
+  // approved -> approved is a legitimate transition, not a collision. It is also
+  // how a re-submission judged at a different value takes over the score, so it
+  // has to succeed rather than being treated as a no-op.
   const again = await call(`/api/judge/${submissionId}`, {
     method: "POST",
-    body: JSON.stringify({ action: "approve", bonus: 1, expectedStatus: "approved" }),
+    body: JSON.stringify({ action: "approve", expectedStatus: "approved" }),
   });
   check("an approved item can be re-reviewed again", again.status === 200, JSON.stringify(again.body));
-  check("the changed bonus took effect", again.body?.submission?.bonus === 1, String(again.body?.submission?.bonus));
-
-  // Restore the bonus the remaining assertions expect.
-  await call(`/api/judge/${submissionId}`, {
-    method: "POST",
-    body: JSON.stringify({ action: "bonus", bonus: 2, expectedStatus: "approved" }),
-  });
 
   const clearedState = (await call(`/api/state?playerId=${playerId}&_=${Date.now()}`)).body;
   check(
@@ -417,7 +447,7 @@ async function main() {
   const restored = (await call("/api/leaderboard?round=1")).body.rows.find(
     (r) => r.teamId === teamA.id
   );
-  check("the points come back", restored?.points === taskPoints + 2, `${restored?.points}`);
+  check("the points come back", restored?.points === taskPoints, `${restored?.points}`);
 
   const judged = (await call("/api/judge/queue?round=1")).body.recent;
   check("judged items stay reachable for re-review", judged.some((r) => r.id === submissionId));
@@ -431,8 +461,8 @@ async function main() {
   check("leaderboard returns the round 1 team", Boolean(rowA), "team missing from leaderboard");
   check(
     "leaderboard credits the round 1 team",
-    rowA && rowA.points >= taskPoints + 2,
-    `${rowA?.points} points`
+    rowA && rowA.points === taskPoints,
+    `${rowA?.points} points, expected ${taskPoints}`
   );
 
   const board2Before = (await call("/api/leaderboard?round=2")).body;
@@ -515,7 +545,6 @@ async function main() {
   const shText = await sh.text();
   const myLine = shText.split("\n").find((l) => l.includes(objectName));
   check("download script includes this run's media", Boolean(myLine), objectName);
-  check("download script marks it as an award candidate", Boolean(myLine?.includes("STAR--")));
   check("download script sorts into round/team folders", Boolean(myLine?.includes("round-1/")));
 
   // --- unauthenticated access --------------------------------------------

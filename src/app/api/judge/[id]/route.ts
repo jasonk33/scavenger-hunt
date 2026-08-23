@@ -1,5 +1,6 @@
 import { db, groupMemberIds } from "@/lib/db";
 import { isOrganizer } from "@/lib/settings";
+import { cleanReason } from "@/lib/groups";
 import { json, fail } from "@/lib/http";
 import type { Database } from "@/lib/database.types";
 
@@ -10,9 +11,16 @@ export const dynamic = "force-dynamic";
 /**
  * Record a judging decision.
  *
- * The awarded points come from `task_points`, which was snapshotted onto the row
- * when the submission was created. Editing a task's value later therefore cannot
- * retroactively rewrite scores that were already given.
+ * A submission is approved or rejected, and an approved one is worth exactly the
+ * task's value -- there is no discretionary top-up. The value comes from
+ * `task_points`, which was snapshotted onto the row when the submission was
+ * created, so editing a task later cannot retroactively rewrite scores that were
+ * already given.
+ *
+ * Re-approving an item that was already approved is a real decision, not a
+ * no-op: it restamps judged_at, and `team_scores` counts the most recently
+ * judged approval. That is how re-judging a re-submission at a task's new value
+ * actually moves the score.
  *
  * `reset` exists because live judging under time pressure produces misclicks, and
  * the fix has to be one tap, not a database session.
@@ -33,7 +41,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const { data: existing } = await sb
     .from("submissions")
-    .select("id,group_id,task_points,bonus,starred,status,round,team_id,judged_at")
+    .select("id,group_id,task_points,status,round,team_id,judged_at")
     .eq("id", id)
     .maybeSingle();
   if (!existing) return fail("Submission not found.", 404);
@@ -56,10 +64,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   /*
-   * Secondary edits (star, bonus, reassign) bump judged_at so the
-   * compare-and-swap below can tell two concurrent edits apart -- but only when
-   * the row has already been judged. Stamping judged_at on a still-pending row
-   * would mark it decided while its status says otherwise.
+   * Reassign bumps judged_at so the compare-and-swap below can tell two
+   * concurrent edits apart -- but only when the row has already been judged.
+   * Stamping judged_at on a still-pending row would mark it decided while its
+   * status says otherwise.
    */
   const touch = (): SubmissionUpdate =>
     existing.judged_at === null ? {} : { judged_at: new Date().toISOString() };
@@ -90,12 +98,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   if (action === "approve") {
     if (guardConflict) return guardConflict;
-    const bonus = Math.min(2, Math.max(0, Math.round(Number(body.bonus ?? 0)) || 0));
     patch = {
       status: "approved",
       points_awarded: existing.task_points,
-      bonus,
-      starred: Boolean(body.starred ?? existing.starred),
       reject_reason: null,
       judged_at: new Date().toISOString(),
     };
@@ -104,24 +109,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     patch = {
       status: "rejected",
       points_awarded: null,
-      bonus: 0,
-      reject_reason: String(body.reason ?? "").slice(0, 200) || null,
+      // Free text: the judge types what actually went wrong. A fixed menu could
+      // only ever cover the reasons we thought of in advance, and the team is
+      // reading this to decide whether it is worth redoing the task.
+      reject_reason: cleanReason(body.reason),
       judged_at: new Date().toISOString(),
     };
-  } else if (action === "star") {
-    // Standalone toggle so an award candidate can be flagged without re-judging.
-    if (guardConflict) return guardConflict;
-    patch = { starred: Boolean(body.starred), ...touch() };
-  } else if (action === "bonus") {
-    if (guardConflict) return guardConflict;
-    patch = { bonus: Math.min(2, Math.max(0, Math.round(Number(body.bonus ?? 0)) || 0)), ...touch() };
   } else if (action === "reset") {
     // Deliberately unguarded: "send it back to the queue" is valid from any
     // state, and it is the recovery action when two judges have collided.
     patch = {
       status: "pending",
       points_awarded: null,
-      bonus: 0,
       reject_reason: null,
       judged_at: null,
     };
@@ -155,8 +154,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
    * Status alone is not enough once re-review exists: two judges who both
    * reopen the same *approved* item and both approve are an approved -> approved
    * transition, so a status-only check matches for both and the second write
-   * silently overwrites the first's bonus and star. judged_at changes on every
-   * decision, so it distinguishes them.
+   * silently lands on top of the first. That matters even though both write the
+   * same points, because judged_at is what decides which duplicate scores.
+   * judged_at changes on every decision, so it distinguishes them.
    *
    * Applied to the whole group. The guard is what scopes it: only the members
    * actually sitting in the state this screen last saw are written. A file that
@@ -172,7 +172,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       ? write.is("judged_at", null)
       : write.eq("judged_at", existing.judged_at);
 
-  const { data, error } = await write.select("id,status,points_awarded,bonus,starred");
+  const { data, error } = await write.select("id,status,points_awarded,reject_reason");
 
   if (error) return fail(error.message, 500);
   // Nothing matched: another organizer moved this out from under us. Unchanged

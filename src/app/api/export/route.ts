@@ -1,6 +1,6 @@
 import { db, mediaUrl } from "@/lib/db";
 import { isOrganizer } from "@/lib/settings";
-import { groupBy, groupKey } from "@/lib/groups";
+import { groupKey } from "@/lib/groups";
 import { fail, slug } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -40,9 +40,7 @@ export async function GET(req: Request) {
     taskPoints: s.task_points,
     status: s.status,
     pointsAwarded: s.points_awarded,
-    bonus: s.bonus,
-    total: s.status === "approved" ? (s.points_awarded ?? 0) + (s.bonus ?? 0) : 0,
-    starred: s.starred,
+    total: s.status === "approved" ? (s.points_awarded ?? 0) : 0,
     rejectReason: s.reject_reason,
     note: s.note,
     // Files sharing this are one piece of evidence, judged as a unit.
@@ -60,19 +58,24 @@ export async function GET(req: Request) {
     // in the field is worse than a duplicate row), and `team_scores` counts a
     // task once. The CSV is the copy someone will actually total in Sheets, so
     // it has to carry the same dedup or a team gets credited twice and the
-    // wrong team can win. `counts` is 1 only on the best row per task.
-    const best = new Map<string, { id: string; total: number }>();
+    // wrong team can win. `counts` is 1 only on the row that actually scores.
+    //
+    // Same tiebreak as the view: the approval judged MOST RECENTLY wins, not the
+    // highest one. Getting this wrong here is worse than getting it wrong on a
+    // screen, because a spreadsheet total is what gets read out at the awards.
+    const best = new Map<string, { id: string; at: string }>();
     for (const r of rows) {
       if (r.status !== "approved") continue;
       const k = `${r.round}:${r.team}:${r.task}`;
+      const at = `${r.judgedAt ?? ""}|${r.createdAt}|${r.id}`;
       const prev = best.get(k);
-      if (!prev || r.total > prev.total) best.set(k, { id: r.id, total: r.total });
+      if (!prev || at > prev.at) best.set(k, { id: r.id, at });
     }
     const counted = new Set([...best.values()].map((b) => b.id));
 
     const cols = [
       "round", "team", "player", "task", "status", "pointsAwarded",
-      "bonus", "total", "counts", "starred", "rejectReason", "note", "mediaUrl",
+      "total", "counts", "rejectReason", "note", "mediaUrl",
     ] as const;
     const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const withCounts = rows.map((r) => ({ ...r, counts: counted.has(r.id) ? 1 : 0 }));
@@ -127,9 +130,8 @@ export async function GET(req: Request) {
       if (r.status === "rejected") continue;
       const dir = `round-${r.round}/${slug(r.team || "unknown")}`;
       const ext = r.objectName.split(".").pop() || "bin";
-      const star = r.starred ? "STAR--" : "";
       const name = unique(
-        `${dir}/${star}${slug(r.task || "task", 60)}--${slug(r.player || "x", 20)}`,
+        `${dir}/${slug(r.task || "task", 60)}--${slug(r.player || "x", 20)}`,
         ext
       );
       lines.push(`mkdir -p ${JSON.stringify(dir)}`);
@@ -154,9 +156,6 @@ export async function GET(req: Request) {
         players: players ?? [],
         tasks: tasks ?? [],
         submissions: rows,
-        // One entry per starred SUBMISSION. Starring is group-wide, so filtering
-        // rows listed a three-file set three times in the shortlist.
-        awardCandidates: groupBy(rows.filter((r) => r.starred), (r) => r.groupId).map((g) => g[0]),
       },
       null,
       2

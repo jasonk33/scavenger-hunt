@@ -117,9 +117,8 @@ const isQa = (s) => typeof s === "string" && s.startsWith(TAG);
  * the queue and assume it is their own fixture. The queue is ordered oldest
  * first, so one real submission awaiting review sits ahead of every `__qa` one
  * -- and the driver approves that instead. This is not hypothetical: a suite run
- * approved one of Jason's photos at +1 with a +2 bonus and starred it, and
- * because the integrity snapshot only counted rows back then, every driver still
- * reported "real data intact: true".
+ * approved one of Jason's photos, and because the integrity snapshot only
+ * counted rows back then, every driver still reported "real data intact: true".
  *
  * A convention for drivers to follow would not have caught it, so this is a hard
  * stop at import time -- it fires for a single driver as much as for `npm run qa`.
@@ -237,7 +236,7 @@ export async function snapshot() {
     // nothing countable but spoils a secret challenge, and deactivating a task
     // silently removes it from every player's list.
     admin.from("tasks").select("id,title,points,round,is_secret,requires_video,revealed_at,active").order("id"),
-    admin.from("submissions").select("id,status,team_id,player_id,points_awarded,bonus").order("id"),
+    admin.from("submissions").select("id,status,team_id,player_id,points_awarded").order("id"),
     admin.from("settings").select("key,value"),
     // The planning board. It used to be a file in the checkout, which is why
     // this never watched it -- a driver simply could not reach it. It is a table
@@ -267,7 +266,7 @@ export async function snapshot() {
       .join("|"),
     submissions: realSubs.length,
     submissionFingerprint: realSubs
-      .map((s) => `${s.id}:${s.status}:${s.team_id}:${s.points_awarded}:${s.bonus}`)
+      .map((s) => `${s.id}:${s.status}:${s.team_id}:${s.points_awarded}`)
       .join("|"),
     settings: Object.fromEntries((settings.data ?? []).map((s) => [s.key, s.value])),
     // `board.error` means the table is not there, which is a real answer on a

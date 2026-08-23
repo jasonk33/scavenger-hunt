@@ -29,6 +29,10 @@ but after a change that touches the schema you only need the matching file in
   the planning board. Run this once before the first `npm run sync:tasks`.
 - `supabase/migrate-task-board.sql` — the planning board itself. Run this once
   before opening the canvas.
+- `supabase/migrate-drop-bonus-star.sql` — removes the creativity bonus and the
+  award star, and makes the judge's most recent approval the one that scores.
+  Deploy the app first, then run this: the old code writes those columns on
+  every approval.
 
 Then get your keys from **Settings → API Keys → the "Legacy anon, service_role
 API keys" tab**.
@@ -177,10 +181,11 @@ Re-deploy after changing them.
 **Round 1 (1:00–2:30)**
 
 - Players open the link, tap their name once, and upload against tasks.
-- You sit in Judge. One tap approves at the task's value; the bonus and star are
-  optional extra taps before approving.
-- The star flags an award candidate. Use it freely — it's what makes the
-  5:00–5:30 awards window fast.
+- You sit in Judge. One tap approves at the task's value — that is the whole
+  decision, there is nothing to top up or flag. Rejecting asks why: tap one of
+  the four common reasons or type your own, and the team reads it and redoes it.
+- If a team redoes a task and you approve the new attempt, that ruling is the
+  one that counts, even if the task was worth more the first time.
 
 **The break (2:30–3:30)**
 
@@ -203,8 +208,7 @@ Admin → Event → Export:
 - **CSV** — scoring detail for the awards
 - **JSON** — the whole event
 - **Media download script** — `bash download-media.sh` in an empty directory
-  pulls every photo and video into round/team folders. Award candidates are
-  prefixed `STAR--`.
+  pulls every photo and video into round/team folders.
 
 ---
 

@@ -46,7 +46,6 @@ export async function GET(req: Request) {
     task_id: string;
     status: string;
     points_awarded: number | null;
-    bonus: number;
     created_at: string;
     reject_reason: string | null;
     player_id: string;
@@ -54,6 +53,7 @@ export async function GET(req: Request) {
     media_type: string | null;
     group_id: string | null;
     note: string | null;
+    judged_at: string | null;
   }> = [];
   // Names of whoever on the team actually sent each submission. Progress is
   // team-wide, so "you already submitted this" is often really a teammate --
@@ -81,7 +81,7 @@ export async function GET(req: Request) {
         const { data: subs } = await sb
           .from("submissions")
           .select(
-            "id,task_id,status,points_awarded,bonus,created_at,reject_reason,player_id,object_name,media_type,group_id,note"
+            "id,task_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note"
           )
           .eq("round", round)
           .eq("team_id", team.id)
@@ -104,11 +104,20 @@ export async function GET(req: Request) {
   }
 
   const scored = mine.filter((s) => s.status === "approved");
-  // Mirrors the team_scores view: a task counts once, at its best result.
-  const bestByTask = new Map<string, number>();
+  /*
+   * Mirrors the team_scores view: a task counts once, at whatever the judge
+   * ruled MOST RECENTLY. `mine` is ordered created_at descending, which is not
+   * the same thing -- an older upload re-approved just now is the live ruling --
+   * so this sorts by judged_at explicitly rather than trusting the query order.
+   *
+   * If these two ever disagree, a team sees one score on their own task list and
+   * a different one on the leaderboard.
+   */
+  const bestByTask = new Map<string, { pts: number; at: string }>();
   for (const s of scored) {
-    const pts = (s.points_awarded ?? 0) + (s.bonus ?? 0);
-    if (pts > (bestByTask.get(s.task_id) ?? -1)) bestByTask.set(s.task_id, pts);
+    const at = `${s.judged_at ?? ""}|${s.created_at}|${s.id}`;
+    const prev = bestByTask.get(s.task_id);
+    if (!prev || at > prev.at) bestByTask.set(s.task_id, { pts: s.points_awarded ?? 0, at });
   }
 
   /**
@@ -166,7 +175,7 @@ export async function GET(req: Request) {
       pending: countGroups(mine.filter((s) => s.status === "pending")),
       approved: countGroups(scored),
       rejected: countGroups(mine.filter((s) => s.status === "rejected")),
-      points: [...bestByTask.values()].reduce((a, b) => a + b, 0),
+      points: [...bestByTask.values()].reduce((a, b) => a + b.pts, 0),
     },
     upload: { endpoint: up.endpoint, anonKey: up.anonKey, bucket: up.bucket },
     configOk: Boolean(up.keyLooksValid),
