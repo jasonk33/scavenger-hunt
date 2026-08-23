@@ -33,9 +33,8 @@ fail on the day**, and that outranks code cleanliness, tidiness and elegance eve
 
 - Next.js App Router + React 19 on Vercel (project `scavenger-hunt`), Supabase Pro. The private
   GitHub repository `jasonk33/scavenger-hunt` is connected to Vercel with `main` as the production
-  branch; pushes to other branches create previews. `/go` is the QR target: a re-targetable
-  redirect driven by the `fallback_url` setting, so the crowd can be moved without re-printing
-  codes.
+  branch; pushes to other branches create previews. Share the normal app homepage URL with
+  guests; there is no QR-specific redirect route.
 - **Media bytes go browser → Supabase Storage directly** over resumable tus
   (`src/lib/upload.ts`), never through a route handler — Vercel caps bodies at 4.5 MB and
   iPhone videos reach 150 MB.
@@ -109,7 +108,7 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
   and no award star: a task is approved or rejected, and an approved one is worth
   exactly what the task is worth.
 - `settings` is key/value, read via `getSettings()`: `active_round`, `submissions_open`,
-  `fallback_url`, `event_name`, `notice`, plus `board_model` (the canvas's tier weights and
+  `event_name`, `notice`, plus `board_model` (the canvas's tier weights and
   thresholds, as JSON — the board's model, not the app's).
 - **Groups**: several files can be one piece of evidence via `group_id`. It is nullable and
   every read goes through `groupKey()`/`groupBy()` (`src/lib/groups.ts`) — a row without one

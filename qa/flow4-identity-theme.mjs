@@ -1,5 +1,5 @@
 /**
- * Flow 4 — identity, theme, /go, notices, and the edge cases around editing
+ * Flow 4 — identity, theme, notices, and the edge cases around editing
  * tasks and players while the event is live.
  */
 import { chromium } from "@playwright/test";
@@ -118,22 +118,19 @@ try {
   await themeBtn.click(); // back to auto
   check("third tap returns to auto", await tp.evaluate(() => localStorage.getItem("sh.theme")) === null);
 
-  /* ---- /go ---- */
-  console.log("\n6. /go redirect");
+  /* ---- direct sharing ---- */
+  console.log("\n6. Direct sharing");
   const gp = await (await browser.newContext()).newPage();
-  await gp.goto(`${BASE}/go`, { waitUntil: "networkidle" });
-  check("/go lands on the join screen by default", new URL(gp.url()).pathname === "/", gp.url());
-  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ fallback_url: "https://example.com/" }) });
-  await gp.goto(`${BASE}/go`, { waitUntil: "domcontentloaded" });
-  check("/go honours the fallback URL", gp.url().startsWith("https://example.com"), gp.url());
-  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ fallback_url: "" }) });
-  await gp.goto(`${BASE}/go`, { waitUntil: "networkidle" });
-  check("clearing the fallback restores the join screen", new URL(gp.url()).pathname === "/", gp.url());
-  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ fallback_url: "not a url" }) });
-  await gp.goto(`${BASE}/go`, { waitUntil: "networkidle" });
-  check("a malformed fallback URL is ignored rather than breaking the QR code",
-    new URL(gp.url()).pathname === "/", gp.url());
-  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ fallback_url: "" }) });
+  const goResponse = await gp.goto(`${BASE}/go`, { waitUntil: "networkidle" });
+  check("the unused redirect route is gone", goResponse?.status() === 404, String(goResponse?.status()));
+  await gp.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  check("the normal homepage is the shareable entry point", new URL(gp.url()).pathname === "/", gp.url());
+  const fallbackSetting = await call("/api/admin/settings", {
+    method: "POST",
+    body: JSON.stringify({ fallback_url: "https://example.com/" }),
+  });
+  check("the removed redirect setting is no longer accepted", fallbackSetting.status === 400,
+    JSON.stringify(fallbackSetting.body));
 
   /* ---- broadcast notice ---- */
   console.log("\n7. Broadcast notice");
@@ -209,5 +206,5 @@ try {
   const intact = JSON.stringify(before) === JSON.stringify(after);
   console.log(`\nreal data intact: ${intact}`);
   if (!intact) console.log("BEFORE", JSON.stringify(before), "\nAFTER ", JSON.stringify(after));
-  summary("Flow 4 (identity, theme, go, edits)");
+  summary("Flow 4 (identity, theme, direct sharing, edits)");
 }

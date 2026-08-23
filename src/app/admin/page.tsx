@@ -7,7 +7,6 @@ type AdminData = {
   settings: {
     active_round: number;
     submissions_open: boolean;
-    fallback_url: string;
     event_name: string;
     notice: string;
   };
@@ -132,7 +131,6 @@ function Admin() {
 function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => void }) {
   const s = data.settings;
   const [notice, setNotice] = useState(s.notice);
-  const [fallback, setFallback] = useState(s.fallback_url);
 
   const save = (patch: Record<string, unknown>) =>
     run(() => api("/api/admin/settings", { method: "POST", body: JSON.stringify(patch) }));
@@ -199,45 +197,6 @@ function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
         </div>
       </div>
 
-      <div className="card">
-        <b>Fallback redirect</b>
-        <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-          Anyone who opens <code>/go</code> gets sent here instead. Point your QR code at{" "}
-          <code>/go</code> so you can move everyone without re-printing anything.
-        </p>
-        <input
-          className="field"
-          value={fallback}
-          placeholder="https://… (empty = stay in the app)"
-          onChange={(e) => setFallback(e.target.value)}
-        />
-        <button
-          className="btn btn-sm btn-primary"
-          style={{ marginTop: 8 }}
-          onClick={() => save({ fallback_url: fallback })}
-        >
-          Save
-        </button>
-      </div>
-
-      <div className="card">
-        <b>Export</b>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-          <a className="btn btn-sm" href="/api/export">
-            JSON
-          </a>
-          <a className="btn btn-sm" href="/api/export?format=csv">
-            CSV
-          </a>
-          <a className="btn btn-sm" href="/api/export?format=sh">
-            Media download script
-          </a>
-        </div>
-        <p className="muted tiny" style={{ marginBottom: 0, marginTop: 8 }}>
-          The script downloads every photo and video into round/team folders. Run it in an empty
-          directory: <code>bash download-media.sh</code>
-        </p>
-      </div>
     </>
   );
 }

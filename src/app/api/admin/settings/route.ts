@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 const ALLOWED = new Set([
   "active_round",
   "submissions_open",
-  "fallback_url",
   "event_name",
   "notice",
 ]);

@@ -182,7 +182,6 @@ alter table settings    enable row level security;
 insert into settings (key, value) values
   ('active_round',      '1'),
   ('submissions_open',  'true'),
-  ('fallback_url',      ''),
   ('event_name',        'Jason''s 30th')
 on conflict (key) do nothing;
 

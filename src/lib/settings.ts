@@ -4,7 +4,6 @@ import { db } from "./db";
 type Settings = {
   active_round: number;
   submissions_open: boolean;
-  fallback_url: string;
   event_name: string;
   /** Free-text banner shown on every screen. The organizer's broadcast channel. */
   notice: string;
@@ -13,7 +12,6 @@ type Settings = {
 const DEFAULTS: Settings = {
   active_round: 1,
   submissions_open: true,
-  fallback_url: "",
   event_name: "Scavenger Hunt",
   notice: "",
 };
@@ -24,7 +22,6 @@ export async function getSettings(): Promise<Settings> {
   return {
     active_round: Number(map.get("active_round") ?? DEFAULTS.active_round) === 2 ? 2 : 1,
     submissions_open: (map.get("submissions_open") ?? "true") !== "false",
-    fallback_url: String(map.get("fallback_url") ?? ""),
     event_name: String(map.get("event_name") || DEFAULTS.event_name),
     notice: String(map.get("notice") ?? ""),
   };

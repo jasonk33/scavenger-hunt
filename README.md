@@ -187,7 +187,7 @@ a follow-up commit.
 2. Assign everyone to a Round 1 team. Assign Round 2 too, or use
    *Copy from Round 1* and adjust at the break.
 3. Admin → health. Everything green.
-4. Share the URL. Point any QR code at **`/go`**, not `/` — see Fallbacks below.
+4. Share the app's normal homepage URL in the group text.
 
 **Round 1 (1:00–2:30)**
 
@@ -212,28 +212,15 @@ submission stored its team when it was created.
 Admin → Tasks → Reveal. Manual, not on a timer — the timer would fire while the
 round is running late.
 
-**Afterwards**
-
-Admin → Event → Export:
-
-- **CSV** — scoring detail for the awards
-- **JSON** — the whole event
-- **Media download script** — `bash download-media.sh` in an empty directory
-  pulls every photo and video into round/team folders.
-
 ---
 
-## Fallbacks
+## If something goes wrong
 
 Ranked by how likely you are to need them.
 
 1. **The banner.** Admin → Event → Banner appears on every screen within 15
    seconds. This handles most "something is weird" moments without touching code.
-2. **`/go`.** Point QR codes and shared links at `/go`. It redirects wherever
-   `fallback_url` says, so you can move everyone without re-printing anything.
-   For total-outage insurance, have the QR encode a re-targetable short link
-   that points at `/go` — then the redirect survives even if the app doesn't.
-3. **Text the organizer.** Announce a phone number at the start. If a player's
+2. **Text the organizer.** Announce a phone number at the start. If a player's
    upload fails, the photo is still on their phone; they text it and you enter it
    later. No integration, nothing to break.
 
