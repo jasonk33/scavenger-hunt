@@ -89,6 +89,14 @@ create table if not exists submissions (
 -- that somehow misses one degrades to a group of one, which is the old behaviour.
 alter table submissions add column if not exists group_id uuid;
 
+-- board_id links a task back to its entry on the planning board
+-- (`data/task-board.json`), which owns task content, tiers and cuts.
+-- Nullable: a row added straight from Admin has no board entry, and
+-- `npm run sync:tasks` leaves anything it does not recognise alone.
+alter table tasks add column if not exists board_id text;
+create unique index if not exists tasks_round_board_id_idx
+  on tasks (round, board_id);
+
 -- Free text the player attaches to say what the judge is looking at.
 alter table submissions add column if not exists note text;
 
@@ -197,11 +205,8 @@ create policy "hunt public read" on storage.objects
 -- 3. SEED DATA
 -- ========================================================================
 
--- Seed data: teams and tasks, transcribed from jasons-30th-scavenger-hunt.docx.
+-- Seed data: teams only.
 -- Run after 02-storage.sql. Re-running is safe (ON CONFLICT DO NOTHING).
--- Tasks marked (clip) in the doc become requires_video = true.
--- Secret challenges are seeded into BOTH rounds, unrevealed; reveal whichever
--- ones you want from the Admin screen during each round.
 
 insert into teams (round, name, color, sort_order) values
   (1, 'The Birthday Bureau', '#dc2626', 10),
@@ -216,84 +221,13 @@ insert into teams (round, name, color, sort_order) values
   (2, 'The NoMad Nomads', '#7c3aed', 50)
 on conflict (round, name) do nothing;
 
-insert into tasks (round, title, points, requires_video, is_secret, sort_order) values
-  (1, 'Re-create an album cover with the whole team', 1, false, false, 10),
-  (1, 'Pose as statues next to a real statue — matching pose, worse execution', 1, false, false, 20),
-  (1, 'Get a stranger to take your group photo, then get that stranger into a selfie with the team', 1, false, false, 30),
-  (1, 'Feed a pigeon out of your hand', 1, false, false, 40),
-  (1, 'Fit an entire hot dog in your mouth in one bite', 1, false, false, 50),
-  (1, 'Whole team asleep in a pile on the lawn', 1, false, false, 60),
-  (1, 'Order at a food cart using only gestures — not one word', 3, true, false, 70),
-  (1, 'Get a pup cup from a coffee shop, for a human, and drink it at the counter', 3, false, false, 80),
-  (1, 'Point at an empty bench and ask a stranger if they see him too — filmed over your teammate''s shoulder', 3, true, false, 90),
-  (1, 'Sit down next to a stranger and mirror their posture exactly — photo shot from across the path', 3, false, false, 100),
-  (1, 'Get a stranger to lend you their hat or jacket for a photo', 3, false, false, 110),
-  (1, 'Get a stranger to let you hold their dog', 3, false, false, 120),
-  (1, 'Kiss a teammate on the mouth in the middle of the lawn', 3, false, false, 130),
-  (1, 'Do the worm across the lawn with people watching', 3, true, false, 140),
-  (1, 'Shotgun a drink with a teammate', 3, false, false, 150),
-  (1, 'Play ring around the rosie with strangers — strangers in the circle, not watching it', 5, false, false, 160),
-  (1, 'Pose as mannequins inside a store, in among the real ones', 5, false, false, 170),
-  (1, 'Get a stranger to sign their name on your body', 5, false, false, 180),
-  (1, 'Get a piggyback ride from a stranger', 5, false, false, 190),
-  (1, 'Pay for something entirely in pennies', 5, false, false, 200),
-  (1, 'Get a stranger to feed a teammate a bite of their food', 5, false, false, 210),
-  (1, 'Tell a stranger about the dream you had that they were in — get to the part where they are in it', 5, true, false, 220),
-  (1, 'Swap full outfits with a teammate in the middle of the park', 5, false, false, 230),
-  (1, 'High-five five strangers in a row without breaking stride', 5, true, false, 240),
-  (1, 'Whole team shotguns at the same time — one photo, everyone mid-shotgun', 5, false, false, 250),
-  (1, 'Get a stranger to do push-ups with you on the lawn', 5, false, false, 260),
-  (1, 'Get a bench of strangers to scoot over until the entire team fits on it', 5, false, false, 270),
-  (1, 'Put 15 t-shirts on one teammate', 10, false, false, 280),
-  (1, 'Cover a stranger''s eyes from behind, say “guess who,” and commit until they play along', 10, false, false, 290),
-  (1, 'Serve customers from a hot dog cart', 10, false, false, 300),
-  (1, 'Get all the way into the fountain', 10, false, false, 310),
-  (1, 'Trade shoes with a stranger and wear theirs for the photo', 10, false, false, 320),
-  (1, 'Join a stranger''s picnic — the photo is you eating their food on their blanket', 10, false, false, 330),
-  (1, 'Get a stranger to shotgun a drink with you', 10, false, false, 340),
-  (1, 'Submit the worst photo of Jason', 7, false, true, 350),
-  (1, 'Submit the best photo of Jason', 7, false, true, 360),
-  (1, 'Write and perform a four-line poem about Jason', 7, false, true, 370),
-  (1, 'Jason trivia', 7, false, true, 380),
-  (2, 'Hug a stranger', 1, false, false, 10),
-  (2, 'Hold hands with a stranger long enough to get the photo', 1, false, false, 20),
-  (2, 'Alter a public sign so it reads dirty', 1, false, false, 30),
-  (2, 'Get a barista to write something unhinged on your cup', 1, false, false, 40),
-  (2, 'Ask a homeless person for money', 3, true, false, 50),
-  (2, 'Try to pay for something in gum — the gum has to make it onto the counter', 3, false, false, 60),
-  (2, 'Pretend to be a waiter until a table actually gives you their order', 3, true, false, 70),
-  (2, 'Walk into a restaurant and ask if they sell clothes', 3, true, false, 80),
-  (2, 'Get an old lady to flip off the camera', 3, false, false, 90),
-  (2, 'Ask an old couple if they still poke', 3, true, false, 100),
-  (2, 'Kiss a stranger on the cheek', 3, false, false, 110),
-  (2, 'Scream for your mom until strangers turn around', 3, true, false, 120),
-  (2, 'Hook up with a statue', 3, false, false, 130),
-  (2, 'Propose to a stranger on one knee with a ring made from something off the street', 3, false, false, 140),
-  (2, 'Stick a tampon up each nostril and keep a straight face inside a store', 3, false, false, 150),
-  (2, 'A guy wears a thong over his clothes, out in public', 3, false, false, 160),
-  (2, 'Put a condom over your entire head in public', 3, false, false, 170),
-  (2, 'Blatantly smell a stranger — close enough that they notice', 5, false, false, 180),
-  (2, 'Take a bite out of a stranger''s food', 5, false, false, 190),
-  (2, 'Join a couple who are holding hands and hold one of their hands', 5, false, false, 200),
-  (2, 'Stick a “kick me” sign on a stranger and photograph them walking away still wearing it', 5, false, false, 210),
-  (2, 'Make a public scene of peeing or pooping your pants', 5, true, false, 220),
-  (2, 'Fake a break-up loudly enough that strangers stop and stare', 5, true, false, 230),
-  (2, 'Offer to take a stranger''s photo on their phone, then fire off a burst of selfies on it — a teammate shoots you doing it', 5, false, false, 240),
-  (2, 'Get a crowd of strangers to sing happy birthday to Jason', 5, true, false, 250),
-  (2, 'Blast porn audio in a cafe for ten straight seconds', 5, true, false, 260),
-  (2, 'Get a stranger to put their number in your phone — the photo is them typing it in', 5, false, false, 270),
-  (2, 'Get strangers to sign a petition for something insane', 5, false, false, 280),
-  (2, 'Kiss a stranger on the lips', 10, false, false, 290),
-  (2, 'Pick up a pigeon', 10, false, false, 300),
-  (2, 'Form a pyramid with at least one stranger in the bottom row', 10, false, false, 310),
-  (2, 'Carry two gallons of milk through a store, wipe out, and burst them', 10, true, false, 320),
-  (2, 'Trade pants with a stranger', 10, false, false, 330),
-  (2, 'Direct traffic at an intersection until cars actually react to you', 10, true, false, 340),
-  (2, 'Get a stranger to rub cream on a teammate''s rash', 10, false, false, 350),
-  (2, 'Get a stranger to give you the shirt off their back and wear it', 10, false, false, 360),
-  (2, 'Get a stranger to carry a teammate bridal-style', 10, false, false, 370),
-  (2, 'Submit the worst photo of Jason', 7, false, true, 380),
-  (2, 'Submit the best photo of Jason', 7, false, true, 390),
-  (2, 'Write and perform a four-line poem about Jason', 7, false, true, 400),
-  (2, 'Jason trivia', 7, false, true, 410)
-on conflict (round, title) do nothing;
+-- Tasks are NOT seeded here.
+--
+-- The task list lives on the planning board at `data/task-board.json` -- titles,
+-- point tiers, the clip flag and which tasks are cut -- and `npm run sync:tasks`
+-- is the only thing that writes it into this table. Keeping a second copy of the
+-- list here is what let the two drift apart in the first place.
+--
+-- On a fresh project: run this file, then `supabase/migrate-task-board-id.sql`,
+-- then `npm run sync:tasks -- --apply`.
+

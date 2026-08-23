@@ -15,18 +15,18 @@ No app install, no accounts, no passwords for players.
 Open the SQL editor in your Supabase project, paste in the whole of
 `supabase/setup.sql`, and run it. That one file creates the tables and the
 scoring view, turns on RLS, makes the `hunt` bucket with a 500 MB limit and the
-right upload policies, and seeds 5 teams per round plus the 79 tasks from the
-source doc.
+right upload policies, and seeds 5 teams per round.
 
-**Run the whole of `setup.sql` only on a fresh project.** Once the event has
-been seeded, re-running it puts back every task that has since been removed —
-the ones `scripts/seed-event.mjs` deletes because the doc struck them through,
-and anything deleted from the Admin screen. After a change that touches the
-schema, run the matching file in `supabase/` instead; each one is a small,
-re-runnable set of `ALTER`s that carries no seed data:
+It does **not** seed tasks. The task list lives on the planning board at
+`data/task-board.json` and is published by `npm run sync:tasks` (see below), so
+there is only ever one copy of it. Every statement in `setup.sql` is idempotent,
+but after a change that touches the schema you only need the matching file in
+`supabase/` — each is a small, re-runnable set of `ALTER`s carrying no seed data:
 
 - `supabase/migrate-groups-and-notes.sql` — several files per submission, and
   player-written notes.
+- `supabase/migrate-task-board-id.sql` — links each task row back to its entry on
+  the planning board. Run this once before the first `npm run sync:tasks`.
 
 Then get your keys from **Settings → API Keys → the "Legacy anon, service_role
 API keys" tab**.
@@ -49,7 +49,7 @@ npm run dev
 ### 3. Load the event data
 
 ```bash
-npm run seed          # guest list, teams for both rounds, tasks from the doc
+npm run seed          # guest list, teams for both rounds, tasks from the board
 npm run seed:reset    # remove them again
 ```
 
@@ -60,7 +60,27 @@ Both commands delete **every submission and every media file** in the project,
 so they refuse to run once anyone outside that guest list has submitted
 something. Use `seed:reset` to clear your own testing before the day.
 
-### 4. Verify it actually works
+### 4. Publish the task list
+
+```bash
+npm run sync:tasks            # show what would change, write nothing
+npm run sync:tasks -- --apply # publish it
+```
+
+Tasks are edited on the board at `data/task-board.json` — titles, point tiers,
+which need a clip, and which are cut — through the Copilot canvas at
+`~/.copilot/extensions/scavenger-tasks/`. This is the only thing that carries
+those edits to players.
+
+Unlike `seed`, it is safe during the event: it writes to the `tasks` table and
+nothing else, so submissions, media, the roster and any revealed secrets are
+untouched. A task cut on the board is hidden (`active = false`), never deleted,
+so points already awarded against it still stand and anything already in the
+judge's queue can still be decided.
+
+`npm run ready` tells you if the board and the live app have drifted apart.
+
+### 5. Verify it actually works
 
 ```bash
 npm run smoke     # with the dev server running in another terminal
@@ -110,7 +130,7 @@ assumes it's them.
 
 Open **Admin → health** for the same checks from the browser.
 
-### 5. Deploy
+### 6. Deploy
 
 ```bash
 npx vercel        # first run links the project

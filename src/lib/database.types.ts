@@ -24,6 +24,8 @@ type RosterRow = { round: number; player_id: string; team_id: string };
 
 type TaskRow = {
   id: string;
+  /** Stable id of this task's entry on the planning board, or null for a task added from Admin. */
+  board_id: string | null;
   round: number;
   title: string;
   points: number;
@@ -88,7 +90,7 @@ export type Database = {
       roster: Table<RosterRow, never>;
       tasks: Table<
         TaskRow,
-        "id" | "requires_video" | "is_secret" | "revealed_at" | "sort_order" | "active" | "created_at"
+        "id" | "board_id" | "requires_video" | "is_secret" | "revealed_at" | "sort_order" | "active" | "created_at"
       >;
       submissions: Table<
         SubmissionRow,

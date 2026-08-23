@@ -2,13 +2,10 @@
 --
 -- RUN THIS ONE, not the whole setup.sql.
 --
--- setup.sql still carries the seed INSERTs for the task list, and running it
--- again re-adds the two tasks the source doc struck through -- `seed-event.mjs`
--- deletes those on purpose (CUT_TASKS) and they do not conflict with anything,
--- so `on conflict do nothing` lets them straight back in. The same is true of
--- any task removed from the Admin screen. The team INSERTs are harmless (the
--- seeded names match the live ones, so they no-op), and so are the schema,
--- storage and settings statements.
+-- (Historical: setup.sql used to carry the seed INSERTs for the task list, so
+-- re-running it resurrected every task since deleted. The task list now lives on
+-- the planning board at `data/task-board.json` and is published by
+-- `npm run sync:tasks`, so setup.sql no longer touches tasks at all.)
 --
 -- Paste this whole file into the Supabase SQL editor and run it.
 -- Safe to re-run: every statement is idempotent.

@@ -10,6 +10,8 @@
     "smoke": "node scripts/smoke.mjs",
     "seed": "node scripts/seed-event.mjs",
     "seed:reset": "node scripts/seed-event.mjs --reset",
+    "sync:tasks": "node scripts/task-sync.mjs",
+    "test": "node --test scripts/*.test.mjs",
     "qa": "node qa/run-all.mjs",
     "ready": "node scripts/ready.mjs"
   },

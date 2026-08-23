@@ -12,6 +12,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
+import { planTaskSync, loadBoard, fetchTaskRows } from "./task-sync.mjs";
 
 const env = Object.fromEntries(
   readFileSync(new URL("../.env.local", import.meta.url), "utf8")
@@ -32,13 +33,13 @@ const ok = [];
 const check = (cond, good, bad, hard = true) =>
   cond ? ok.push(good) : (hard ? problems : warnings).push(bad);
 
-const [{ data: settings }, { data: players }, { data: teams }, { data: roster }, { data: tasks }, { data: subs }] =
+const [{ data: settings }, { data: players }, { data: teams }, { data: roster }, tasks, { data: subs }] =
   await Promise.all([
     admin.from("settings").select("key,value"),
     admin.from("players").select("id,name"),
     admin.from("teams").select("id,name,round"),
     admin.from("roster").select("round,player_id,team_id"),
-    admin.from("tasks").select("id,title,round,active,is_secret,revealed_at"),
+    fetchTaskRows(admin, ",revealed_at"),
     admin.from("submissions").select("id,status"),
   ]);
 
@@ -89,6 +90,15 @@ check((teams ?? []).filter((t) => t.round === round).length >= 2,
 const stuck = (subs ?? []).filter((x) => x.status === "uploading");
 check(stuck.length === 0, "no half-finished uploads",
   `${stuck.length} submission(s) stuck mid-upload — Admin → health lists them`, false);
+
+// The board is where tasks are actually decided, so "ready" has to mean the app
+// is showing what the board says, not just that it is showing something.
+const drift = planTaskSync(loadBoard(), tasks ?? []);
+const pending = drift.insert.length + drift.update.length + drift.deactivate.length + drift.reactivate.length;
+check(pending === 0, "task list matches the planning board",
+  `${pending} task change(s) on the board are not live yet ` +
+    `(${drift.insert.length} new, ${drift.update.length} edited, ${drift.deactivate.length} cut) — ` +
+    `run npm run sync:tasks to see them`, false);
 
 check(env.SUPABASE_ANON_KEY?.startsWith("ey"), "upload key is the legacy anon JWT",
   "SUPABASE_ANON_KEY is not a JWT — uploads will fail. It must be the legacy anon key.");
