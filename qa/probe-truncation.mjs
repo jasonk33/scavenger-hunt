@@ -35,6 +35,7 @@ import {
 // not quietly stop fitting when someone is renamed on the day.
 const LONG_TEAM = "__qa The Pigeon Intelligence Agency";
 const MID_TEAM = "__qa The Birthday Bureau";
+const SHORT_TEAM = "__qa Red";
 const PLAYER = "__qa Quinn Barrett";
 
 // Every name above breaks at a space, so wrapping alone rescues them. A name
@@ -44,6 +45,7 @@ const PLAYER = "__qa Quinn Barrett";
 const UNBROKEN_TEAM = "__qa ThePigeonIntelligenceAgencyOfManhattan";
 
 const CASES = [
+  { label: "short  390px", team: SHORT_TEAM, width: 390 },
   { label: "mid    390px", team: MID_TEAM, width: 390 },
   { label: "mid    300px", team: MID_TEAM, width: 300 },
   { label: "long   390px", team: LONG_TEAM, width: 390 },
@@ -58,7 +60,7 @@ const before = await snapshot();
 await teardown();
 await teardownTasks();
 
-const fx = await setup({ players: [PLAYER], teams: [LONG_TEAM, MID_TEAM, UNBROKEN_TEAM] });
+const fx = await setup({ players: [PLAYER], teams: [LONG_TEAM, MID_TEAM, SHORT_TEAM, UNBROKEN_TEAM] });
 const player = fx.player(PLAYER);
 
 const task = await call("/api/admin/tasks", {
@@ -96,6 +98,7 @@ const SCREENS = [
     route: "/",
     ready: ".btn-wide .pill",
     row: ".btn-wide",
+    stacked: { first: ".btn-wide .name", second: ".btn-wide .pill" },
     names: [
       { sel: ".btn-wide .name", what: "player name" },
       { sel: ".btn-wide .pill", what: "team name" },
@@ -154,14 +157,25 @@ try {
       check(`${c.label} ${s.route} renders its name row`, shown);
       if (!shown) { await shot(page, `trunc-${s.route.slice(1)}-${c.width}-missing`); await ctx.close(); continue; }
 
-      const m = await page.evaluate(({ names, row }) => {
+      const m = await page.evaluate(({ names, row, stacked }) => {
         const r = document.querySelector(row);
+        const first = stacked ? document.querySelector(stacked.first) : null;
+        const second = stacked ? document.querySelector(stacked.second) : null;
+        const firstRect = first?.getBoundingClientRect();
+        const secondRect = second?.getBoundingClientRect();
         return {
           // The page-level check: a card that refuses to shrink inside its grid
           // track scrolls the whole document sideways while every row inside it
           // still measures as fitting.
           pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
           rowOverflow: r ? r.scrollWidth - r.clientWidth : 0,
+          stacked: stacked && firstRect && secondRect
+            ? {
+                below: secondRect.top >= firstRect.bottom - 1,
+                firstBottom: firstRect.bottom,
+                secondTop: secondRect.top,
+              }
+            : null,
           els: names.map((n) => {
             const el = document.querySelector(n.sel);
             if (!el) return null;
@@ -173,13 +187,17 @@ try {
             };
           }),
         };
-      }, { names: s.names, row: s.row });
+      }, { names: s.names, row: s.row, stacked: s.stacked });
 
       // Anything that scrolls sideways on a phone is a bug regardless of tier.
       check(`${c.label} ${s.route} page does not scroll sideways`, m.pageOverflow <= 1,
         `document is ${m.pageOverflow}px wider than the viewport`);
       check(`${c.label} ${s.route} row does not overflow`, m.rowOverflow <= 1,
         `row scrolls ${m.rowOverflow}px past its box`);
+      if (s.stacked) {
+        check(`${c.label} ${s.route} puts the team below the player name`, m.stacked?.below === true,
+          `player ends at ${m.stacked?.firstBottom ?? "?"}px, team starts at ${m.stacked?.secondTop ?? "?"}px`);
+      }
 
       s.names.forEach((n, i) => {
         const e = m.els[i];

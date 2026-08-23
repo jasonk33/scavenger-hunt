@@ -109,9 +109,9 @@ export default function JoinPage() {
             className="btn btn-wide"
             disabled={busy}
             onClick={() => choose(p)}
-            style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "10px 18px" }}
+            style={{ alignItems: "flex-start", flexDirection: "column", gap: 6, padding: "10px 18px" }}
           >
-            <span className="name">{p.name}</span>
+            <span className="name" style={{ maxWidth: "100%" }}>{p.name}</span>
             {p.team ? (
               <span
                 className="pill pill-wrap"
@@ -119,6 +119,7 @@ export default function JoinPage() {
                   background: p.team.color,
                   borderColor: p.team.color,
                   color: inkOn(p.team.color),
+                  maxWidth: "100%",
                 }}
               >
                 {p.team.name}

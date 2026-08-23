@@ -23,10 +23,11 @@ fail on the day**, and that outranks code cleanliness, tidiness and elegance eve
 
 - This is a personal, single-owner event app. There is no external PR review: do not create pull
   requests or invoke LinkedIn submit/review workflows unless the user explicitly asks for one.
-  After the relevant validation passes, commit and push directly to `origin/main` when the user
-  says to ship; Vercel's Git integration automatically deploys the production build. A feature
-  branch is only for an explicit preview or parallel work. Do not run `npx vercel` for normal
-  releases; keep it as an emergency fallback if the Git integration is unavailable.
+  After the relevant validation passes, commit and push requested code changes directly to
+  `origin/main`; do not leave a fix only in the worktree or ask the user to request a push. A
+  feature branch is only for an explicit preview or parallel work. Do not run `npx vercel` for
+  normal releases; Vercel's Git integration automatically deploys the production build. Keep the
+  CLI as an emergency fallback if the Git integration is unavailable.
 
 ## Architecture
 
