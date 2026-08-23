@@ -54,27 +54,40 @@ export function usePoll<T>(url: string | null, ms = 5000) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const inflight = useRef(false);
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
     if (!url || inflight.current) return;
+    const requestGeneration = generation.current;
     inflight.current = true;
     try {
       const d = await api<T>(url);
+      if (requestGeneration !== generation.current) return;
       setData(d);
       setError(null);
     } catch (e) {
+      if (requestGeneration !== generation.current) return;
       setError(errorMessage(e, "Network error"));
     } finally {
-      inflight.current = false;
-      setLoading(false);
+      if (requestGeneration === generation.current) {
+        inflight.current = false;
+        setLoading(false);
+      }
     }
   }, [url]);
 
   useEffect(() => {
+    generation.current += 1;
+    inflight.current = false;
+    // A changed URL is a new question. Do not briefly render the previous
+    // round/team/task's answer while that request is on the way.
+    setData(null);
+    setError(null);
     if (!url) {
       setLoading(false);
       return;
     }
+    setLoading(true);
     load();
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") load();
@@ -84,6 +97,8 @@ export function usePoll<T>(url: string | null, ms = 5000) {
     };
     document.addEventListener("visibilitychange", onShow);
     return () => {
+      generation.current += 1;
+      inflight.current = false;
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onShow);
     };

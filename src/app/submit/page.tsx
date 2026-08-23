@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, errorMessage, fmtBytes, getMe, inkOn, setMe, usePoll, type Me } from "@/lib/client";
 import { groupBy, NOTE_MAX } from "@/lib/groups";
 import { isJwt, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
+import EvidenceEntryCard, { type EvidenceEntry } from "@/components/EvidenceEntry";
 
 type Task = {
   id: string;
@@ -36,6 +37,13 @@ type Rejection = {
   taskTitle: string;
   reason: string | null;
   at: string;
+};
+
+type OtherTeamEntries = {
+  round: number;
+  taskId: string;
+  taskTitle: string;
+  entries: EvidenceEntry[];
 };
 
 type State = {
@@ -521,6 +529,7 @@ export default function SubmitPage() {
                 subs={byTask.get(t.id) ?? []}
                 disabled={uploadBlocked}
                 meId={me.id}
+                playerId={me.id}
                 onPick={() => pickFor(t)}
                 onAddTo={(anchorId, note) => pickFor(t, { anchorId, note })}
                 onChanged={reload}
@@ -548,6 +557,7 @@ function TaskRow({
   subs,
   disabled,
   meId,
+  playerId,
   onPick,
   onAddTo,
   onChanged,
@@ -556,11 +566,19 @@ function TaskRow({
   subs: Sub[];
   disabled: boolean;
   meId: string;
+  playerId: string;
   onPick: () => void;
   onAddTo: (anchorId: string, note: string) => void;
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
+  const { data: otherData, error: otherError } = usePoll<OtherTeamEntries>(
+    otherOpen
+      ? `/api/task-entries?taskId=${encodeURIComponent(task.id)}&playerId=${encodeURIComponent(playerId)}`
+      : null,
+    8000
+  );
   const approved = subs.find((s) => s.status === "approved");
   const pending = subs.find((s) => s.status === "pending" || s.status === "uploading");
   const rejected = subs.find((s) => s.status === "rejected");
@@ -604,9 +622,9 @@ function TaskRow({
             )}
           </div>
         </div>
-        {/* Both of this row's actions in one column. People forget what they
-            sent, and someone who uploaded to the wrong task has no other way to
-            find out -- but the media only downloads once "See" is tapped. */}
+        {/* Upload and visibility actions stay in one column. People forget what
+            they sent, and someone who uploaded to the wrong task has no other
+            way to find out -- but media only downloads after a visibility tap. */}
         <div className="stack" style={{ gap: 6 }}>
           <button
             className="btn btn-sm"
@@ -620,6 +638,13 @@ function TaskRow({
               {open ? "Hide" : groups.length > 1 ? `See ${groups.length}` : "See"}
             </button>
           )}
+          <button
+            className="btn btn-sm"
+            onClick={() => setOtherOpen((v) => !v)}
+            aria-expanded={otherOpen}
+          >
+            {otherOpen ? "Hide other teams" : "See other teams' entries"}
+          </button>
         </div>
       </div>
 
@@ -634,6 +659,30 @@ function TaskRow({
               onAddTo={onAddTo}
               onChanged={onChanged}
             />
+          ))}
+        </div>
+      )}
+
+      {otherOpen && (
+        <div className="card card-flat" style={{ marginTop: 12, background: "var(--line-soft)" }}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <b>Other teams&apos; entries</b>
+            {otherData && (
+              <span className="muted tiny push">
+                {otherData.entries.length} scored
+              </span>
+            )}
+          </div>
+          {otherError && <div className="card card-bad tiny bad">{otherError}</div>}
+          {!otherData && !otherError && <p className="muted tiny">Loading…</p>}
+          {otherData && otherData.entries.length === 0 && (
+            <div className="empty" style={{ margin: 0, padding: "18px 10px" }}>
+              <b>No other team has scored this task yet</b>
+              Keep moving.
+            </div>
+          )}
+          {otherData?.entries.map((entry) => (
+            <EvidenceEntryCard key={entry.id} entry={entry} />
           ))}
         </div>
       )}
