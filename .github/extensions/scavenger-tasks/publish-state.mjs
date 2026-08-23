@@ -31,8 +31,6 @@ const state = (kind, headline, detail, count = null) => ({
 
 const unknown = (detail) => state("unknown", "Can't tell what's live", detail);
 
-const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
-
 const plural = (n) => `${n} change${n === 1 ? "" : "s"}`;
 
 /** A count is only a count if it is a non-negative integer. "7", null and NaN are not. */
@@ -102,11 +100,11 @@ export function publishState(report, { staleSince = 0 } = {}) {
   const tasks = (n) => `${n} task${n === 1 ? "" : "s"}`;
 
   if (report.applied === true) {
-    // The git half is bookkeeping, so it never changes the state -- a publish
-    // that reached players succeeded. But it must be VISIBLE: leaving the board
-    // uncommitted with nothing on screen saying so is the seam this closes.
-    const git = report.git?.note ? ` ${cap(report.git.note)}.` : "";
-    return state("published", `Published ${plural(count)}`, `Players see the new task list now.${git}`, count);
+    // Publishing used to have a second half -- committing the board file to git
+    // -- which had to be reported here because it could half-fail. The board is
+    // a table now, so reaching players IS the whole job and there is nothing
+    // outstanding left to mention.
+    return state("published", `Published ${plural(count)}`, "Players see the new task list now.", count);
   }
 
   // The board moved after this number was measured. Show the number, but

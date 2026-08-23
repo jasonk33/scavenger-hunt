@@ -3,17 +3,18 @@
 // axes, let the point tier fall out of those ratings, and see where the tier in
 // the doc disagrees. Wording changes stay an agent job — the UI just flags them.
 //
-// extension.mjs is wiring only: seed.mjs holds the task data, store.mjs owns
-// durable state and the scoring model, and index.html/ui.js/ui.css are the
-// renderer served over loopback.
+// extension.mjs is wiring only: store.mjs reads and writes the board in the
+// task_board table, tier.mjs owns the scoring model, and index.html/ui.js/ui.css
+// are the renderer served over loopback.
 
 import { createServer } from "node:http";
 import { execFile, execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { dirname, extname, join } from "node:path";
+import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
-import { addTask, BOARD_PATH, loadBoard, scoreOf, suggestedPoints, summarize, updateModel, updateTask } from "./store.mjs";
+import { addTask, loadBoard, summarize, updateModel, updateTask } from "./store.mjs";
+import { scoreOf, suggestedPoints } from "./tier.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ASSETS = {
@@ -28,22 +29,17 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/ja
 // ── Publishing ───────────────────────────────────────────────────────────────
 //
 // The canvas deliberately contains no sync logic. It shells out to the real
-// `scripts/task-sync.mjs --json`, so the collision refusal, the pre-migration
-// refusal and the board refusal are inherited rather than reimplemented, and
-// cannot drift from the thing they are meant to guard.
+// `scripts/task-sync.mjs --json`, so the collision refusal and the pre-migration
+// refusal are inherited rather than reimplemented, and cannot drift from the
+// thing they are meant to guard.
 //
-// It runs from the CANONICAL checkout -- the one holding the board -- not from
-// whichever checkout this canvas happens to live in. In a linked worktree the
-// board resolves to the main checkout, and `node_modules` and `.env.local` only
-// exist there too: both are gitignored, so a worktree has neither. Running the
-// worktree's own copy would fail on `Cannot find package @supabase/supabase-js`
-// before it ever reached a credential, which is a worse error than the refusal
-// this replaced.
+// It runs from THIS checkout, which is now always the right one: the board is a
+// table, so there is no other checkout to reach for. What still matters is that
+// `node_modules` and `.env.local` are gitignored, so they exist only where
+// someone has actually set the app up.
 
-/** The checkout that owns the board: the parent of its `data/` directory. */
-const CANONICAL_ROOT = dirname(dirname(BOARD_PATH));
-const SYNC_SCRIPT = join(CANONICAL_ROOT, "scripts", "task-sync.mjs");
-const REPO_ROOT = CANONICAL_ROOT;
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const SYNC_SCRIPT = join(REPO_ROOT, "scripts", "task-sync.mjs");
 /** `api()` having no timeout is a named sharp edge in AGENTS.md; a hung Supabase
  *  call must land in the banner's error state rather than spinning forever. */
 const SYNC_TIMEOUT_MS = 30_000;
@@ -163,20 +159,36 @@ const servers = new Map();
 const streams = new Set();
 
 /** The board plus everything derived from it, which is what the renderer wants. */
-function boardPayload() {
-  const board = loadBoard();
+async function boardPayload() {
+  const board = await loadBoard();
   return {
     model: board.model,
     tasks: board.tasks.map((t) => ({
       ...t,
-      score: +scoreOf(t, board.model).toFixed(2),
+      score: +scoreOf(t, board.model.weights).toFixed(2),
       suggestedPoints: suggestedPoints(t, board.model),
     })),
   };
 }
 
-function broadcast() {
-  const data = JSON.stringify(boardPayload());
+/**
+ * Pushes the board to every panel this process is serving.
+ *
+ * Same-process only, which is why it is an optimisation rather than the
+ * mechanism: each session forks its own extension, so an edit made in one
+ * session's canvas can never reach another session's panel over this stream.
+ * The renderer polls `/api/board` for that, and the poll is what makes
+ * cross-session freshness correct. A failure here is therefore not worth
+ * reporting -- the next poll fixes it.
+ */
+async function broadcast() {
+  if (!streams.size) return;
+  let data;
+  try {
+    data = JSON.stringify(await boardPayload());
+  } catch {
+    return;
+  }
   for (const res of streams) {
     try {
       res.write(`event: board\ndata: ${data}\n\n`);
@@ -211,13 +223,13 @@ async function handle(req, res) {
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     });
-    res.write(`event: board\ndata: ${JSON.stringify(boardPayload())}\n\n`);
+    res.write(`event: board\ndata: ${JSON.stringify(await boardPayload())}\n\n`);
     streams.add(res);
     req.on("close", () => streams.delete(res));
     return;
   }
 
-  if (path === "/api/board") return json(res, 200, boardPayload());
+  if (path === "/api/board") return json(res, 200, await boardPayload());
 
   if (path === "/api/publish/status") return json(res, 200, await runSync(false));
 
@@ -230,18 +242,18 @@ async function handle(req, res) {
   if (path === "/api/model" && req.method === "PATCH") {
     const body = await readJson(req);
     if (!body) return json(res, 400, { error: "invalid JSON" });
-    updateModel(body);
-    broadcast();
-    return json(res, 200, boardPayload().model);
+    const model = await updateModel(body);
+    await broadcast();
+    return json(res, 200, model);
   }
 
   const taskMatch = path.match(/^\/api\/task\/([\w.-]+)$/);
   if (taskMatch && req.method === "PATCH") {
     const body = await readJson(req);
     if (!body) return json(res, 400, { error: "invalid JSON" });
-    const task = updateTask(taskMatch[1], body);
+    const task = await updateTask(taskMatch[1], body);
     if (!task) return json(res, 404, { error: "unknown task" });
-    broadcast();
+    await broadcast();
     return json(res, 200, task);
   }
 
@@ -257,8 +269,16 @@ async function handle(req, res) {
 
 async function startServer() {
   const server = createServer((req, res) => {
-    handle(req, res).catch(() => {
-      if (!res.headersSent) res.writeHead(500);
+    // The board is a network call now, so a handler CAN fail in ways the file
+    // never did. Say why in a body the renderer can read: a bare 500 leaves the
+    // canvas unable to tell "the board is empty" from "the board is unreachable",
+    // and those two look identical on screen while meaning opposite things.
+    handle(req, res).catch((e) => {
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: String(e?.message ?? e) }));
+        return;
+      }
       res.end();
     });
   });
@@ -292,14 +312,15 @@ const listTasks = {
   },
   handler: async (ctx) => {
     const { round, status, flaggedForRewrite, mismatchedOnly } = ctx.input ?? {};
-    const tasks = boardPayload().tasks.filter((t) => {
+    const payload = await boardPayload();
+    const tasks = payload.tasks.filter((t) => {
       if (round !== undefined && t.round !== round) return false;
       if (status && t.status !== status) return false;
       if (flaggedForRewrite && !t.rewrite) return false;
       if (mismatchedOnly && t.points === t.suggestedPoints) return false;
       return true;
     });
-    return { boardPath: BOARD_PATH, count: tasks.length, tasks };
+    return { count: tasks.length, tasks };
   },
 };
 
@@ -325,10 +346,11 @@ const updateTaskAction = {
   },
   handler: async (ctx) => {
     const { taskId, ...patch } = ctx.input ?? {};
-    const task = updateTask(taskId, patch);
+    const task = await updateTask(taskId, patch);
     if (!task) throw new CanvasError("task_not_found", `No task with id "${taskId}".`);
-    broadcast();
-    return { ...task, suggestedPoints: suggestedPoints(task, loadBoard().model) };
+    const { model } = await loadBoard();
+    await broadcast();
+    return { ...task, suggestedPoints: suggestedPoints(task, model) };
   },
 };
 
@@ -348,8 +370,8 @@ const addTaskAction = {
     additionalProperties: false,
   },
   handler: async (ctx) => {
-    const task = addTask(ctx.input);
-    broadcast();
+    const task = await addTask(ctx.input);
+    await broadcast();
     return task;
   },
 };
@@ -358,7 +380,7 @@ const summaryAction = {
   name: "summary",
   description:
     "Board rollup: counts by status, and per round the tier spread, total points available, tier disagreements, average payoff, and how many tasks are high-risk, high-luck or need a prop.",
-  handler: async () => ({ boardPath: BOARD_PATH, ...summarize(loadBoard()) }),
+  handler: async () => summarize(await loadBoard()),
 };
 
 // ── Registration ─────────────────────────────────────────────────────────────
@@ -373,18 +395,23 @@ await joinSession({
       actions: [listTasks, updateTaskAction, addTaskAction, summaryAction],
       open: async (ctx) => {
         // Idempotent: re-opens and provider reconnects both land here, and the
-        // board is loaded from disk rather than kept per instance.
+        // board is read from the database rather than kept per instance.
         let entry = servers.get(ctx.instanceId);
         if (!entry) {
           entry = await startServer();
           servers.set(ctx.instanceId, entry);
         }
-        const { keep, maybe, cut } = summarize(loadBoard());
-        return {
-          title: "Scavenger hunt tasks",
-          status: `${keep} keep · ${maybe} maybe · ${cut} cut`,
-          url: entry.url,
-        };
+        // A board that cannot be read must still open the panel: the renderer
+        // says what went wrong, and a canvas that refuses to open says nothing
+        // at all. The status line is a summary, never the thing that gates it.
+        let status = "board unavailable — open to see why";
+        try {
+          const { keep, maybe, cut } = summarize(await loadBoard());
+          status = `${keep} keep · ${maybe} maybe · ${cut} cut`;
+        } catch {
+          // Reported in the panel, which is where it can actually be read.
+        }
+        return { title: "Scavenger hunt tasks", status, url: entry.url };
       },
       onClose: async (ctx) => {
         const entry = servers.get(ctx.instanceId);

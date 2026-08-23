@@ -56,6 +56,8 @@ button { cursor: pointer; }
 }
 
 .stats b { color: var(--text-color-default, #1f2328); font-weight: var(--font-weight-semibold, 600); }
+/* A board that has stopped refreshing is still shown, but must not read as current. */
+.stats .stale { color: var(--true-color-orange, #bc4c00); }
 
 .controls {
   display: flex;

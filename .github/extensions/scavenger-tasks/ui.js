@@ -1,7 +1,12 @@
 /**
  * Canvas renderer. Talks to the extension over plain HTTP on the same origin:
  * GET /api/board, PATCH /api/task/:id, PATCH /api/model, and an SSE stream at
- * /events so agent-driven edits show up without a reload.
+ * /events.
+ *
+ * The board is a database table any session can write, so the page POLLS
+ * /api/board. The stream only reaches panels served by the same extension
+ * process -- one per session -- so it is same-process immediacy, not the
+ * mechanism. See "Staying current" at the bottom.
  *
  * Publishing goes through GET /api/publish/status and POST /api/publish, both of
  * which run the real `scripts/task-sync.mjs`. The banner's wording and its
@@ -45,7 +50,14 @@ const el = {
 const filters = { round: "all", status: "all", q: "", sort: "doc", flagged: false };
 
 let board = { tasks: [], model: { weights: {}, thresholds: {} } };
-/** Rows currently rendered, so an SSE update can patch in place instead of rebuilding. */
+/**
+ * Whether a board has ever actually arrived, and why the last attempt did not.
+ * The empty board above is a placeholder, not a result: without these two the
+ * list would say "Nothing matches those filters" about a board it never read.
+ */
+let loaded = false;
+let boardError = null;
+/** Rows currently rendered, so an update can patch in place instead of rebuilding. */
 const rows = new Map();
 /** id -> { patch, timer } for edits still waiting to be sent. */
 const pending = new Map();
@@ -302,6 +314,18 @@ function renderList() {
   rows.clear();
   el.list.replaceChildren();
 
+  if (!loaded) {
+    // Never "Nothing matches those filters" for a board that has not arrived.
+    // A screen claiming a result it does not have is the bug class that has
+    // produced most of the serious bugs in this app, and an unreachable board
+    // and an empty one look identical unless this says which it is.
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = boardError ? `The board could not be read. ${boardError}` : "Loading the board\u2026";
+    el.list.replaceChildren(p);
+    return;
+  }
+
   if (!tasks.length) {
     el.list.innerHTML = `<p class="empty">Nothing matches those filters.</p>`;
     return;
@@ -333,6 +357,16 @@ function renderSummary() {
     `<b>${kept.length}</b> in · <b>${board.tasks.length - kept.length}</b> cut · ` +
     `<b>${mismatched}</b> tier disagreements` +
     (flagged ? ` · <b>${flagged}</b> flagged` : "");
+  // The board on screen was real when it was fetched, so it is not withdrawn.
+  // But any session can edit these rows now, so a board that has stopped
+  // refreshing must not be indistinguishable from a current one. Appended as
+  // text, matching how every other untrusted string in here is rendered.
+  if (loaded && boardError) {
+    const note = document.createElement("span");
+    note.className = "stale";
+    note.textContent = ` · not refreshing — ${boardError}`;
+    el.stats.append(note);
+  }
   if (!el.balance.hidden) renderBalance();
 }
 
@@ -554,7 +588,7 @@ document.getElementById("toggle-balance").addEventListener("click", (e) => {
   if (!el.balance.hidden) renderBalance();
 });
 
-/** Agent-driven edits arrive here. Rebuild only if the task set changed. */
+/** Board pushes and poll results both arrive here. Rebuild only if the task set changed. */
 function applyBoard(next) {
   const sameIds =
     next.tasks.length === board.tasks.length &&
@@ -577,16 +611,97 @@ function applyBoard(next) {
   renderSummary();
 }
 
-const res = await fetch("/api/board");
-applyBoard(await res.json());
+// ── Staying current ──────────────────────────────────────────────────────────
+//
+// The board is a table any session can write, so freshness is a requirement
+// rather than an edge case. `/events` is served by THIS extension process and
+// each session forks its own, so an edit made in another session's canvas can
+// never arrive over the stream -- it is same-process immediacy and nothing more.
+// The poll is what makes this correct, which matches the rest of the app: it
+// polls everywhere and has no WebSockets or Realtime anywhere.
+//
+// A stale panel is cosmetic rather than dangerous, and deliberately so: publish
+// re-runs the real sync against the database, so what gets published is the
+// board's rows and never this page's copy of them.
+//
+// Deliberately no entry animation or crossfade on the list. A polled list
+// retriggers one on every tick, which is why there are none anywhere in the app.
+
+const POLL_MS = 8000;
+let pollTimer = 0;
+
+async function fetchBoard() {
+  const res = await fetch("/api/board");
+  const body = await res.json().catch(() => null);
+  // A body that is not a board is a failure however it arrived. Rendering it
+  // would empty the list and read as "there are no tasks".
+  if (!res.ok || !body || !Array.isArray(body.tasks)) {
+    throw new Error(body?.error || `the board could not be read (HTTP ${res.status})`);
+  }
+  return body;
+}
+
+async function refreshBoard() {
+  // An unsent edit is newer than anything the server can return, and applying
+  // the poll over it would visibly undo what was just typed.
+  if (pending.size) return;
+  try {
+    const next = await fetchBoard();
+    const changed = loaded && JSON.stringify(next.tasks) !== JSON.stringify(board.tasks);
+    boardError = null;
+    loaded = true;
+    // Someone else changed the board, so the pending count the publish banner
+    // is showing was measured against a board that no longer exists.
+    if (changed) touchBoard();
+    applyBoard(next);
+  } catch (e) {
+    boardError = String(e?.message ?? e);
+    // Before the first success there is nothing on screen to keep, so the list
+    // has to say why. After one, the board stands and renderSummary marks it.
+    if (loaded) renderSummary();
+    else renderList();
+  }
+}
+
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  // Pausing while hidden matches `usePoll` in the app: a backgrounded panel
+  // should not keep querying, and coming back should be immediate rather than
+  // up to a full interval stale.
+  if (document.hidden) return;
+  pollTimer = setTimeout(async () => {
+    await refreshBoard();
+    schedulePoll();
+  }, POLL_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    clearTimeout(pollTimer);
+    return;
+  }
+  refreshBoard().finally(schedulePoll);
+});
+
+renderList();
+await refreshBoard();
+schedulePoll();
 refreshStatus();
 
 new EventSource("/events").addEventListener("board", (e) => {
   // Ignore pushes while an edit is in flight; the local copy is newer.
   if (pending.size) return;
-  const next = JSON.parse(e.data);
+  let next;
+  try {
+    next = JSON.parse(e.data);
+  } catch {
+    return;
+  }
+  if (!next || !Array.isArray(next.tasks)) return;
   // An agent edit changes the board just as a slider does, so the pending count
   // it was measured against is no longer the board that is on screen.
   if (JSON.stringify(next.tasks) !== JSON.stringify(board.tasks)) touchBoard();
+  loaded = true;
+  boardError = null;
   applyBoard(next);
 });

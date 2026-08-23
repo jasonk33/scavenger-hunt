@@ -17,7 +17,6 @@ import {
   desiredRows,
   planTaskSync,
   applyPlan,
-  boardRefusal,
   changeCount,
   isReorderOnly,
   syncReport,
@@ -528,42 +527,6 @@ test("applyPlan refuses a plan with a genuine title collision and writes nothing
   assert.deepEqual(db.calls, [], "nothing may be written");
 });
 
-// ------------------------------------------------------- wrong-checkout guard
-
-/**
- * A linked worktree no longer refuses: `scripts/board-path.mjs` resolves it to
- * the MAIN checkout's board, which is the same file the canvas edits, so a
- * worktree session is usable for task work. Which path is chosen is proved in
- * `board-path.test.mjs`.
- *
- * What survives here is the one case that is still unsafe: a worktree whose
- * main checkout could not be located, where the only reachable board is known
- * to be the wrong one. Publishing it would revert live tasks to a stale copy.
- */
-
-test("a resolvable board never refuses, however it was resolved", () => {
-  for (const reason of ["main checkout", "main checkout via worktree", "not a git worktree"]) {
-    assert.equal(boardRefusal({ canonical: true, reason, path: "/repo/data/task-board.json" }), null);
-  }
-});
-
-test("an unlocatable main checkout refuses and names the board it would have read", () => {
-  const msg = boardRefusal({
-    canonical: false,
-    reason: "this is a linked git worktree and the main checkout could not be located from /srv/bare.git",
-    path: "/wt/data/task-board.json",
-  });
-  assert.ok(msg, "an unlocatable main checkout must refuse");
-  assert.ok(msg.includes("/wt/data/task-board.json"), "must name the board it would have read");
-  assert.match(msg, /revert live tasks/, "must say what goes wrong, not just that it stopped");
-  assert.match(msg, /TASK_SYNC_ALLOW_WORKTREE/, "must name the override");
-});
-
-test("the refusal carries the resolver's own reason rather than a generic one", () => {
-  const msg = boardRefusal({ canonical: false, reason: "some specific git situation", path: "/wt/data/task-board.json" });
-  assert.ok(msg.includes("some specific git situation"), "the fix is in the reason, so it must survive");
-});
-
 // --------------------------------------------------------------- json report
 /*
  * `--json` exists so the scavenger-tasks canvas can ask the real script what is
@@ -605,18 +568,17 @@ test("a converged plan reports ok with a zero count", () => {
   assert.deepEqual(report.counts, { insert: 0, update: 0, deactivate: 0, reactivate: 0, reorder: 0 });
 });
 
-test("a board refusal makes the report not-ok and carries the reason verbatim", () => {
+test("a refusal makes the report not-ok and carries the reason verbatim", () => {
   // The canvas renders `refusal` straight into the banner, so it has to survive
-  // intact rather than being flattened into a generic failure.
-  const refusal = boardRefusal({
-    canonical: false,
-    reason: "this is a linked git worktree and the main checkout could not be located from /srv/bare.git",
-    path: "/wt/data/task-board.json",
-  });
+  // intact rather than being flattened into a generic failure. Nothing sets it
+  // today -- the board is a table, so there is no wrong checkout to refuse --
+  // but it is the channel every future refusal reaches the button through, and
+  // a refusal that failed to clear `ok` would be a button that publishes anyway.
+  const refusal = "refusing to run: something specific went wrong.\n  the fix is in here";
   const report = syncReport({ plan: emptyPlan(), live: [], migrated: true, refusal });
   assert.equal(report.ok, false, "a refusal must never report ok");
   assert.equal(report.refusal, refusal);
-  assert.ok(report.refusal.includes("/wt/data/task-board.json"));
+  assert.ok(report.refusal.includes("the fix is in here"), "the fix is in the reason, so it must survive");
 });
 
 test("a title collision makes the report not-ok and lists the collisions", () => {

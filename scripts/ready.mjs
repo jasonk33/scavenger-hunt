@@ -10,24 +10,11 @@
  * nothing about the app looks broken in that state -- every player just sees
  * "Submissions are closed right now" and assumes it's them.
  */
-import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
-import { execFileSync } from "node:child_process";
-import { dirname } from "node:path";
-import { planTaskSync, loadBoard, fetchTaskRows, isReorderOnly, BOARD_PATH } from "./task-sync.mjs";
+import { createAdminClient, loadEnv, readBoard } from "./board-store.mjs";
+import { planTaskSync, fetchTaskRows, isReorderOnly } from "./task-sync.mjs";
 
-const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-    .split("\n")
-    .filter((l) => l.trim() && !l.trim().startsWith("#") && l.includes("="))
-    .map((l) => {
-      const i = l.indexOf("=");
-      return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-    })
-);
-const admin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const env = loadEnv();
+const admin = createAdminClient(env);
 
 const problems = [];
 const warnings = [];
@@ -35,7 +22,7 @@ const ok = [];
 const check = (cond, good, bad, hard = true) =>
   cond ? ok.push(good) : (hard ? problems : warnings).push(bad);
 
-const [{ data: settings }, { data: players }, { data: teams }, { data: roster }, tasks, { data: subs }] =
+const [{ data: settings }, { data: players }, { data: teams }, { data: roster }, tasks, { data: subs }, board] =
   await Promise.all([
     admin.from("settings").select("key,value"),
     admin.from("players").select("id,name"),
@@ -43,6 +30,7 @@ const [{ data: settings }, { data: players }, { data: teams }, { data: roster },
     admin.from("roster").select("round,player_id,team_id"),
     fetchTaskRows(admin, ",revealed_at"),
     admin.from("submissions").select("id,status"),
+    readBoard(admin),
   ]);
 
 const s = Object.fromEntries((settings ?? []).map((r) => [r.key, r.value]));
@@ -100,7 +88,7 @@ check(stuck.length === 0, "no half-finished uploads",
 // sort_order is dense, so one cut or re-tier renumbers every task below it, and
 // counting those turns "1 edit pending" into "14 changes" a minute before the
 // event. They are still published; they are just not decisions.
-const drift = planTaskSync(loadBoard(), tasks ?? []);
+const drift = planTaskSync(board, tasks ?? []);
 const edited = drift.update.filter((u) => !isReorderOnly(u));
 const reordered = drift.update.length - edited.length;
 const pending = drift.insert.length + edited.length + drift.deactivate.length + drift.reactivate.length;
@@ -119,23 +107,9 @@ check(env.SUPABASE_ANON_KEY?.startsWith("ey"), "upload key is the legacy anon JW
   "SUPABASE_ANON_KEY is not a JWT — uploads will fail. It must be the legacy anon key.");
 check(Boolean(env.ORGANIZER_PIN), "organizer PIN is set", "no ORGANIZER_PIN — the judge screen is wide open", false);
 
-// Publishing commits the board to whatever branch this checkout is on. On a
-// feature branch that record is stranded until the branch merges, while the
-// database already has it -- so git and the live app disagree about the current
-// task list. Worth knowing before the day, not after a publish.
-let branch = "";
-try {
-  branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-    cwd: dirname(dirname(BOARD_PATH)),
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  }).trim();
-} catch {
-  // No git, or not a repo. Nothing to say.
-}
-check(!branch || branch === "main" || branch === "HEAD", "board commits land on main",
-  `this checkout is on ${branch}, so a publish records the board there rather than on main — ` +
-    `switch to main for task work, or merge afterwards`, false);
+// The board is a table, so there is no branch for a publish to land on and
+// nothing to check here. This used to warn that publishing from a feature branch
+// stranded the record of what players were looking at.
 
 console.log(`\nRound ${round} · ${players?.length ?? 0} players · ${(teams ?? []).filter((t) => t.round === round).length} teams · ${activeTasks.length} tasks · ${(subs ?? []).filter((x) => x.status === "pending").length} waiting on the judge\n`);
 for (const line of ok) console.log(`  \x1b[32mok\x1b[0m   ${line}`);

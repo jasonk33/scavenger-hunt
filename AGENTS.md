@@ -47,30 +47,34 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
 `supabase/migrate-*.sql`, and are folded back into `setup.sql` as
 `alter table ... add column if not exists` so it stays the whole picture.
 
-- **`data/task-board.json` is the source of truth for task content, points and cuts** — not
+- **The `task_board` table is the source of truth for task content, points and cuts** — not
   `setup.sql`, which no longer seeds tasks at all. It is edited through the Copilot canvas
-  extension in `.github/extensions/scavenger-tasks/` (`store.mjs` holds the schema and
-  validators, and resolves the board relative to itself), and reaches players **only** via
+  extension in `.github/extensions/scavenger-tasks/`, and reaches players **only** via
   `npm run sync:tasks`. Nothing else writes task rows. Editing a title in Admin is a
   field-day escape hatch; the next sync will put the board's wording back.
+- **`task_board` and `tasks` are two tables on purpose, and must stay that way.** Editing a
+  rating changes nothing a player sees until someone publishes; that staging gap is the whole
+  design. Queries and validators live in `scripts/board-store.mjs`, shared by the canvas and
+  the publisher so they cannot disagree about what a task is.
+- **The board used to be `data/task-board.json` and the reasons it is not are load-bearing.**
+  A file has one copy per checkout: a worktree edited a board nobody published, two processes
+  holding it in memory silently reverted each other, and a publish left a commit stranded on
+  whatever branch was checked out. All of that is gone — there is nothing to commit after a
+  publish, and no session is the wrong session for task work. Do not reintroduce a file, a
+  cache of the board, or a whole-board write. **Writes are per-field on one row**, which is
+  what makes two people editing different tasks impossible to get wrong.
+- **The canvas polls `/api/board`.** `/events` is served by the extension process and each
+  session forks its own, so SSE only ever reaches panels in the same session — it is
+  immediacy, not the mechanism. Same reason there are no entry animations on that list as
+  everywhere else: a polled list retriggers them every tick.
 - **The canvas is project-scoped, so it only loads in a session opened on this repo.** It will
   not appear in a general chat session. Its publish button shells out to the real
   `scripts/task-sync.mjs --json`, so it inherits every refusal rather than reimplementing one —
   **never duplicate planning logic into the canvas.** Its banner must never report a count it
   did not actually measure; `publish-state.mjs` fails towards `unknown` on purpose, and
   `publish-state.test.mjs` exists to keep it that way.
-- **Commit a board edit on its own.** The canvas writes the file the moment the user changes a
-  rating, so a session doing code work will find it already dirty through no action of its own.
-  Never let `git add -A` fold it into an unrelated commit: what changed on the board, and when,
-  is the event's own history.
-- **Task work belongs in a branch session, not a worktree.** Both the canvas and `sync:tasks`
-  resolve the board relative to themselves, so in a worktree they agree — on that worktree's
-  stale committed copy, while the one shared Supabase project is behind all of them. Publishing
-  there reverts live tasks; editing there produces board changes nobody publishes. `sync:tasks`
-  refuses — `git rev-parse --git-dir` vs `--git-common-dir` — and the canvas surfaces that same
-  refusal in its banner. Override with `TASK_SYNC_ALLOW_WORKTREE=1`.
-- Board tasks carry a stable `id` (`r1-01`, `s-04`) mirrored onto `tasks.board_id`. That is
-  the sync key — **never match tasks on their title**, which 8 tasks have already outgrown.
+- Board tasks carry a stable `board_id` (`r1-01`, `s-04`) mirrored onto `tasks.board_id`. That
+  is the sync key — **never match tasks on their title**, which 8 tasks have already outgrown.
 - **Secrets sit at `round: 0` on the board but `tasks.round` is `check (round in (1, 2))`**,
   so each one fans out to one row per round sharing a `board_id`. That is the entire reason
   the board counts 76 tasks and the table holds more; it is not corruption.
@@ -87,7 +91,8 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
   Carries `points_awarded`, `bonus` (0–2 discretionary), `starred` (award candidate),
   `reject_reason`, `note`, `group_id`.
 - `settings` is key/value, read via `getSettings()`: `active_round`, `submissions_open`,
-  `fallback_url`, `event_name`, `notice`.
+  `fallback_url`, `event_name`, `notice`, plus `board_model` (the canvas's tier weights and
+  thresholds, as JSON — the board's model, not the app's).
 - **Groups**: several files can be one piece of evidence via `group_id`. It is nullable and
   every read goes through `groupKey()`/`groupBy()` (`src/lib/groups.ts`) — a row without one
   is a group of one. The judge decides a group as a unit. Notes cap at `NOTE_MAX` (280).
@@ -169,12 +174,15 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
   | `probe-visibility` | `See` on a team's submissions, the judge reaching the **back** of the queue, rejected items in the feed and their filter, 320px overflow, and a filter outliving the control that clears it | 70s |
 
 - `npm run smoke` — API-level suite; self-contained, doesn't import `qa/lib.mjs`.
-- `npm test` — `node --test` over `scripts/*.test.mjs`. Pure functions, no DB, no dev server;
-  this is where the task-sync planner is proved.
+- `npm test` — `node --test` over `scripts/*.test.mjs` and the canvas's own tests. **No DB, no
+  network, no dev server**: the planner and the board's validators are pure, and the board's
+  query layer is proved against a fake client in `scripts/board-db.test.mjs`. That is the
+  escape hatch — there is one Supabase project and it holds the live event, so a test must
+  never be able to reach the real board.
 - `npm run ready` — read-only, ~2s, no dev server. Checks *the event* is configured, not that
   the app works, including whether the live task list still matches the board. Run it after
   anything that touches settings.
-- `npm run build`, `npx tsc --noEmit`, `npx eslint src scripts qa --max-warnings=0`.
+- `npm run build`, `npx tsc --noEmit`, `npx eslint src scripts qa .github/extensions --max-warnings=0`.
 
 **Playwright screenshots in `qa/shots/` (gitignored) are readable with the `view` tool** and
 have caught bugs no assertion would. `shot()` is `fullPage: false`. Playwright Chromium is
@@ -218,6 +226,10 @@ real device.
   **To change a task, do not use these** — edit the board and run `npm run sync:tasks`,
   which only ever writes to `tasks` and leaves submissions, media, roster and `revealed_at`
   alone. It is dry-run by default; `--apply` publishes.
+- **The board is the live database.** Editing it in the canvas is safe mid-event — nothing a
+  player sees moves until Publish — but there is no staging copy and no undo. Never drive the
+  real board as a test fixture: build a `__qa`-prefixed row, scope every delete to it, and
+  hand `scripts/board-store.mjs` a fake client instead (`scripts/board-db.test.mjs`).
 - The `notice` banner is sticky and eats viewport. If you set one for testing, clear it.
 - `api()` in `src/lib/client.ts` has **no timeout**. A request that hangs forever leaves
   Upload buttons disabled with Cancel a no-op.

@@ -6,23 +6,22 @@
  *   npm run sync:tasks -- --apply  actually write it
  *   npm run sync:tasks -- --json   the same run as one JSON object on stdout
  *
- * `data/task-board.json` is the source of truth for task content, points and
- * cuts; this is the only thing that carries it into Supabase. It is deliberately
+ * The `task_board` table is the source of truth for task content, points and
+ * cuts; this is the only thing that carries it into `tasks`. It is deliberately
  * separate from `npm run seed`, which clears every submission and every media
  * file: re-tiering a task an hour before the party has to be safe, so this
  * touches nothing but the `tasks` table -- never submissions, storage, players,
  * the roster, the settings, or `revealed_at`.
  *
+ * Board and app are two tables on purpose. Editing a rating in the canvas writes
+ * `task_board` and changes nothing a player sees; this is the deliberate step
+ * that closes the gap.
+ *
  * The planner is a pure function so the decisions that matter can be tested
  * against fixtures instead of against the one shared project. See
  * `scripts/task-sync.test.mjs`.
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
-import { dirname } from "node:path";
-import { resolveBoardPath } from "./board-path.mjs";
-import { commitAndPush, commitMessage } from "./board-commit.mjs";
+import { createAdminClient, readBoard } from "./board-store.mjs";
 
 /** Tasks are ordered for players by tier, with the secrets last. */
 const secretsLast = (row) => [row.is_secret ? 1 : 0, row.points, row.docOrder];
@@ -152,7 +151,7 @@ export function isReorderOnly(update) {
  * `team_scores` view reads only `submissions` and its denormalized
  * `points_awarded`, and never joins `tasks`.
  *
- * @param {{tasks: object[]}} board          parsed task-board.json
+ * @param {{tasks: object[]}} board          the board, from readBoard()
  * @param {object[]} liveRows                rows from the tasks table
  * @param {{submissionCounts?: Record<string, number>}} [opts]
  */
@@ -324,47 +323,12 @@ export function planTaskSync(board, liveRows, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /*
- * The canonical board, resolved exactly as the scavenger-tasks canvas resolves
- * it (`scripts/board-path.mjs`). The two MUST agree: if the canvas edits one
- * file and this reads another, this computes a plan from a board nobody touched
- * and publishes it over live tasks while reporting success.
- *
- * In a linked worktree that means the MAIN checkout's board rather than the
- * worktree's own committed copy, which is what makes a worktree session usable
- * for task work at all. It used to refuse outright instead.
+ * The board is a table, not a file, so there is nothing to resolve and nothing
+ * to refuse. Every session -- worktree, branch, any git branch -- reads the same
+ * `task_board` rows through the same credentials, which is what the file could
+ * never manage: a checkout had its own copy, so a worktree published a board
+ * nobody had edited and a branch session stranded the record of what it did.
  */
-const LOCAL_BOARD = fileURLToPath(new URL("../data/task-board.json", import.meta.url));
-const RESOLVED = resolveBoardPath(LOCAL_BOARD);
-export const BOARD_PATH = RESOLVED.path;
-
-/**
- * The one remaining reason to refuse: a linked worktree whose main checkout
- * could not be located, so the only board reachable from here is known to be
- * the wrong one. Publishing it would revert live tasks to a stale copy, which
- * fails silently and in the wrong direction -- so both the dry run and
- * `--apply` stop.
- *
- * Pure, so the refusal is provable from a fixture.
- */
-export function boardRefusal({ canonical, reason, path }) {
-  if (canonical) return null;
-  return (
-    `refusing to run: ${reason}.\n` +
-    `  would read: ${path}\n` +
-    `That board is this worktree's own committed copy, not the one the canvas edits, ` +
-    `so publishing it would revert live tasks. Run from the main checkout. ` +
-    `TASK_SYNC_ALLOW_WORKTREE=1 overrides deliberately.`
-  );
-}
-
-function checkoutRefusal() {
-  if (process.env.TASK_SYNC_ALLOW_WORKTREE) return null;
-  return boardRefusal({ canonical: RESOLVED.canonical, reason: RESOLVED.reason, path: BOARD_PATH });
-}
-
-export function loadBoard() {
-  return JSON.parse(readFileSync(BOARD_PATH, "utf8"));
-}
 
 /**
  * Reads the task rows, tolerating a database where migrate-task-board-id.sql has
@@ -394,12 +358,12 @@ async function readTasks(db, extra = "") {
 
 /** Reads the board and the live table and returns the plan. Read-only. */
 export async function buildPlan(db) {
-  const { rows, migrated } = await readTasks(db);
+  const [{ rows, migrated }, board] = await Promise.all([readTasks(db), readBoard(db)]);
   const { data: subs } = await db.from("submissions").select("task_id");
   const submissionCounts = {};
   for (const s of subs ?? []) submissionCounts[s.task_id] = (submissionCounts[s.task_id] ?? 0) + 1;
 
-  return { plan: planTaskSync(loadBoard(), rows, { submissionCounts }), live: rows, migrated };
+  return { plan: planTaskSync(board, rows, { submissionCounts }), live: rows, migrated };
 }
 
 /**
@@ -496,8 +460,8 @@ export function changeCount(plan) {
  *
  * `--json` exists so the scavenger-tasks canvas can ask this script what is
  * pending rather than reimplementing the planner behind a button -- which is the
- * whole point, because it means the canvas inherits the collision refusal, the
- * pre-migration refusal and the worktree refusal instead of drifting from them.
+ * whole point, because it means the canvas inherits the collision refusal and
+ * the pre-migration refusal instead of drifting from them.
  *
  * `ok` is the field the button hangs off, so it is false for every reason
  * `applyPlan` would refuse AND for an outright failure. `error` and `count: 0`
@@ -628,27 +592,7 @@ async function main() {
   const say = JSON_MODE ? () => {} : (line) => console.log(line);
   const apply = process.argv.includes("--apply");
 
-  // Runs before any Supabase work, so the worktree refusal reaches the canvas
-  // even with no network and no credentials.
-  const refusal = checkoutRefusal();
-  if (refusal) {
-    if (!JSON_MODE) throw new Error(refusal);
-    return emitJson(syncReport({ plan: null, refusal, error: refusal }));
-  }
-
-  const { createClient } = await import("@supabase/supabase-js");
-  const env = Object.fromEntries(
-    readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-      .split("\n")
-      .filter((l) => l.trim() && !l.trim().startsWith("#") && l.includes("="))
-      .map((l) => {
-        const i = l.indexOf("=");
-        return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-      })
-  );
-  const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false },
-  });
+  const db = createAdminClient();
 
   const { plan, live, migrated } = await buildPlan(db);
   say(describePlan(plan, live));
@@ -678,49 +622,11 @@ async function main() {
   await applyPlan(db, plan, { migrated });
   say(`\nPublished ${n} change(s) to the tasks table. Submissions and media untouched.`);
 
-  // Players are already seeing the new list. Recording it in git is bookkeeping
-  // that finishes the job -- publishing used to leave the board file dirty with
-  // nothing saying so -- and it is strictly best-effort: a git problem is a note
-  // on a successful publish, never a failure. TASK_SYNC_NO_COMMIT=1 skips it.
-  const report = syncReport({ plan, live, migrated, refusal: null, applied: true });
-  report.git = process.env.TASK_SYNC_NO_COMMIT
-    ? { committed: false, pushed: false, note: "skipped (TASK_SYNC_NO_COMMIT)" }
-    : recordPublish(report);
-  say(report.git.note);
-  if (JSON_MODE) emitJson(report);
-}
-
-/**
- * Runs git in the checkout that owns the board.
- *
- * The environment is scrubbed of `GH_TOKEN` and `GIT_CONFIG_PARAMETERS` first.
- * Agent and app processes are launched with credentials for an unrelated
- * account, which cannot push here and fails as "Repository not found" rather
- * than as a permission error -- a named sharp edge in AGENTS.md. Removing them
- * lets git fall back to the user's own credential helper, which can.
- */
-function recordPublish(report) {
-  const root = dirname(dirname(BOARD_PATH));
-  return commitAndPush({
-    root,
-    message: commitMessage(report),
-    run: (args) => {
-      const env = { ...process.env };
-      delete env.GH_TOKEN;
-      delete env.GIT_CONFIG_PARAMETERS;
-      try {
-        const out = execFileSync("git", ["-C", root, ...args], {
-          encoding: "utf8",
-          env,
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 20_000,
-        });
-        return { ok: true, out: String(out ?? "") };
-      } catch (e) {
-        return { ok: false, out: `${e?.stderr ?? ""}${e?.stdout ?? ""}` || String(e?.message ?? e) };
-      }
-    },
-  });
+  // Nothing to commit and nothing to push: the board is a table, so publishing
+  // IS the whole job. It used to also have to be recorded in git, which is what
+  // made a publish half-finish -- the record landed on whatever branch the
+  // checkout was on, and stayed stranded there.
+  if (JSON_MODE) emitJson(syncReport({ plan, live, migrated, refusal: null, applied: true }));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

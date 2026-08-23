@@ -85,8 +85,8 @@ function remix(round1) {
 const ROUND_2 = remix(ROUND_1);
 
 /*
- * The task list is not defined here. It lives on the planning board at
- * `data/task-board.json` and is published by `scripts/task-sync.mjs`, which this
+ * The task list is not defined here. It lives on the planning board in the
+ * `task_board` table and is published by `scripts/task-sync.mjs`, which this
  * calls so a seed and a sync can never leave the app in different states.
  */
 

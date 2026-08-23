@@ -17,8 +17,8 @@ Open the SQL editor in your Supabase project, paste in the whole of
 scoring view, turns on RLS, makes the `hunt` bucket with a 500 MB limit and the
 right upload policies, and seeds 5 teams per round.
 
-It does **not** seed tasks. The task list lives on the planning board at
-`data/task-board.json` and is published by `npm run sync:tasks` (see below), so
+It does **not** seed tasks. The task list lives on the planning board in the
+`task_board` table and is published by `npm run sync:tasks` (see below), so
 there is only ever one copy of it. Every statement in `setup.sql` is idempotent,
 but after a change that touches the schema you only need the matching file in
 `supabase/` — each is a small, re-runnable set of `ALTER`s carrying no seed data:
@@ -27,6 +27,8 @@ but after a change that touches the schema you only need the matching file in
   player-written notes.
 - `supabase/migrate-task-board-id.sql` — links each task row back to its entry on
   the planning board. Run this once before the first `npm run sync:tasks`.
+- `supabase/migrate-task-board.sql` — the planning board itself. Run this once
+  before opening the canvas.
 
 Then get your keys from **Settings → API Keys → the "Legacy anon, service_role
 API keys" tab**.
@@ -68,20 +70,24 @@ npm run sync:tasks -- --apply # publish it
 npm run sync:tasks -- --json  # the same run as one JSON object, for the canvas
 ```
 
-Tasks are edited on the board at `data/task-board.json` — titles, point tiers,
-which need a clip, and which are cut — through the Copilot canvas in
-`.github/extensions/scavenger-tasks/`. This is the only thing that carries those
-edits to players.
+Tasks are edited on the planning board — titles, point tiers, which need a clip,
+and which are cut — through the Copilot canvas in
+`.github/extensions/scavenger-tasks/`. The board is the `task_board` table, and
+`sync:tasks` is the only thing that carries those edits to players.
 
 The canvas has a banner showing how many board edits are not yet live and a
 button that publishes them, which just runs the command above — so it refuses
 for exactly the same reasons, and says why. If it cannot work out the count, it
 says so; it never reports zero for a check that failed.
 
+Because the board is a table rather than a file in a checkout, it does not
+matter which session you edit it from: a worktree, a branch, any git branch. The
+canvas polls, so a change made in one session shows up in another, and Publish
+is the whole job — there is nothing to commit afterwards.
+
 Because the extension lives in `.github/extensions/`, it is **only available in
 a session opened on this repo** — it will not appear in a general chat session.
-That is deliberate: publishing needs the repo anyway, and it keeps the board
-under version control instead of loose in `~/.copilot/`.
+That is deliberate: publishing needs this repo's `.env.local` anyway.
 
 Unlike `seed`, it is safe during the event: it writes to the `tasks` table and
 nothing else, so submissions, media, the roster and any revealed secrets are
