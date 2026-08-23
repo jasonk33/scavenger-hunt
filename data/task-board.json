@@ -90,7 +90,7 @@
       "round": 1,
       "docTitle": "Fit an entire hot dog in your mouth in one bite",
       "title": "Fit an entire hot dog in your mouth in one bite",
-      "points": 1,
+      "points": 3,
       "docOrder": 5,
       "difficulty": 3,
       "guts": 2,
@@ -101,7 +101,8 @@
       "prop": "hot dog (buy)",
       "status": "keep",
       "rewrite": false,
-      "note": "Wording is fine — the problem was proof. A still can't show 'in one bite', so this has to be a clip."
+      "note": "Wording is fine — the problem was proof. A still can't show 'in one bite', so this has to be a clip.",
+      "tierOk": null
     },
     {
       "id": "r1-06",
@@ -117,7 +118,7 @@
       "risk": 1,
       "needsClip": false,
       "prop": "",
-      "status": "keep",
+      "status": "cut",
       "rewrite": false,
       "note": ""
     },
@@ -171,7 +172,7 @@
       "risk": 1,
       "needsClip": true,
       "prop": "",
-      "status": "keep",
+      "status": "cut",
       "rewrite": false,
       "note": ""
     },
@@ -237,7 +238,7 @@
       "points": 3,
       "docOrder": 13,
       "difficulty": 2,
-      "guts": 4,
+      "guts": 5,
       "luck": 1,
       "payoff": 3,
       "risk": 1,
@@ -774,7 +775,7 @@
       "round": 2,
       "docTitle": "Get an old lady to flip off the camera",
       "title": "Get an old lady to flip off the camera",
-      "points": 3,
+      "points": 10,
       "docOrder": 9,
       "difficulty": 4,
       "guts": 4,
@@ -785,7 +786,8 @@
       "prop": "",
       "status": "keep",
       "rewrite": false,
-      "note": ""
+      "note": "",
+      "tierOk": null
     },
     {
       "id": "r2-10",
@@ -918,7 +920,7 @@
       "round": 2,
       "docTitle": "Put a condom over your entire head in public",
       "title": "Put a condom over your entire head in public",
-      "points": 3,
+      "points": 5,
       "docOrder": 17,
       "difficulty": 3,
       "guts": 4,
@@ -929,7 +931,8 @@
       "prop": "condoms",
       "status": "keep",
       "rewrite": false,
-      "note": ""
+      "note": "",
+      "tierOk": null
     },
     {
       "id": "r2-18",
@@ -1379,6 +1382,7 @@
       "status": "keep",
       "rewrite": false,
       "note": "Replaces 'Jason trivia'. Works cold on the street with no answer key: self-contained, uses a stranger like the rest of the board, verifiable from a clip, and pointed given he's turning 30.",
+      "tierOk": null,
       "custom": true,
       "id": "s-x1"
     }

@@ -11,7 +11,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeTitle, effectiveTitle, desiredRows, planTaskSync, applyPlan, worktreeRefusal } from "./task-sync.mjs";
+import {
+  normalizeTitle,
+  effectiveTitle,
+  desiredRows,
+  planTaskSync,
+  applyPlan,
+  worktreeRefusal,
+  changeCount,
+  isReorderOnly,
+  syncReport,
+} from "./task-sync.mjs";
 
 /** Minimal board task; every field the planner reads has a default. */
 function task(over = {}) {
@@ -578,4 +588,213 @@ test("a submodule is not mistaken for a worktree", () => {
   // `git rev-parse` gives a submodule the same answer twice, just not `.git`.
   const g = "/repo/.git/modules/sub";
   assert.equal(worktreeRefusal({ gitDir: g, gitCommonDir: g, cwd: "/repo/sub", boardPath: "/repo/sub/data/task-board.json" }), null);
+});
+
+// --------------------------------------------------------------- json report
+/*
+ * `--json` exists so the scavenger-tasks canvas can ask the real script what is
+ * pending instead of reimplementing the planner behind a button. That makes the
+ * shape of the report load-bearing: the canvas decides whether to enable a live
+ * write to the tasks table from these fields alone, so a refusal that fails to
+ * set `ok: false` is a button that publishes a stale board.
+ *
+ * `syncReport` is pure for the same reason `planTaskSync` is -- every refusal
+ * path is provable from a fixture rather than by breaking the one shared project.
+ */
+const emptyPlan = (over = {}) => ({
+  insert: [], update: [], deactivate: [], reactivate: [], warnings: [], collisions: [], ...over,
+});
+
+test("changeCount sums every bucket that would be written", () => {
+  assert.equal(changeCount(emptyPlan()), 0);
+  assert.equal(
+    changeCount(emptyPlan({
+      insert: [1, 2],
+      update: [1, 2, 3],
+      deactivate: [1],
+      reactivate: [1, 2, 3, 4],
+    })),
+    10
+  );
+  // Warnings are advisory: they are not changes and must not inflate the count
+  // the banner puts in front of a publish button.
+  assert.equal(changeCount(emptyPlan({ warnings: ["a", "b"], collisions: [{}] })), 0);
+});
+
+test("a converged plan reports ok with a zero count", () => {
+  const report = syncReport({ plan: emptyPlan(), live: [], migrated: true, refusal: null });
+  assert.equal(report.ok, true);
+  assert.equal(report.count, 0);
+  assert.equal(report.refusal, null);
+  assert.equal(report.error, null);
+  assert.equal(report.applied, false);
+  assert.deepEqual(report.counts, { insert: 0, update: 0, deactivate: 0, reactivate: 0, reorder: 0 });
+});
+
+test("a worktree refusal makes the report not-ok and carries the reason verbatim", () => {
+  // The canvas renders `refusal` straight into the banner, so it has to survive
+  // intact rather than being flattened into a generic failure.
+  const refusal = worktreeRefusal(LINKED);
+  const report = syncReport({ plan: emptyPlan(), live: [], migrated: true, refusal });
+  assert.equal(report.ok, false, "a refusal must never report ok");
+  assert.equal(report.refusal, refusal);
+  assert.ok(report.refusal.includes("/wt/data/task-board.json"));
+});
+
+test("a title collision makes the report not-ok and lists the collisions", () => {
+  const plan = planTaskSync(
+    board([task({ id: "r1-01", title: "Same" }), task({ id: "r1-02", docOrder: 2, title: "Same" })]),
+    []
+  );
+  const report = syncReport({ plan, live: [], migrated: true, refusal: null });
+  assert.equal(report.ok, false, "applyPlan would refuse this, so the report must too");
+  assert.equal(report.collisions.length, 1);
+  assert.equal(report.collisions[0].title, "Same");
+});
+
+test("an unmigrated database makes the report not-ok", () => {
+  // applyPlan throws outright without board_id, so the button must be dead
+  // before it is pressed rather than failing halfway through a publish.
+  const report = syncReport({ plan: emptyPlan({ insert: [{}] }), live: [], migrated: false, refusal: null });
+  assert.equal(report.ok, false);
+  assert.equal(report.migrated, false);
+});
+
+test("an update is itemized field by field, from the live value to the board value", () => {
+  const live1 = live({ points: 3, title: "Old wording" });
+  const plan = planTaskSync(board([task({ points: 5, title: "New wording" })]), [live1]);
+  const report = syncReport({ plan, live: [live1], migrated: true, refusal: null });
+
+  assert.equal(report.count, 1);
+  assert.deepEqual(report.counts, { insert: 0, update: 1, deactivate: 0, reactivate: 0, reorder: 0 });
+  const [change] = report.changes.update;
+  assert.equal(change.board_id, "r1-01");
+  assert.equal(change.round, 1);
+  const fields = Object.fromEntries(change.fields.map((f) => [f.field, f]));
+  assert.deepEqual(fields.points, { field: "points", from: 3, to: 5 });
+  assert.deepEqual(fields.title, { field: "title", from: "Old wording", to: "New wording" });
+});
+
+test("inserts and deactivations are itemized enough to preview before writing", () => {
+  const gone = live({ id: "uuid-2", board_id: "r1-09", title: "On its way out", round: 2 });
+  const plan = planTaskSync(
+    board([
+      task({ id: "r1-07", title: "Brand new", points: 10, round: 1 }),
+      task({ id: "r1-09", title: "On its way out", round: 2, status: "cut" }),
+    ]),
+    [gone]
+  );
+  const report = syncReport({ plan, live: [gone], migrated: true, refusal: null });
+
+  assert.deepEqual(report.changes.insert, [
+    { board_id: "r1-07", round: 1, title: "Brand new", points: 10 },
+  ]);
+  assert.deepEqual(report.changes.deactivate, [
+    { board_id: "r1-09", round: 2, title: "On its way out" },
+  ]);
+});
+
+test("an error report carries the reason and is never mistaken for a clean run", () => {
+  // No network, no .env.local, Supabase down: the canvas must be able to tell
+  // this apart from "nothing to publish", which is the one lie that matters.
+  const report = syncReport({ error: "could not read tasks: fetch failed" });
+  assert.equal(report.ok, false);
+  assert.equal(report.error, "could not read tasks: fetch failed");
+  assert.equal(report.count, null, "a failed check has no count, and must not claim zero");
+});
+
+// ------------------------------------------------- reordering vs real changes
+//
+// Cutting one task renumbers every task below it, because sort_order is dense
+// (`(i + 1) * 10`) and assigned only over the tasks that stay live. Two cuts on
+// the real board produced 31 changes, 29 of which were nothing but a task
+// sliding up one slot. The preview listed all 31, so the two decisions that
+// actually mattered were buried in noise directly above a live-write button.
+//
+// Reordering is still published -- players do see the new order -- it just stops
+// being counted and itemized as though it were a content change.
+
+/** An update whose patch is exactly a slot move. */
+const reorderUpdate = (id, sort_order) => ({
+  id, board_id: `r1-${id}`, round: 1, title: `Task ${id}`, patch: { sort_order },
+});
+
+test("a sort_order-only update is reordering, not a change to count or list", () => {
+  const plan = emptyPlan({ update: [reorderUpdate("02", 20), reorderUpdate("03", 30)] });
+  const report = syncReport({ plan, live: [], migrated: true, refusal: null });
+
+  assert.equal(report.count, 0, "pure reordering is not a change count");
+  assert.equal(report.counts.update, 0);
+  assert.equal(report.counts.reorder, 2, "but it is still reported, never silently dropped");
+  assert.deepEqual(report.changes.update, [], "and it is not itemized into the preview");
+});
+
+test("an update that moves a task AND changes its content is a real change", () => {
+  // The dangerous direction: a re-tier that also happens to shift the task's
+  // slot must never be filtered out as mere reordering.
+  const plan = emptyPlan({
+    update: [{ id: "u1", board_id: "r1-05", round: 1, title: "Re-tiered", patch: { points: 5, sort_order: 60 } }],
+  });
+  const report = syncReport({ plan, live: [], migrated: true, refusal: null });
+
+  assert.equal(report.count, 1);
+  assert.equal(report.counts.reorder, 0);
+  assert.equal(report.changes.update.length, 1);
+});
+
+test("reordering is separated from real changes rather than replacing them", () => {
+  const plan = emptyPlan({
+    update: [
+      { id: "u1", board_id: "r1-05", round: 1, title: "Re-tiered", patch: { points: 5 } },
+      reorderUpdate("06", 70),
+      reorderUpdate("07", 80),
+    ],
+    deactivate: [{ id: "d1", board_id: "r1-09", round: 1, title: "Cut" }],
+  });
+  const report = syncReport({ plan, live: [], migrated: true, refusal: null });
+
+  assert.equal(report.count, 2, "one re-tier plus one cut -- the reorderings are not changes");
+  assert.equal(report.counts.reorder, 2);
+  assert.equal(report.changes.update.length, 1);
+  assert.equal(report.changes.deactivate.length, 1);
+});
+
+test("linking a row's board_id alongside a slot move is still only reordering", () => {
+  // board_id is bookkeeping from the migration, not anything a player can see,
+  // so it must not promote a slot move into a content change.
+  const plan = emptyPlan({
+    update: [{ id: "u1", board_id: "r1-04", round: 1, title: "Task", patch: { board_id: "r1-04", sort_order: 40 } }],
+  });
+  const report = syncReport({ plan, live: [], migrated: true, refusal: null });
+
+  assert.equal(report.count, 0);
+  assert.equal(report.counts.reorder, 1);
+});
+
+test("reordering still reaches the tasks table, so applyPlan keeps every update", () => {
+  // The filter is a presentation decision. If it ever reached applyPlan, the
+  // published task order would silently stop matching the board.
+  const plan = emptyPlan({ update: [reorderUpdate("02", 20)] });
+  syncReport({ plan, live: [], migrated: true, refusal: null });
+  assert.equal(plan.update.length, 1, "syncReport must not mutate the plan it was given");
+});
+
+test("a patch that only links board_id is bookkeeping, not a change to count", () => {
+  // Pre-migration linking writes a board_id and nothing else. Counting it would
+  // put a number above the publish button that no one can act on, and listing it
+  // would render a change line with no fields on it at all.
+  const plan = emptyPlan({
+    update: [{ id: "u1", board_id: "r1-04", round: 1, title: "Task", patch: { board_id: "r1-04" } }],
+  });
+  const report = syncReport({ plan, live: [], migrated: true, refusal: null });
+
+  assert.equal(report.count, 0);
+  assert.deepEqual(report.changes.update, []);
+});
+
+test("an empty patch is not silently swallowed as reordering", () => {
+  // A patch with no keys is a planner bug, not a slot move. It must not be
+  // classified as something the preview is entitled to hide.
+  assert.equal(isReorderOnly({ patch: {} }), false);
+  assert.equal(isReorderOnly({}), false);
 });

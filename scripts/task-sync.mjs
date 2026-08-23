@@ -4,6 +4,7 @@
  *
  *   npm run sync:tasks           show what would change, write nothing
  *   npm run sync:tasks -- --apply  actually write it
+ *   npm run sync:tasks -- --json   the same run as one JSON object on stdout
  *
  * `data/task-board.json` is the source of truth for task content, points and
  * cuts; this is the only thing that carries it into Supabase. It is deliberately
@@ -116,6 +117,27 @@ export function desiredRows(board, warnings = []) {
 
 /** The columns the board owns. Everything else on the row is the app's business. */
 const OWNED = ["title", "points", "requires_video", "is_secret", "sort_order"];
+
+/**
+ * True when an update changes nothing a player could see.
+ *
+ * `sort_order` is dense -- `(i + 1) * 10` over the live tasks only -- so cutting
+ * one task renumbers every task below it. Two real cuts produced 31 updates, 29
+ * of which were renumbering, and the preview listed all 31 directly above a live
+ * write button. Reordering is still published; it just stops being counted and
+ * itemized as though someone had decided something.
+ *
+ * `board_id` is migration bookkeeping rather than anything a player sees, so it
+ * does not promote a slot move into a content change, and a patch that is
+ * nothing but a link write is not a change either. Every other field is.
+ */
+const INVISIBLE = new Set(["sort_order", "board_id"]);
+
+export function isReorderOnly(update) {
+  const keys = Object.keys(update?.patch ?? {});
+  if (!keys.length) return false;
+  return keys.every((k) => INVISIBLE.has(k));
+}
 
 /**
  * Works out what would have to change for the app to match the board.
@@ -302,12 +324,19 @@ export function planTaskSync(board, liveRows, opts = {}) {
 export const BOARD_PATH = new URL("../data/task-board.json", import.meta.url);
 
 /**
- * The canvas that edits the board resolves it by an absolute path into the main
- * checkout; this script resolves it relative to itself. In a linked worktree
- * those are two different files, so a run there reads the worktree's *committed*
- * copy, computes a plan from a stale board and would publish it -- quietly
- * reverting live tasks to an older board while reporting success. It fails
- * silently and in the wrong direction, so both the dry run and `--apply` refuse.
+ * The board and the app must be read from the same checkout. In a linked
+ * worktree they are not: the worktree holds its own committed copy of
+ * `data/task-board.json`, which is older than whatever is being edited in the
+ * main checkout -- and there is only ever one Supabase project behind all of
+ * them. So a run there computes a plan from a stale board and publishes it,
+ * quietly reverting live tasks while reporting success. It fails silently and in
+ * the wrong direction, so both the dry run and `--apply` refuse.
+ *
+ * The scavenger-tasks canvas resolves the board relative to itself for the same
+ * reason, which means a canvas opened in a worktree session edits that
+ * worktree's board -- edits nobody publishes and the worktree throws away. The
+ * canvas surfaces this refusal rather than repeating the check, so both halves
+ * are governed by this one function.
  *
  * Git separates the two with no absolute path baked in: `--git-dir` and
  * `--git-common-dir` name the same directory in the main checkout and diverge in
@@ -478,10 +507,106 @@ export async function applyPlan(db, plan, { migrated = true } = {}) {
   }
 }
 
+/** How many rows a plan would actually write. Warnings are advisory, not changes. */
+export function changeCount(plan) {
+  return (
+    (plan?.insert?.length ?? 0) +
+    (plan?.update?.length ?? 0) +
+    (plan?.deactivate?.length ?? 0) +
+    (plan?.reactivate?.length ?? 0)
+  );
+}
+
+/**
+ * The same plan as `describePlan`, shaped for a machine.
+ *
+ * `--json` exists so the scavenger-tasks canvas can ask this script what is
+ * pending rather than reimplementing the planner behind a button -- which is the
+ * whole point, because it means the canvas inherits the collision refusal, the
+ * pre-migration refusal and the worktree refusal instead of drifting from them.
+ *
+ * `ok` is the field the button hangs off, so it is false for every reason
+ * `applyPlan` would refuse AND for an outright failure. `error` and `count: 0`
+ * are deliberately different states: a check that could not run must never be
+ * readable as "nothing to publish".
+ *
+ * Pure, so every refusal path is provable from a fixture.
+ */
+export function syncReport({ plan, live = [], migrated = true, refusal = null, applied = false, error = null } = {}) {
+  if (error || !plan) {
+    return {
+      ok: false,
+      applied: false,
+      count: null,
+      counts: null,
+      migrated,
+      refusal: refusal ?? null,
+      collisions: [],
+      warnings: [],
+      changes: null,
+      error: error ?? "no plan was produced",
+    };
+  }
+
+  const liveById = new Map((live ?? []).map((t) => [t.id, t]));
+  const itemize = (list) =>
+    list.map(({ id, board_id, round, patch }) => {
+      const was = liveById.get(id) ?? {};
+      return {
+        board_id,
+        round,
+        title: was.title ?? "",
+        fields: Object.entries(patch ?? {}).map(([field, to]) => ({
+          field,
+          from: was[field] === undefined ? null : was[field],
+          to,
+        })),
+      };
+    });
+
+  const collisions = plan.collisions ?? [];
+  // Split, never drop: the reorderings are still applied by applyPlan, which
+  // reads `plan.update`. Only the number and the list the canvas shows change,
+  // so `counts.reorder` keeps them visible rather than silently disappearing a
+  // difference between the board and what players see.
+  const reorder = plan.update.filter(isReorderOnly);
+  const material = plan.update.filter((u) => !isReorderOnly(u));
+  return {
+    ok: !refusal && !collisions.length && migrated,
+    applied,
+    // Deliberately not `changeCount(plan)`, which stays the number of rows that
+    // would be written and is what the CLI and the apply path want.
+    count: plan.insert.length + material.length + plan.deactivate.length + plan.reactivate.length,
+    counts: {
+      insert: plan.insert.length,
+      update: material.length,
+      deactivate: plan.deactivate.length,
+      reactivate: plan.reactivate.length,
+      reorder: reorder.length,
+    },
+    migrated,
+    refusal: refusal ?? null,
+    collisions,
+    warnings: plan.warnings ?? [],
+    changes: {
+      insert: plan.insert.map((r) => ({
+        board_id: r.board_id,
+        round: r.round,
+        title: r.title,
+        points: r.points,
+      })),
+      update: itemize(material),
+      reactivate: itemize(plan.reactivate),
+      deactivate: plan.deactivate.map((d) => ({ board_id: d.board_id, round: d.round, title: d.title })),
+    },
+    error: null,
+  };
+}
+
 export function describePlan(plan, live = []) {
   const out = [];
   const liveById = new Map(live.map((t) => [t.id, t]));
-  const n = plan.insert.length + plan.update.length + plan.deactivate.length + plan.reactivate.length;
+  const n = changeCount(plan);
 
   if (plan.insert.length) {
     out.push(`\nINSERT (${plan.insert.length})`);
@@ -514,9 +639,28 @@ export function describePlan(plan, live = []) {
   return out.join("\n");
 }
 
+const JSON_MODE = process.argv.includes("--json");
+
+/**
+ * The one thing `--json` writes to stdout, ever. Everything else in JSON mode is
+ * suppressed so the canvas can parse stdout without stripping prose out of it.
+ */
+function emitJson(report) {
+  process.stdout.write(`${JSON.stringify(report)}\n`);
+  if (!report.ok) process.exitCode = 1;
+}
+
 async function main() {
+  const say = JSON_MODE ? () => {} : (line) => console.log(line);
+  const apply = process.argv.includes("--apply");
+
+  // Runs before any Supabase work, so the worktree refusal reaches the canvas
+  // even with no network and no credentials.
   const refusal = checkoutRefusal();
-  if (refusal) throw new Error(refusal);
+  if (refusal) {
+    if (!JSON_MODE) throw new Error(refusal);
+    return emitJson(syncReport({ plan: null, refusal, error: refusal }));
+  }
 
   const { createClient } = await import("@supabase/supabase-js");
   const env = Object.fromEntries(
@@ -532,33 +676,43 @@ async function main() {
     auth: { persistSession: false },
   });
 
-  const apply = process.argv.includes("--apply");
   const { plan, live, migrated } = await buildPlan(db);
-  console.log(describePlan(plan, live));
+  say(describePlan(plan, live));
 
-  const n = plan.insert.length + plan.update.length + plan.deactivate.length + plan.reactivate.length;
+  const n = changeCount(plan);
   if (plan.collisions?.length) {
-    console.log(
+    say(
       `\n${plan.collisions.length} title collision(s). --apply will refuse until the board changes; ` +
         `nothing can be published in this state.`
     );
     process.exitCode = 1;
+    // Reported, not applied: syncReport marks a collision not-ok, so --apply
+    // stops here in JSON mode exactly as it does for a human.
+    if (JSON_MODE) return emitJson(syncReport({ plan, live, migrated, refusal: null }));
     if (!apply) return;
   }
   if (!apply) {
-    console.log(
+    say(
       `\nDry run. ${n} change(s) would be written. Re-run with --apply to publish.` +
         (migrated ? "" : "\nRun supabase/migrate-task-board-id.sql first -- --apply will refuse until you do.")
     );
-    return;
+    return JSON_MODE ? emitJson(syncReport({ plan, live, migrated, refusal: null })) : undefined;
   }
+
+  // applyPlan throws on an unmigrated database; let that surface as an error
+  // report rather than a half-published task list reported as a success.
   await applyPlan(db, plan, { migrated });
-  console.log(`\nPublished ${n} change(s) to the tasks table. Submissions and media untouched.`);
+  say(`\nPublished ${n} change(s) to the tasks table. Submissions and media untouched.`);
+  if (JSON_MODE) emitJson(syncReport({ plan, live, migrated, refusal: null, applied: true }));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((e) => {
-    console.error(e.message);
+    // In JSON mode a crash still has to produce something parseable: a caller
+    // that gets nothing back cannot tell a failure from a clean zero, and that
+    // is the one confusion this whole feature exists to prevent.
+    if (JSON_MODE) emitJson(syncReport({ plan: null, error: e.message }));
+    else console.error(e.message);
     process.exitCode = 1;
   });
 }
