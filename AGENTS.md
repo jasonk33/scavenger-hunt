@@ -53,6 +53,10 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
   (`store.mjs` holds the schema and validators), and reaches players **only** via
   `npm run sync:tasks`. Nothing else writes task rows. Editing a title in Admin is a
   field-day escape hatch; the next sync will put the board's wording back.
+- **Commit a board edit on its own.** The canvas writes the file the moment the user changes a
+  rating, so a session doing code work will find it already dirty through no action of its own.
+  Never let `git add -A` fold it into an unrelated commit: what changed on the board, and when,
+  is the event's own history.
 - **Task work belongs in a branch session, not a worktree.** The canvas resolves the board by
   absolute path into the main checkout, so a worktree's copy is always the stale committed one.
   `sync:tasks` now refuses there — `git rev-parse --git-dir` vs `--git-common-dir`; override with
