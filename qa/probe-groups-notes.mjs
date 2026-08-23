@@ -45,7 +45,7 @@ const groupOf = async (id) => {
 const rowsOf = async (ids) => {
   const { data } = await admin
     .from("submissions")
-    .select("id,status,points_awarded,bonus,note,group_id")
+    .select("id,status,points_awarded,note,group_id")
     .in("id", ids);
   return data ?? [];
 };

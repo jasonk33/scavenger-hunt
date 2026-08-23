@@ -110,8 +110,6 @@ export async function GET(req: Request) {
       // any past approval that it duplicates itself.
       duplicate: s.status === "pending" && alreadyApproved.has(`${s.team_id}:${s.task_id}`),
       pointsAwarded: s.points_awarded,
-      bonus: s.bonus,
-      starred: s.starred,
       rejectReason: s.reject_reason,
     };
   };

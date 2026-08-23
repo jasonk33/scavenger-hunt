@@ -93,8 +93,10 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
   on a timer). `sort_order` is derived by the sync (tier ascending, secrets last) and is the
   only thing ordering the player's task list.
 - `submissions` — one row is **one file**. `status`: `uploading → pending → approved | rejected`.
-  Carries `points_awarded`, `bonus` (0–2 discretionary), `starred` (award candidate),
-  `reject_reason`, `note`, `group_id`.
+  Carries `points_awarded`, `reject_reason` (free text the judge types, capped at
+  `REASON_MAX`), `note`, `group_id`. There is deliberately no discretionary bonus
+  and no award star: a task is approved or rejected, and an approved one is worth
+  exactly what the task is worth.
 - `settings` is key/value, read via `getSettings()`: `active_round`, `submissions_open`,
   `fallback_url`, `event_name`, `notice`, plus `board_model` (the canvas's tier weights and
   thresholds, as JSON — the board's model, not the app's).
@@ -142,9 +144,14 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
 - `submissions.team_id` and `task_points` are **denormalized at insert**. This is the remix
   defence: joining to the player's *current* roster row would silently rewrite every Round 1
   score at 3:30pm. `npm run smoke` asserts it. Any new column or table must preserve it.
-- A task counts **once per team** — best approved `(round, team_id, task_id)`, enforced in the
-  `team_scores` view. There is deliberately **no unique constraint**: two teammates racing the
-  same task must not produce a hard error in the field.
+- A task counts **once per team** — the **most recently judged** approval for
+  `(round, team_id, task_id)`, enforced in the `team_scores` view. There is deliberately **no
+  unique constraint**: two teammates racing the same task must not produce a hard error in
+  the field. It used to be the *highest* approval, and that silently ignored the judge when a
+  team redid a task whose value had since changed. Rejections are excluded rather than
+  counting as "latest", so rejecting a duplicate cannot un-score a task. `/api/state` and the
+  export CSV each carry their own copy of this rule and must be changed with the view, or a
+  team sees one score on their task list and another on the leaderboard.
 
 ## Verifying work
 
@@ -161,11 +168,11 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
   | driver | covers | ~ |
   |---|---|---|
   | `flow1-upload` | `/` join → identity, `/submit` upload via the real file chooser, progress card, mid-flight Cancel, `.mov` relabel, offline failure copy, no phantom `uploading` rows | 15s |
-  | `flow2-judge` | `/judge` PIN gate, approve with bonus + star, controls resetting between items, reject reasons, the player's rejection banner and Retry, re-review, Undo, reassignment, `/leaderboard` | 12s |
+  | `flow2-judge` | `/judge` PIN gate, approve at the task's value, typed reject reasons and the chips that prefill them, the player's rejection banner and Retry, re-review, Undo, reassignment, `/leaderboard` | 12s |
   | `flow3-roundflip` | the 3:30 break: Admin round flip, remix, the **remix defence**, judging a Round 1 backlog while Round 2 is live, player mid-flip, two judges racing one item, closing submissions | 40s |
   | `flow4-identity-theme` | identity switching and its warnings, stale/unrostered players, theme toggle + pre-paint persistence, `/go`, the notice banner, editing a task after it scored, deleting a task that has submissions | 40s |
   | `flow5-admin` | `/admin` tabs, task add/edit/validation, roster copy and cross-round refusal, player/team delete guards, `/api/admin/health`, PIN gating of every admin + judge endpoint, feed past 60 approvals | 25s |
-  | `flow6-scoring` | scoring invariants: once per team, best-of duplicates, fallback, bonus clamp, `/api/export` CSV, feed weight on a phone | 17s |
+  | `flow6-scoring` | scoring invariants: once per team, a re-submission judged at a different value taking over, re-approval as a real decision, fallback on rejection, `/api/export` CSV agreeing with the view, feed weight on a phone | 17s |
   | `flow7-concurrency` | 10 simultaneous reservations + bursts of 30/60 for **object-path collisions**, 10 real browsers uploading at once, team attribution, queue completeness, poll load | 10s |
   | `flow8-load` | the same shape with real iPhone-sized media (3 MB photos, a 20 MB clip past the tus chunk boundary), 12 phones, storage sizes, organizer screens under load. `QA_N` overrides the count | 12s |
   | `probe-admin-ui` | `/admin` as an organizer actually taps it: tab state, tap-a-task inline editor (title, points, video-only, secret), tap-a-player editor, event-tab controls | 20s |
@@ -217,6 +224,10 @@ real device.
   rejected. Nothing enforces the planning doc's "clips under 15 seconds".
 - No transcoding and no HEIC/HEVC handling: iOS transcodes on upload, so every device in the
   fleet delivers H.264/AAC and JPEG.
+- **No discretionary points and no award flag.** A 0–2 "creativity" bonus and a starred
+  award-candidate shortlist both existed and were both removed as more complexity than the
+  afternoon can carry. A task is approved or rejected, and an approved one is worth exactly
+  what the task is worth. Do not add a way for a judge to type in a number.
 - Jason and Anna organize and are **not** players.
 
 ## Sharp edges

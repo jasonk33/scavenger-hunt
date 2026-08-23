@@ -20,7 +20,6 @@ type Sub = {
   player_id: string;
   status: "uploading" | "pending" | "approved" | "rejected";
   points_awarded: number | null;
-  bonus: number;
   reject_reason: string | null;
   created_at: string;
   /** Files sharing this are one piece of evidence, judged as a unit. */
@@ -595,10 +594,7 @@ function TaskRow({
               <span className="pill pill-warn">secret · {task.points} pts</span>
             )}
             {approved && (
-              <span className="pill pill-good">
-                ✓ {(approved.points_awarded ?? 0) + approved.bonus} pts
-                {approved.bonus > 0 ? ` (+${approved.bonus} bonus)` : ""}
-              </span>
+              <span className="pill pill-good">✓ {approved.points_awarded ?? 0} pts</span>
             )}
             {!approved && pending && <span className="pill">waiting on judge</span>}
             {!approved && !pending && rejected && (
@@ -673,7 +669,7 @@ function SubmissionView({
   const groupNote = files.find((f) => f.note)?.note ?? null;
   const label =
     sub.status === "approved"
-      ? `✓ ${(sub.points_awarded ?? 0) + sub.bonus} pts`
+      ? `✓ ${sub.points_awarded ?? 0} pts`
       : sub.status === "rejected"
         ? `✗ ${sub.reject_reason || "rejected"}`
         : "waiting on judge";

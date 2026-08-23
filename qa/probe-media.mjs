@@ -82,12 +82,32 @@ try {
   await feed.waitForTimeout(2500);
   const feedImgs = await feed.evaluate(() =>
     [...document.querySelectorAll(".media-box img, .media-box video")].map((el) =>
-      el.tagName === "IMG" ? { t: "img", ok: el.complete && el.naturalWidth > 0 }
-                           : { t: "video", ok: el.readyState >= 1 })
+      el.tagName === "IMG"
+        ? { t: "img", lazy: el.loading === "lazy", ok: el.complete && el.naturalWidth > 0 }
+        : { t: "video", ok: el.readyState >= 1 })
   );
   note(`feed media: ${JSON.stringify(feedImgs)}`);
   check("feed shows the approved submissions", feedImgs.length >= 2, JSON.stringify(feedImgs));
-  check("every feed photo actually loaded", feedImgs.filter((f) => f.t === "img").every((f) => f.ok), JSON.stringify(feedImgs));
+
+  /*
+   * Scroll a photo in and prove THAT one decodes, rather than asserting every
+   * photo on the page has loaded. Feed photos carry loading="lazy" on purpose --
+   * a fully-scored round is hundreds of files -- so the blanket version passed
+   * or failed on how much history happened to exist, not on whether media works.
+   */
+  const firstImg = feed.locator(".media-box img").first();
+  check("the feed has a photo in it", await firstImg.count() > 0, JSON.stringify(feedImgs));
+  await firstImg.scrollIntoViewIfNeeded();
+  const imgHandle = await firstImg.elementHandle();
+  const imgOk = await feed
+    .waitForFunction((el) => el.complete && el.naturalWidth > 0, imgHandle, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  check(
+    "a feed photo scrolled into view actually decodes",
+    imgOk,
+    JSON.stringify(await firstImg.evaluate((el) => ({ complete: el.complete, w: el.naturalWidth })))
+  );
   await feed.screenshot({ path: new URL("./shots/feed.png", import.meta.url).pathname, fullPage: true });
 
   console.log("\nnetwork failures: " + (failedRequests.length ? failedRequests.join(" | ") : "none"));

@@ -129,7 +129,7 @@ try {
 
   console.log("\n7. The 60-approval feed cap");
   // Clone one real approved submission 70x so the feed is genuinely over the cap.
-  await call(`/api/judge/${sub}`, { method: "POST", body: JSON.stringify({ action: "approve", bonus: 0 }) });
+  await call(`/api/judge/${sub}`, { method: "POST", body: JSON.stringify({ action: "approve" }) });
   const { data: template } = await admin.from("submissions").select("*").eq("id", sub).single();
   const clones = Array.from({ length: 70 }, (_, i) => {
     return cloneSubmission(template, { judged_at: new Date(Date.now() - (70 - i) * 60000).toISOString() });

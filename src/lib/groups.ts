@@ -57,3 +57,22 @@ export function cleanNote(value: unknown): string | null {
   if (typeof value !== "string") return null;
   return value.trim().slice(0, NOTE_MAX) || null;
 }
+
+/**
+ * Longest rejection reason we store. The judge types this free-hand under time
+ * pressure -- a fixed menu of four reasons could not say "the stranger is
+ * clearly your brother" -- so it needs room for a sentence, but it renders on
+ * the player's task list and in the feed, where a paragraph would push
+ * everything else off a phone screen.
+ *
+ * Lives here beside NOTE_MAX so the browser's maxLength and the server's cap
+ * are one number. Two copies would silently truncate text the judge watched
+ * themselves type.
+ */
+export const REASON_MAX = 200;
+
+/** Trim and cap a judge-typed rejection reason. Empty becomes null, never "". */
+export function cleanReason(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.trim().slice(0, REASON_MAX) || null;
+}

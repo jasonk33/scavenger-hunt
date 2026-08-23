@@ -154,8 +154,11 @@ try {
   await judge.getByRole("button", { name: /^Approve/ }).click();
   await judge.waitForTimeout(1200);
   // judge2's view is now stale; it still believes the row is pending.
-  await judge2.getByRole("button", { name: "Reject" }).click();
-  await judge2.getByRole("button", { name: "Wrong round" }).click();
+  const card2 = judge2.locator(".card").filter({ has: judge2.locator(".media-box") }).first();
+  await card2.getByRole("button", { name: "Reject", exact: true }).click();
+  // The canned reason only fills the box -- submitting is a separate tap.
+  await card2.getByRole("button", { name: "Wrong round", exact: true }).click();
+  await card2.getByRole("button", { name: "Reject", exact: true }).click();
   await judge2.waitForTimeout(1500);
 
   const { data: raced } = await admin.from("submissions").select("status,reject_reason").eq("id", backlog2).single();

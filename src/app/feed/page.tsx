@@ -14,8 +14,6 @@ type Feed = {
     note: string | null;
     taskTitle: string;
     points: number;
-    bonus: number;
-    starred: boolean;
     rejectReason: string | null;
     teamName: string;
     teamColor: string;
@@ -119,10 +117,7 @@ function Post({ item: it }: { item: Feed["items"][number] }) {
                 {it.status === "rejected" ? (
                   <span className="pill pill-bad push">didn&apos;t count</span>
                 ) : (
-                  <span className={`pill push${it.starred ? " pill-warn" : ""}`}>
-                    {it.starred ? "⭐ " : ""}
-                    {it.points} pts
-                  </span>
+                  <span className="pill push">{it.points} pts</span>
                 )}
               </div>
               <div className="byline name muted tiny">{it.playerName}</div>

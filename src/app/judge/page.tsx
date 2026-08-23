@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage, fmtBytes, usePoll } from "@/lib/client";
+import { REASON_MAX } from "@/lib/groups";
 
 type Item = {
   id: string;
@@ -21,8 +22,6 @@ type Item = {
   playerName: string;
   duplicate: boolean;
   pointsAwarded: number | null;
-  bonus: number;
-  starred: boolean;
   rejectReason: string | null;
 };
 
@@ -34,6 +33,9 @@ type Queue = {
   otherRoundPending: number;
 };
 
+/** Starting points, not the whole vocabulary. Tapping one fills the box in so it
+    can be edited -- the reason the team reads has to be able to say what actually
+    went wrong, and four canned lines never could. */
 const REASONS = ["No stranger in frame", "Doesn't match the task", "Can't tell what's happening", "Wrong round"];
 
 /** Shared by the waiting list and the history list, so the two search the same
@@ -115,9 +117,8 @@ function JudgeQueue() {
     round ? `/api/judge/queue?round=${round}` : "/api/judge/queue",
     5000
   );
-  const [bonus, setBonus] = useState(0);
-  const [star, setStar] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
   const [reassigning, setReassigning] = useState(false);
   // When set, the review card shows this specific submission instead of the head
   // of the queue -- either a queued one the judge scrolled to, or an
@@ -167,16 +168,15 @@ function JudgeQueue() {
     return needle ? history.filter((h) => matches(h, needle)) : history;
   }, [history, historyQ]);
 
-  // Reset the per-item controls whenever the item changes, so a bonus meant for
-  // the last submission never lands on the next one.
+  // Reset the per-item controls whenever the item changes, so a reason typed
+  // about the last submission never lands on the next one.
   useEffect(() => {
-    // Seed from the existing decision when reopening a judged item, so tapping
-    // "Update" doesn't silently wipe a bonus or an award flag. Status is a
-    // dependency as well as id: a picked item keeps its id when another
-    // organizer judges it out from under this screen, and without it the
-    // controls would stay at 0/off and the next Update would erase their call.
-    setBonus(current?.status === "approved" ? (current.bonus ?? 0) : 0);
-    setStar(Boolean(current?.starred));
+    // Seed from the existing decision when reopening a judged item, so a judge
+    // adjusting the wording of a rejection doesn't have to retype it. Status is
+    // a dependency as well as id: a picked item keeps its id when another
+    // organizer judges it out from under this screen, and without it the box
+    // would still hold the previous ruling's text.
+    setReason(current?.status === "rejected" ? (current.rejectReason ?? "") : "");
     setRejecting(false);
     setReassigning(false);
     setErr("");
@@ -291,7 +291,7 @@ function JudgeQueue() {
                 >
                   currently{" "}
                   {reviewing.status === "approved"
-                    ? `approved +${(reviewing.pointsAwarded ?? 0) + reviewing.bonus}`
+                    ? `approved +${reviewing.pointsAwarded ?? 0}`
                     : "rejected"}
                 </span>
               </>
@@ -443,72 +443,71 @@ function JudgeQueue() {
           )}
 
           {!rejecting ? (
-            <>
-              <div className="row" style={{ gap: 8, margin: "14px 0 10px", flexWrap: "wrap" }}>
-                <span className="stat-label">Creativity</span>
-                <div className="seg">
-                  {[0, 1, 2].map((b) => (
-                    <button key={b} className={bonus === b ? "on" : ""} onClick={() => setBonus(b)}>
-                      {b === 0 ? "none" : `+${b}`}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  className={`btn btn-sm${star ? " btn-primary" : ""}`}
-                  onClick={() => setStar((s) => !s)}
-                  title="Flag as an award candidate"
-                >
-                  ⭐ award
-                </button>
-              </div>
-
-              {/* Wraps rather than overflowing: at a large text size these two
-                  stop fitting side by side, and the judge's primary control
-                  scrolling off the edge is not an acceptable failure. */}
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <button
-                  className="btn btn-lg btn-good"
-                  style={{ flex: 2 }}
-                  disabled={busy}
-                  onClick={() => decide({ action: "approve", bonus, starred: star })}
-                >
-                  {reviewing?.status === "approved" ? "Update to" : "Approve"}{" "}
-                  <span className="num">{current.taskPoints + bonus}</span>
-                </button>
-                <button
-                  className="btn btn-lg btn-bad"
-                  style={{ flex: 1 }}
-                  disabled={busy}
-                  onClick={() => setRejecting(true)}
-                >
-                  Reject
-                </button>
-              </div>
-            </>
+            /* Wraps rather than overflowing: at a large text size these two
+               stop fitting side by side, and the judge's primary control
+               scrolling off the edge is not an acceptable failure. */
+            <div className="row" style={{ gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              <button
+                className="btn btn-lg btn-good"
+                style={{ flex: 2 }}
+                disabled={busy}
+                onClick={() => decide({ action: "approve" })}
+              >
+                {reviewing?.status === "approved" ? "Re-approve for" : "Approve"}{" "}
+                <span className="num">{current.taskPoints}</span>
+              </button>
+              <button
+                className="btn btn-lg btn-bad"
+                style={{ flex: 1 }}
+                disabled={busy}
+                onClick={() => setRejecting(true)}
+              >
+                Reject
+              </button>
+            </div>
           ) : (
             <div style={{ marginTop: 14 }}>
               <div className="stat-label" style={{ marginBottom: 8 }}>
                 Why? (the team sees this)
               </div>
-              <div className="stack" style={{ gap: 6 }}>
+              {/* Typed, not picked. The chips below only prefill this, so the
+                  common reasons stay one tap while anything else is still
+                  sayable -- and every rejection travels the same code path. */}
+              <textarea
+                className="field"
+                rows={2}
+                autoFocus
+                placeholder="Type the reason, or tap one below"
+                maxLength={REASON_MAX}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                style={{ marginBottom: 8, resize: "vertical" }}
+              />
+              <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
                 {REASONS.map((r) => (
                   <button
                     key={r}
                     className="btn btn-sm"
                     disabled={busy}
-                    onClick={() => decide({ action: "reject", reason: r })}
+                    onClick={() => setReason(r)}
                   >
                     {r}
                   </button>
                 ))}
+              </div>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <button
-                  className="btn btn-sm"
+                  className="btn btn-lg btn-bad"
+                  style={{ flex: 2 }}
                   disabled={busy}
-                  onClick={() => decide({ action: "reject", reason: "" })}
+                  onClick={() => decide({ action: "reject", reason })}
                 >
-                  No reason
+                  {/* Naming the empty case out loud: a blank box is a valid
+                      rejection, and a judge who meant to type something should
+                      be able to see that they didn't. */}
+                  {reason.trim() ? "Reject" : "Reject with no reason"}
                 </button>
-                <button className="btn btn-sm" onClick={() => setRejecting(false)}>
+                <button className="btn btn-lg" style={{ flex: 1 }} onClick={() => setRejecting(false)}>
                   Back
                 </button>
               </div>
@@ -529,7 +528,11 @@ function JudgeQueue() {
           {queue.length > SEARCH_AT && (
             <input
               className="field"
-              placeholder="Search by task, team or player"
+              /* Distinct from the one over the judged list. Both can be on
+                 screen at once, and two boxes reading the same thing leave the
+                 judge -- and anything driving this screen -- unable to tell
+                 which list they are about to filter. */
+              placeholder="Search what's waiting"
               value={queueQ}
               onChange={(e) => setQueueQ(e.target.value)}
               style={{ marginBottom: 8 }}
@@ -581,7 +584,7 @@ function JudgeQueue() {
           {history.length > SEARCH_AT && (
             <input
               className="field"
-              placeholder="Search by task, team or player"
+              placeholder="Search what's been judged"
               value={historyQ}
               onChange={(e) => setHistoryQ(e.target.value)}
               style={{ marginBottom: 8 }}
@@ -596,14 +599,13 @@ function JudgeQueue() {
                 style={{ padding: 10 }}
               >
                 <span className={`pill ${r.status === "approved" ? "pill-good" : "pill-bad"}`}>
-                  {r.status === "approved" ? `+${(r.pointsAwarded ?? 0) + r.bonus}` : "✗"}
+                  {r.status === "approved" ? `+${r.pointsAwarded ?? 0}` : "✗"}
                 </span>
                 <button className="btn-plain grow" style={{ minHeight: 40 }} onClick={() => {
                   setPickedId(r.id);
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}>
                   <div className="tiny nowrap" style={{ fontWeight: 600 }}>
-                    {r.starred ? "⭐ " : ""}
                     {r.taskTitle}
                   </div>
                   <div className="muted tiny nowrap">

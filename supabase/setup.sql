@@ -72,8 +72,6 @@ create table if not exists submissions (
   status         text not null default 'uploading'
                  check (status in ('uploading', 'pending', 'approved', 'rejected')),
   points_awarded int,
-  bonus          int  not null default 0 check (bonus between 0 and 2),
-  starred        boolean not null default false,
   reject_reason  text,
   created_at     timestamptz not null default now(),
   judged_at      timestamptz
@@ -122,18 +120,31 @@ create table if not exists settings (
 --
 -- "A task only counts once" is enforced here rather than with a unique constraint:
 -- two teammates racing to submit the same task should not produce a hard error in
--- the field. Duplicates are allowed to exist; only the best one is counted.
+-- the field. Duplicates are allowed to exist; only one of them is counted.
+--
+-- The one counted is the one judged MOST RECENTLY, not the highest-scoring one.
+-- Every duplicate normally carries the same value, so this only bites when a
+-- task's points were edited between two approvals -- and there the judge's
+-- latest ruling is the one that should stand. Picking the maximum instead meant
+-- re-approving a re-submission at a lower value silently kept the old, higher
+-- score, which looked exactly like the decision had been ignored.
+--
+-- Rejections are excluded rather than counted as "latest", so rejecting a
+-- duplicate cannot un-score a task the team already got right.
 create or replace view team_scores as
 with best as (
   select distinct on (s.round, s.team_id, s.task_id)
          s.round,
          s.team_id,
          s.task_id,
-         (s.points_awarded + s.bonus) as pts
+         s.points_awarded as pts
   from submissions s
   where s.status = 'approved'
     and s.points_awarded is not null
-  order by s.round, s.team_id, s.task_id, (s.points_awarded + s.bonus) desc
+  -- created_at and id only break ties: judged_at is identical across the files
+  -- of one group, and could in principle collide across two separate decisions.
+  order by s.round, s.team_id, s.task_id,
+           s.judged_at desc nulls last, s.created_at desc, s.id desc
 )
 select t.id                                 as team_id,
        t.round,
@@ -145,6 +156,17 @@ select t.id                                 as team_id,
 from teams t
 left join best b on b.team_id = t.id and b.round = t.round
 group by t.id, t.round, t.name, t.color, t.sort_order;
+
+-- A discretionary 0-2 "creativity" bonus and an award-candidate star used to
+-- ride along with every approval. Both are gone: a task is approved or it is
+-- not, and it is worth what the task is worth.
+--
+-- These sit AFTER the view on purpose. The old definition of team_scores read
+-- `bonus`, so on a re-run against a live database the drop would be refused
+-- until the view above has already been replaced with one that doesn't.
+-- Idempotent, and a no-op on a fresh database where the columns never existed.
+alter table submissions drop column if exists bonus;
+alter table submissions drop column if exists starred;
 
 -- RLS is on with no policies: nothing is reachable with the anon key. Every read
 -- and write goes through a Next.js route handler using the service_role key, so

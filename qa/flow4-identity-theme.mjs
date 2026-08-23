@@ -154,7 +154,7 @@ try {
   /* ---- editing a task after it has been scored ---- */
   console.log("\n8. Editing a task's points after a submission was approved");
   const sub = await seed({ playerId: bob.id, taskId: tasks[1].id });
-  await call(`/api/judge/${sub}`, { method: "POST", body: JSON.stringify({ action: "approve", bonus: 0 }) });
+  await call(`/api/judge/${sub}`, { method: "POST", body: JSON.stringify({ action: "approve" }) });
   const lbBefore = await (await fetch(`${BASE}/api/leaderboard?round=1`)).json();
   const ptsBefore = (lbBefore.rows ?? []).find((r) => r.teamId === red1.id)?.points ?? 0;
   await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({ id: tasks[1].id, points: 99 }) });

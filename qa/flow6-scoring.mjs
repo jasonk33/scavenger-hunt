@@ -62,55 +62,112 @@ try {
   check("tasksScored does not double-count", afterSecond.tasksScored === afterFirst.tasksScored,
     `${afterFirst.tasksScored} -> ${afterSecond.tasksScored}`);
 
-  /* ---- best-of wins ---- */
-  console.log("\n2. The better of two duplicates is the one that counts");
-  await call(`/api/judge/${s2}`, { method: "POST", body: JSON.stringify({
-    action: "approve", bonus: 2, expectedStatus: "approved" }) });
-  const withBonus = await score(1, red1.id);
-  note(`after adding a +2 bonus to the duplicate: ${JSON.stringify(withBonus)}`);
-  check("the higher-scoring duplicate is the one counted",
-    withBonus.points === task.points + 2,
-    `expected ${task.points + 2}, got ${withBonus.points}`);
+  /* ---- the judge's LATEST ruling is the one that counts ---- */
+  console.log("\n2. A re-submission judged at a different value replaces the old score");
+  /*
+   * The bug this exists for: a team redoes a task after its point value was
+   * changed, the judge approves the new attempt at the new value, and the score
+   * doesn't move -- because scoring used to count the HIGHEST approval and the
+   * stale, more generous one kept winning.
+   *
+   * task_points is snapshotted at upload, so a row genuinely carries whatever
+   * the task was worth when it was sent. Editing it here rather than editing the
+   * task reproduces that without touching a real task's value.
+   */
+  const s3 = await seed({ playerId: alice.id, taskId: task.id });
+  await admin.from("submissions").update({ task_points: 1 }).eq("id", s3);
+  await call(`/api/judge/${s3}`, { method: "POST", body: JSON.stringify({ action: "approve" }) });
+  const revalued = await score(1, red1.id);
+  note(`after approving a re-submission worth 1 instead of ${task.points}: ${JSON.stringify(revalued)}`);
+  check("the most recently judged approval is the one that counts",
+    revalued.points === 1,
+    `expected 1, got ${revalued.points} — the older, higher approval is still winning`);
+  check("a re-submission does not add a second score for the same task",
+    revalued.tasksScored === afterFirst.tasksScored,
+    `${afterFirst.tasksScored} -> ${revalued.tasksScored}`);
 
-  console.log("\n3. Rejecting the better duplicate falls back to the other one");
-  await call(`/api/judge/${s2}`, { method: "POST", body: JSON.stringify({
-    action: "reject", reason: "Wrong round", expectedStatus: "approved" }) });
-  const fallback = await score(1, red1.id);
-  check("rejecting the best duplicate falls back to the remaining approval",
-    fallback.points === task.points, `expected ${task.points}, got ${fallback.points}`);
+  console.log("\n3. Re-approving an older submission makes it the live ruling again");
+  // Proves the rule is "latest", not "lowest": the same tap has to be able to
+  // move the score back up, or a judge who mis-set a task's points is stuck.
+  await call(`/api/judge/${s1}`, { method: "POST", body: JSON.stringify({
+    action: "approve", expectedStatus: "approved" }) });
+  const restored = await score(1, red1.id);
+  check("re-approving an already-approved item is a real decision, not a no-op",
+    restored.points === task.points, `expected ${task.points}, got ${restored.points}`);
 
-  console.log("\n4. Rejecting every submission for a task zeroes it");
+  console.log("\n4. Rejecting the counted submission falls back to a surviving approval");
   await call(`/api/judge/${s1}`, { method: "POST", body: JSON.stringify({
     action: "reject", reason: "Wrong round", expectedStatus: "approved" }) });
+  const fallback = await score(1, red1.id);
+  // Falls back to s3 -- the latest of what is still approved. A rejection must
+  // never count as "the latest ruling" itself, or rejecting one duplicate would
+  // un-score a task the team already got right.
+  check("rejecting the counted duplicate falls back to the latest surviving approval",
+    fallback.points === 1, `expected 1, got ${fallback.points}`);
+  check("the task is still scored once", fallback.tasksScored === afterFirst.tasksScored,
+    `${afterFirst.tasksScored} -> ${fallback.tasksScored}`);
+
+  console.log("\n5. Rejecting every submission for a task zeroes it");
+  for (const id of [s2, s3]) {
+    await call(`/api/judge/${id}`, { method: "POST", body: JSON.stringify({
+      action: "reject", reason: "Wrong round", expectedStatus: "approved" }) });
+  }
   const zeroed = await score(1, red1.id);
   check("with all duplicates rejected the task pays nothing",
     (zeroed?.points ?? 0) === 0, JSON.stringify(zeroed));
 
-  /* ---- bonus clamp ---- */
-  console.log("\n5. Bonus cannot be gamed past the +2 cap");
-  await call(`/api/judge/${s1}`, { method: "POST", body: JSON.stringify({
-    action: "approve", bonus: 99, expectedStatus: "rejected" }) });
-  const { data: clamped } = await admin.from("submissions").select("bonus").eq("id", s1).single();
-  check("a bonus over the cap is clamped to 2", clamped.bonus === 2, String(clamped.bonus));
-  await call(`/api/judge/${s1}`, { method: "POST", body: JSON.stringify({
-    action: "bonus", bonus: -5, expectedStatus: "approved" }) });
-  const { data: negative } = await admin.from("submissions").select("bonus").eq("id", s1).single();
-  check("a negative bonus is clamped to 0", negative.bonus === 0, String(negative.bonus));
-
   /* ---- CSV export ---- */
   console.log("\n6. CSV export");
-  const csvRes = await fetch(`${BASE}/api/export`, { headers: { cookie: `organizer=${PIN}` } });
+  // Put all three approvals back, so the CSV has a genuine duplicate to dedup
+  // rather than a single row that trivially counts.
+  for (const id of [s2, s3, s1]) {
+    await call(`/api/judge/${id}`, { method: "POST", body: JSON.stringify({
+      action: "approve", expectedStatus: "rejected" }) });
+  }
+  // format=csv explicitly. Without it this endpoint returns JSON, and a check
+  // for "contains a comma" passes against JSON just as happily -- which is how
+  // this step spent its whole life asserting nothing about the CSV at all.
+  const csvRes = await fetch(`${BASE}/api/export?format=csv`, { headers: { cookie: `organizer=${PIN}` } });
   const csv = await csvRes.text();
-  check("export returns a CSV", csvRes.ok && csv.includes(","), `${csvRes.status}`);
+  check("export returns a CSV", csvRes.ok && csv.startsWith("round,team,player,task,"), csv.slice(0, 80));
   check("export contains the __qa team", csv.includes("__qa Red"), csv.slice(0, 200));
-  const anonCsv = await fetch(`${BASE}/api/export`);
+  /*
+   * The CSV is what somebody actually totals in Sheets at the awards, so its
+   * own dedup has to reach the same answer as the view. The team total printed
+   * at the bottom is the line that gets read out, so that is what is checked.
+   */
+  const live = await score(1, red1.id);
+  const totals = csv.slice(csv.indexOf("TEAM TOTALS")).split("\n");
+  const totalLine = totals.find((l) => l.startsWith(`1,"__qa Red"`));
+  check("the CSV team total agrees with the leaderboard",
+    totalLine === `1,"__qa Red",${live.points},${live.tasksScored}`,
+    `${totalLine} vs leaderboard ${live.points}/${live.tasksScored}`);
+  // Three approvals exist for this task and exactly one of them may count, or
+  // the spreadsheet pays the team twice for it. Parsed properly rather than
+  // split on commas: task titles contain them, and a check that silently
+  // mis-parses is worse than no check.
+  const parseRow = (line) => (line.match(/"((?:[^"]|"")*)"/g) ?? []).map((c) => c.slice(1, -1).replace(/""/g, '"'));
+  // The header row is the one line that is NOT quoted, and column names never
+  // contain a comma, so it splits safely.
+  const header = csv.split("\n")[0].split(",");
+  const countsAt = header.indexOf("counts");
+  const teamAt = header.indexOf("team");
+  const statusAt = header.indexOf("status");
+  const dataRows = csv.slice(0, csv.indexOf("TEAM TOTALS")).split("\n").slice(1).map(parseRow);
+  const mine = dataRows.filter((r) => r[teamAt] === "__qa Red" && r[statusAt] === "approved");
+  const counted = mine.filter((r) => r[countsAt] === "1");
+  note(`csv rows for the __qa team's approvals: ${mine.length}, marked as counting: ${counted.length}`);
+  check("exactly one duplicate is marked as counting in the CSV",
+    mine.length > 1 && counted.length === 1,
+    `${mine.length} approved rows, ${counted.length} counting`);
+  const anonCsv = await fetch(`${BASE}/api/export?format=csv`);
   check("export is PIN-gated", anonCsv.status === 401, String(anonCsv.status));
 
   /* ---- feed weight ---- */
   console.log("\n7. How heavy is the feed on a phone?");
   const { data: template } = await admin.from("submissions").select("*").eq("id", s1).single();
   const clones = Array.from({ length: 40 }, (_, i) => {
-    return cloneSubmission(template, { status: "approved", points_awarded: 5, bonus: 0,
+    return cloneSubmission(template, { status: "approved", points_awarded: 5,
              judged_at: new Date(Date.now() - i * 60000).toISOString() });
   });
   await admin.from("submissions").insert(clones);

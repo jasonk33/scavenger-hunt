@@ -74,8 +74,6 @@ type SubmissionRow = {
   size_bytes: number | null;
   status: "uploading" | "pending" | "approved" | "rejected";
   points_awarded: number | null;
-  bonus: number;
-  starred: boolean;
   reject_reason: string | null;
   // Several files that make up one piece of evidence. One row is still one file;
   // this is what the judge reviews and decides as a unit. Nullable because rows
@@ -124,8 +122,6 @@ export type Database = {
         | "size_bytes"
         | "status"
         | "points_awarded"
-        | "bonus"
-        | "starred"
         | "reject_reason"
         | "group_id"
         | "note"

@@ -1,6 +1,6 @@
 /**
- * Flow 2 — judging through the real UI: PIN gate, approve with bonus/star,
- * reject with a reason, the player-side rejection banner, re-review, undo,
+ * Flow 2 — judging through the real UI: PIN gate, approve at the task's value,
+ * reject with a typed reason, the player-side rejection banner, re-review, undo,
  * team reassignment, and what the leaderboard ends up saying.
  */
 import { chromium } from "@playwright/test";
@@ -56,8 +56,8 @@ try {
 
   const page = gp;
 
-  /* ---- approve with bonus + star ---- */
-  console.log("\n2. Approve with a creativity bonus and an award star");
+  /* ---- approve ---- */
+  console.log("\n2. Approve at the task's own value");
   await page.waitForSelector(".card .media-box", { timeout: 15000 });
   const firstTitle = await page.locator(".card").first().innerText();
   note(`reviewing: ${firstTitle.replace(/\s+/g, " ").slice(0, 90)}`);
@@ -76,42 +76,51 @@ try {
   });
   check("submitted photo actually renders in the judge card", decoded, JSON.stringify(mediaOk));
 
-  await page.getByRole("button", { name: "+2" }).click();
-  await page.getByRole("button", { name: /award/ }).click();
   const approveLabel = await page.getByRole("button", { name: /^Approve/ }).innerText();
   note(`approve button reads: ${approveLabel.replace(/\s+/g, " ")}`);
-  check("approve button shows task points + bonus", /\b3\b/.test(approveLabel), approveLabel);
+  check(
+    "approve button shows the task's own value",
+    new RegExp(`\\b${tasks[0].points}\\b`).test(approveLabel),
+    approveLabel
+  );
   await page.getByRole("button", { name: /^Approve/ }).click();
   await page.waitForTimeout(1500);
 
-  const { data: aRow } = await admin.from("submissions").select("status,points_awarded,bonus,starred").eq("id", subA).single();
+  const { data: aRow } = await admin.from("submissions").select("status,points_awarded").eq("id", subA).single();
   check("approve persists status", aRow.status === "approved", aRow.status);
-  check("approve persists the bonus", aRow.bonus === 2, String(aRow.bonus));
-  check("approve persists the star", aRow.starred === true, String(aRow.starred));
-  check("points_awarded is the task value, bonus kept separate", aRow.points_awarded === tasks[0].points,
+  check("points_awarded is the task value", aRow.points_awarded === tasks[0].points,
     `${aRow.points_awarded} vs ${tasks[0].points}`);
 
-  /* ---- bonus must not leak to the next item ---- */
-  console.log("\n3. Controls reset between items");
-  await page.waitForTimeout(500);
-  const bonusOn = await page.locator(".seg button.on").allInnerTexts();
-  check("creativity resets to 'none' for the next submission", bonusOn.includes("none"), bonusOn.join(","));
-  const starPrimary = await page.getByRole("button", { name: /award/ }).getAttribute("class");
-  check("award star resets for the next submission", !starPrimary?.includes("btn-primary"), String(starPrimary));
+  /* ---- reject with a typed reason ---- */
+  console.log("\n3. Reject with a typed reason");
+  // Scoped to the review card. The waiting list underneath is full of buttons
+  // carrying task titles, and a bare role+name lookup collides with them.
+  const card = page.locator(".card").filter({ has: page.locator(".media-box") }).first();
+  await card.getByRole("button", { name: "Reject", exact: true }).click();
+  const box = page.getByPlaceholder("Type the reason", { exact: false });
+  check("reject offers a free-text box", await box.count() > 0);
+  const chip = card.getByRole("button", { name: "Doesn't match the task", exact: true });
+  check("canned reasons are offered as shortcuts", await chip.count() > 0);
+  // Tapping a canned reason must FILL the box, not submit -- otherwise there is
+  // no way to say the common thing and then add the detail that matters.
+  await chip.click();
+  await page.waitForTimeout(300);
+  check("tapping a canned reason fills the box instead of submitting",
+    (await box.inputValue()) === "Doesn't match the task", await box.inputValue());
+  const { data: notYet } = await admin.from("submissions").select("status").eq("id", subB).single();
+  check("tapping a canned reason does not itself reject", notYet.status === "pending", notYet.status);
 
-  /* ---- reject with a reason ---- */
-  console.log("\n4. Reject with a reason");
-  await page.getByRole("button", { name: "Reject" }).click();
-  check("reject shows canned reasons", await page.getByRole("button", { name: "Doesn't match the task" }).count() > 0);
-  await page.getByRole("button", { name: "Doesn't match the task" }).click();
+  const typed = "Doesn't match the task — that's your own brother, not a stranger";
+  await box.fill(typed);
+  await card.getByRole("button", { name: "Reject", exact: true }).click();
   await page.waitForTimeout(1500);
   const { data: bRow } = await admin.from("submissions").select("status,reject_reason,points_awarded").eq("id", subB).single();
   check("reject persists", bRow.status === "rejected", bRow.status);
-  check("reject reason persists", bRow.reject_reason === "Doesn't match the task", String(bRow.reject_reason));
+  check("the judge's own words are what get stored", bRow.reject_reason === typed, String(bRow.reject_reason));
   check("rejected submission awards no points", !bRow.points_awarded, String(bRow.points_awarded));
 
   /* ---- player sees the rejection ---- */
-  console.log("\n5. Player-side rejection banner and Retry");
+  console.log("\n4. Player-side rejection banner and Retry");
   const pctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await asPlayer(pctx, alice);
   const pp = await pctx.newPage();
@@ -133,7 +142,7 @@ try {
   note(`rejection banner still shown after re-upload (still pending): ${bannerAfter > 0}`);
 
   /* ---- re-review from history ---- */
-  console.log("\n6. Re-review a judged item and change the call");
+  console.log("\n5. Re-review a judged item and change the call");
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(1500);
   check("judged history is listed", await page.getByText("Judged this round", { exact: false }).count() > 0);
@@ -160,18 +169,18 @@ try {
   check("stale reject reason is cleared on approval", !bRow2.reject_reason, String(bRow2.reject_reason));
 
   /* ---- undo ---- */
-  console.log("\n7. Undo sends an item back to the queue");
+  console.log("\n6. Undo sends an item back to the queue");
   await page.waitForTimeout(1000);
   const undoRow = judged(tasks[1].title.slice(0, 25));
   await undoRow.getByRole("button", { name: "Undo" }).click();
   await page.waitForTimeout(1500);
-  const { data: bRow3 } = await admin.from("submissions").select("status,points_awarded,bonus,starred").eq("id", subB).single();
+  const { data: bRow3 } = await admin.from("submissions").select("status,points_awarded,reject_reason").eq("id", subB).single();
   check("undo returns the row to pending", bRow3.status === "pending", bRow3.status);
   check("undo clears the awarded points", !bRow3.points_awarded, String(bRow3.points_awarded));
-  check("undo clears the bonus", bRow3.bonus === 0, String(bRow3.bonus));
+  check("undo clears the reject reason", !bRow3.reject_reason, String(bRow3.reject_reason));
 
   /* ---- reassign ---- */
-  console.log("\n8. Reassign a submission to another team");
+  console.log("\n7. Reassign a submission to another team");
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".card .media-box", { timeout: 15000 });
   const teamBtn = page.locator(".card button.btn-plain").first();
@@ -189,7 +198,7 @@ try {
   check("reassignment persisted to a new team", changed.length > 0, JSON.stringify(moved));
 
   /* ---- leaderboard ---- */
-  console.log("\n9. Leaderboard reflects the judging");
+  console.log("\n8. Leaderboard reflects the judging");
   const lb = await (await fetch(`${BASE}/api/leaderboard?round=1`)).json();
   const rows = (lb.rows ?? []).filter((r) => /__qa/.test(r.name ?? ""));
   note(`leaderboard __qa rows: ${JSON.stringify(rows)}`);
