@@ -58,19 +58,34 @@ export function effectiveTitle(task) {
  * `status: "cut"` still produces a row, marked `wanted: false`, because the
  * planner needs to know a cut task exists in order to deactivate it.
  */
-export function desiredRows(board) {
+export function desiredRows(board, warnings = []) {
   const rows = [];
   for (const task of board?.tasks ?? []) {
-    if (!task || typeof task.id !== "string") continue;
-    const isSecret = Number(task.round) === 0;
-    for (const round of isSecret ? [1, 2] : [Number(task.round)]) {
-      if (round !== 1 && round !== 2) continue;
+    if (!task || typeof task.id !== "string" || !task.id) {
+      warnings.push(`board entry skipped: no usable id (${JSON.stringify(task?.id ?? null)})`);
+      continue;
+    }
+    const rawRound = Number(task.round);
+    if (![0, 1, 2].includes(rawRound)) {
+      warnings.push(`board task ${task.id} skipped: round ${JSON.stringify(task.round)} is not 0, 1 or 2`);
+      continue;
+    }
+    // Number(undefined) is NaN, which serializes to null against a `points not
+    // null` column and compares unequal to itself -- so it would be proposed
+    // again on every run without ever landing.
+    const points = Number(task.points);
+    if (!Number.isFinite(points)) {
+      warnings.push(`board task ${task.id} skipped: points ${JSON.stringify(task.points)} is not a number`);
+      continue;
+    }
+    const isSecret = rawRound === 0;
+    for (const round of isSecret ? [1, 2] : [rawRound]) {
       rows.push({
         board_id: task.id,
         round,
         title: effectiveTitle(task),
         docTitle: String(task.docTitle ?? "").trim(),
-        points: Number(task.points),
+        points,
         requires_video: Boolean(task.needsClip),
         is_secret: isSecret,
         docOrder: Number(task.docOrder) || 0,
@@ -116,12 +131,12 @@ const OWNED = ["title", "points", "requires_video", "is_secret", "sort_order"];
  */
 export function planTaskSync(board, liveRows, opts = {}) {
   const counts = opts.submissionCounts ?? {};
-  const rows = desiredRows(board);
+  const warnings = [];
+  const rows = desiredRows(board, warnings);
   const insert = [];
   const update = [];
   const deactivate = [];
   const reactivate = [];
-  const warnings = [];
 
   const key = (round, boardId) => `${round}|${boardId}`;
   const byKey = new Map();
@@ -165,6 +180,17 @@ export function planTaskSync(board, liveRows, opts = {}) {
     const current = linked ?? matchUnlinked(row);
 
     if (!row.wanted) {
+      // Still worth linking: a row matched only by its title would otherwise
+      // stay unlinked forever and keep raising the migration warning.
+      if (current && !current.board_id) {
+        update.push({
+          id: current.id,
+          board_id: row.board_id,
+          round: row.round,
+          title: current.title,
+          patch: { board_id: row.board_id },
+        });
+      }
       if (current?.active) {
         deactivate.push({ id: current.id, board_id: row.board_id, round: row.round, title: current.title });
         const n = counts[current.id] ?? 0;
@@ -197,9 +223,15 @@ export function planTaskSync(board, liveRows, opts = {}) {
     for (const field of OWNED) if (current[field] !== row[field]) patch[field] = row[field];
 
     if (!current.active) {
-      reactivate.push({ id: current.id, board_id: row.board_id, patch: { ...patch, active: true } });
+      reactivate.push({
+        id: current.id,
+        board_id: row.board_id,
+        round: row.round,
+        title: current.title,
+        patch: { ...patch, active: true },
+      });
     } else if (Object.keys(patch).length) {
-      update.push({ id: current.id, board_id: row.board_id, title: current.title, patch });
+      update.push({ id: current.id, board_id: row.board_id, round: row.round, title: current.title, patch });
     }
   }
 
@@ -221,15 +253,42 @@ export function planTaskSync(board, liveRows, opts = {}) {
   }
 
   // unique (round, title) is still on the table, so a collision has to surface
-  // here rather than blowing up halfway through an --apply.
-  const seen = new Map();
-  for (const row of rows.filter((r) => r.wanted)) {
-    const k = key(row.round, normalizeTitle(row.title));
-    if (seen.has(k)) warnings.push(`duplicate title in round ${row.round}: ${seen.get(k)} and ${row.board_id} both read "${row.title}"`);
-    else seen.set(k, row.board_id);
+  // here rather than as an opaque Postgres error halfway through an --apply.
+  //
+  // Comparing board rows against each other is not enough: a deactivated row
+  // keeps its title, so re-adding a cut task as a NEW board entry -- the natural
+  // move in the canvas -- collides with a row the board no longer mentions.
+  // What matters is the state the table would be left in, so model that: every
+  // live row under the title it would end up with, plus every planned insert.
+  const finalTitle = new Map();
+  for (const u of [...update, ...reactivate]) if (u.patch.title !== undefined) finalTitle.set(u.id, u.patch.title);
+
+  const endState = [];
+  for (const row of liveRows ?? []) {
+    endState.push({
+      round: row.round,
+      title: finalTitle.has(row.id) ? finalTitle.get(row.id) : row.title,
+      label: row.board_id ? `board_id ${row.board_id}` : `existing row "${row.title}"`,
+    });
+  }
+  for (const row of insert) endState.push({ round: row.round, title: row.title, label: `new task ${row.board_id}` });
+
+  const collisions = [];
+  const holder = new Map();
+  for (const entry of endState) {
+    const k = key(entry.round, normalizeTitle(entry.title));
+    const first = holder.get(k);
+    if (first) {
+      collisions.push({ round: entry.round, title: entry.title, between: [first.label, entry.label] });
+      warnings.push(
+        `title collision in round ${entry.round}: ${first.label} and ${entry.label} would both read ` +
+          `"${entry.title}". unique (round, title) would reject this, so nothing will be published ` +
+          `until one of them changes.`
+      );
+    } else holder.set(k, entry);
   }
 
-  return { insert, update, deactivate, reactivate, warnings };
+  return { insert, update, deactivate, reactivate, warnings, collisions };
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +346,16 @@ export async function buildPlan(db) {
  * leave the rest unapplied -- a half-published task list, which is precisely the
  * state that cannot be allowed to happen on the day.
  */
+/**
+ * Applies a plan. Only ever writes to `tasks`.
+ *
+ * Refuses if the board_id column is missing, or if the plan carries a title
+ * collision. Every insert and update carries a board_id, so an unmigrated
+ * database would reject the first write and leave the rest unapplied -- a
+ * half-published task list, which is precisely the state that cannot be allowed
+ * to happen on the day. A collision would do the same thing for a different
+ * reason, so both are caught before anything is written.
+ */
 export async function applyPlan(db, plan, { migrated = true } = {}) {
   if (!migrated) {
     throw new Error(
@@ -294,14 +363,51 @@ export async function applyPlan(db, plan, { migrated = true } = {}) {
         "Nothing was written."
     );
   }
+  if (plan.collisions?.length) {
+    throw new Error(
+      `refusing to publish: ${plan.collisions.length} title collision(s) would violate ` +
+        `unique (round, title). Nothing was written. See the warnings above.`
+    );
+  }
+
   if (plan.insert.length) {
     const { error } = await db.from("tasks").insert(plan.insert);
     if (error) throw new Error(`insert failed: ${error.message}`);
   }
-  for (const { id, patch } of [...plan.update, ...plan.reactivate]) {
+
+  const writes = [...plan.update, ...plan.reactivate];
+
+  /*
+   * Renames are applied one row at a time, so a chain of them can collide with
+   * itself even though the end state is perfectly valid: swap two titles and
+   * whichever goes first lands on the title the other still holds. Postgres
+   * rejects it, the rest of the plan never runs, and because the next run
+   * recomputes the same plan it fails in the same place forever.
+   *
+   * So any rename whose target is currently held by another row that is *also*
+   * being renamed gets parked on a throwaway title first. The park value is
+   * keyed on the row id, so it cannot collide with anything either. If a run
+   * dies between the two phases the row is left reading a parked title, which
+   * matches nothing on the board -- so the next run simply renames it to where
+   * it was going. It converges rather than wedging.
+   */
+  const renames = writes.filter((w) => w.patch.title !== undefined);
+  const heldBy = new Map(renames.map((w) => [`${w.round}|${normalizeTitle(w.title)}`, w.id]));
+  const parked = renames.filter((w) => {
+    const owner = heldBy.get(`${w.round}|${normalizeTitle(w.patch.title)}`);
+    return owner && owner !== w.id;
+  });
+
+  for (const { id } of parked) {
+    const { error } = await db.from("tasks").update({ title: `__task-sync parking ${id}` }).eq("id", id);
+    if (error) throw new Error(`could not park a renamed task: ${error.message}`);
+  }
+
+  for (const { id, patch } of writes) {
     const { error } = await db.from("tasks").update(patch).eq("id", id);
     if (error) throw new Error(`update failed: ${error.message}`);
   }
+
   if (plan.deactivate.length) {
     const { error } = await db
       .from("tasks")
@@ -367,6 +473,14 @@ async function main() {
   console.log(describePlan(plan, live));
 
   const n = plan.insert.length + plan.update.length + plan.deactivate.length + plan.reactivate.length;
+  if (plan.collisions?.length) {
+    console.log(
+      `\n${plan.collisions.length} title collision(s). --apply will refuse until the board changes; ` +
+        `nothing can be published in this state.`
+    );
+    process.exitCode = 1;
+    if (!apply) return;
+  }
   if (!apply) {
     console.log(
       `\nDry run. ${n} change(s) would be written. Re-run with --apply to publish.` +
