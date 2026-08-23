@@ -10,7 +10,7 @@
 import { createServer } from "node:http";
 import { execFile, execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 import { addTask, BOARD_PATH, loadBoard, scoreOf, suggestedPoints, summarize, updateModel, updateTask } from "./store.mjs";
@@ -29,11 +29,21 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/ja
 //
 // The canvas deliberately contains no sync logic. It shells out to the real
 // `scripts/task-sync.mjs --json`, so the collision refusal, the pre-migration
-// refusal and the worktree refusal are inherited rather than reimplemented, and
+// refusal and the board refusal are inherited rather than reimplemented, and
 // cannot drift from the thing they are meant to guard.
+//
+// It runs from the CANONICAL checkout -- the one holding the board -- not from
+// whichever checkout this canvas happens to live in. In a linked worktree the
+// board resolves to the main checkout, and `node_modules` and `.env.local` only
+// exist there too: both are gitignored, so a worktree has neither. Running the
+// worktree's own copy would fail on `Cannot find package @supabase/supabase-js`
+// before it ever reached a credential, which is a worse error than the refusal
+// this replaced.
 
-const SYNC_SCRIPT = fileURLToPath(new URL("../../../scripts/task-sync.mjs", import.meta.url));
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+/** The checkout that owns the board: the parent of its `data/` directory. */
+const CANONICAL_ROOT = dirname(dirname(BOARD_PATH));
+const SYNC_SCRIPT = join(CANONICAL_ROOT, "scripts", "task-sync.mjs");
+const REPO_ROOT = CANONICAL_ROOT;
 /** `api()` having no timeout is a named sharp edge in AGENTS.md; a hung Supabase
  *  call must land in the banner's error state rather than spinning forever. */
 const SYNC_TIMEOUT_MS = 30_000;
