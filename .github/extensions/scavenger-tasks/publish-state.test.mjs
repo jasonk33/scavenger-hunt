@@ -320,3 +320,49 @@ test("a change line is never left empty by the filter", () => {
     assert.match(line.text, /\S — \S/, "a line always names at least one real field");
   }
 });
+
+// ------------------------------------------------------- publish bookkeeping
+//
+// Publishing also records the board in git. That half is best-effort and must
+// never change whether the publish succeeded -- players are already looking at
+// the new list. But it must be visible: the whole reason it exists is that a
+// publish used to leave the board uncommitted with nothing on screen saying so.
+
+const applied = (git) => clean({ applied: true, count: 2, git });
+
+test("a publish that also committed says so", () => {
+  const s = publishState(applied({ committed: true, pushed: true, note: "board committed and pushed" }));
+  assert.equal(s.kind, "published");
+  assert.match(s.detail, /committed and pushed/i);
+});
+
+test("a publish whose push failed is still a successful publish", () => {
+  // The dangerous direction: a live task list reported as a failure because a
+  // network call after it went wrong.
+  const s = publishState(applied({ committed: true, pushed: false, note: "committed, but the push failed: fatal: auth" }));
+  assert.equal(s.kind, "published", "the task list is live; this is not a failure");
+  assert.match(s.detail, /Players see the new task list now/);
+  assert.match(s.detail, /push failed/, "but the outstanding work is not hidden");
+});
+
+test("a publish that could not commit at all still reports as published", () => {
+  const s = publishState(applied({ committed: false, pushed: false, note: "could not stage the board: fatal: not a git repository" }));
+  assert.equal(s.kind, "published");
+  assert.match(s.detail, /could not stage/i);
+});
+
+test("a report with no git information still reads as a clean publish", () => {
+  // Older reports, and TASK_SYNC_NO_COMMIT. Absence must not render as a
+  // problem, and must not render as "committed" either.
+  const s = publishState(applied(undefined));
+  assert.equal(s.kind, "published");
+  assert.equal(s.detail, "Players see the new task list now.");
+});
+
+test("the git note never turns a publish into something unpublishable", () => {
+  for (const git of [null, {}, { note: "" }, { note: "anything at all" }]) {
+    const s = publishState(applied(git));
+    assert.equal(s.kind, "published");
+    assert.equal(s.canPublish, false);
+  }
+});

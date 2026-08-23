@@ -19,7 +19,10 @@
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { dirname } from "node:path";
 import { resolveBoardPath } from "./board-path.mjs";
+import { commitAndPush, commitMessage } from "./board-commit.mjs";
 
 /** Tasks are ordered for players by tier, with the secrets last. */
 const secretsLast = (row) => [row.is_secret ? 1 : 0, row.points, row.docOrder];
@@ -674,7 +677,50 @@ async function main() {
   // report rather than a half-published task list reported as a success.
   await applyPlan(db, plan, { migrated });
   say(`\nPublished ${n} change(s) to the tasks table. Submissions and media untouched.`);
-  if (JSON_MODE) emitJson(syncReport({ plan, live, migrated, refusal: null, applied: true }));
+
+  // Players are already seeing the new list. Recording it in git is bookkeeping
+  // that finishes the job -- publishing used to leave the board file dirty with
+  // nothing saying so -- and it is strictly best-effort: a git problem is a note
+  // on a successful publish, never a failure. TASK_SYNC_NO_COMMIT=1 skips it.
+  const report = syncReport({ plan, live, migrated, refusal: null, applied: true });
+  report.git = process.env.TASK_SYNC_NO_COMMIT
+    ? { committed: false, pushed: false, note: "skipped (TASK_SYNC_NO_COMMIT)" }
+    : recordPublish(report);
+  say(report.git.note);
+  if (JSON_MODE) emitJson(report);
+}
+
+/**
+ * Runs git in the checkout that owns the board.
+ *
+ * The environment is scrubbed of `GH_TOKEN` and `GIT_CONFIG_PARAMETERS` first.
+ * Agent and app processes are launched with credentials for an unrelated
+ * account, which cannot push here and fails as "Repository not found" rather
+ * than as a permission error -- a named sharp edge in AGENTS.md. Removing them
+ * lets git fall back to the user's own credential helper, which can.
+ */
+function recordPublish(report) {
+  const root = dirname(dirname(BOARD_PATH));
+  return commitAndPush({
+    root,
+    message: commitMessage(report),
+    run: (args) => {
+      const env = { ...process.env };
+      delete env.GH_TOKEN;
+      delete env.GIT_CONFIG_PARAMETERS;
+      try {
+        const out = execFileSync("git", ["-C", root, ...args], {
+          encoding: "utf8",
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 20_000,
+        });
+        return { ok: true, out: String(out ?? "") };
+      } catch (e) {
+        return { ok: false, out: `${e?.stderr ?? ""}${e?.stdout ?? ""}` || String(e?.message ?? e) };
+      }
+    },
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
