@@ -100,6 +100,11 @@ check(pending === 0, "task list matches the planning board",
     `(${drift.insert.length} new, ${drift.update.length} edited, ${drift.deactivate.length} cut) — ` +
     `run npm run sync:tasks to see them`, false);
 
+// A collision cannot be published at all, so it is a hard stop rather than drift.
+check(drift.collisions.length === 0, "no task would collide on title",
+  `${drift.collisions.length} task title collision(s) — the board cannot be published until one side ` +
+    `changes. Run npm run sync:tasks for the details.`);
+
 check(env.SUPABASE_ANON_KEY?.startsWith("ey"), "upload key is the legacy anon JWT",
   "SUPABASE_ANON_KEY is not a JWT — uploads will fail. It must be the legacy anon key.");
 check(Boolean(env.ORGANIZER_PIN), "organizer PIN is set", "no ORGANIZER_PIN — the judge screen is wide open", false);

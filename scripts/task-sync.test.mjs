@@ -237,22 +237,32 @@ test("deactivating a task that already has submissions is surfaced loudly", () =
 });
 
 test("the plan never proposes writing revealed_at", () => {
-  const plan = planTaskSync(board([task({ points: 10, status: "keep" })]), [
-    live({ points: 3, revealed_at: "2026-08-22T00:00:00Z" }),
-  ]);
+  // Both halves must run against something non-empty, or the assertion passes
+  // by looping over nothing.
+  const plan = planTaskSync(
+    board([
+      task({ points: 10, status: "keep" }),
+      task({ id: "s-01", round: 0, points: 7, docOrder: 2, title: "A secret" }),
+    ]),
+    [live({ points: 3, revealed_at: "2026-08-22T00:00:00Z" })]
+  );
+  assert.ok(plan.update.length > 0, "needs a real update to be meaningful");
+  assert.ok(plan.insert.length > 0, "needs a real insert to be meaningful");
   for (const u of plan.update) assert.ok(!("revealed_at" in u.patch));
+  for (const r of plan.reactivate) assert.ok(!("revealed_at" in r.patch));
   for (const r of plan.insert) assert.ok(!("revealed_at" in r));
+  for (const d of plan.deactivate) assert.ok(!("revealed_at" in d));
 });
 
 test("two tasks in the same round may not resolve to the same title", () => {  // unique (round, title) survives the migration, so a collision has to be caught
-  // here rather than as a constraint violation halfway through an --apply.
-  const plan = planTaskSync(
-    board([task({ id: "r1-a", title: "Same" }), task({ id: "r1-b", docOrder: 2, title: "Same" })]),
-    []
-  );
-  assert.ok(plan.warnings.some((w) => /duplicate title/i.test(w)));
+// here rather than as a constraint violation halfway through an --apply.
+const plan = planTaskSync(
+  board([task({ id: "r1-a", title: "Same" }), task({ id: "r1-b", docOrder: 2, title: "Same" })]),
+  []
+);
+assert.equal(plan.collisions.length, 1);
+assert.ok(plan.warnings.some((w) => /collision/i.test(w)));
 });
-
 // ------------------------------------------------------------------- applying
 
 test("applyPlan refuses to write anything if the migration has not been run", async () => {
@@ -280,4 +290,230 @@ test("applyPlan is a no-op on an empty plan", async () => {
   const db = { from: (t) => (calls.push(t), { insert: async () => ({}), update: () => ({ eq: async () => ({}), in: async () => ({}) }) }) };
   await applyPlan(db, planTaskSync(board([task()]), [live()]), { migrated: true });
   assert.deepEqual(calls, []);
+});
+
+// ------------------------------------------------------- collisions with live
+
+test("an insert that lands on a deactivated row's title is reported as a collision", () => {
+  // Re-adding a cut task as a NEW board entry, instead of un-cutting the old
+  // one, is the natural move in the canvas. The old row keeps its title while
+  // deactivated, so unique (round, title) would reject the insert.
+  const plan = planTaskSync(board([task({ id: "r1-new", title: "Pick up a pigeon" })]), [
+    live({ id: "uuid-dead", board_id: "r1-old", title: "Pick up a pigeon", active: false }),
+  ]);
+  assert.equal(plan.insert.length, 1);
+  assert.equal(plan.collisions.length, 1);
+  assert.ok(plan.warnings.some((w) => /Pick up a pigeon/.test(w)));
+});
+
+test("a title change that lands on an untouched live row's title is reported as a collision", () => {
+  // The board only mentions r1-01. The other row is live, keeps its title, and
+  // the board has no idea it exists -- so comparing board rows against each
+  // other could never have caught this.
+  const plan = planTaskSync(
+    board([task({ id: "r1-01", title: "Feed a pigeon out of your hand" })]),
+    [
+      live({ id: "uuid-1", board_id: "r1-01", title: "Re-create an album cover" }),
+      live({ id: "uuid-9", board_id: "r1-orphan", title: "Feed a pigeon out of your hand", sort_order: 20 }),
+    ]
+  );
+  assert.equal(plan.update.length, 1);
+  assert.equal(plan.collisions.length, 1);
+  assert.ok(plan.warnings.some((w) => /collision/i.test(w)));
+});
+
+test("collisions are matched on normalized text, not exact text", () => {
+  const plan = planTaskSync(board([task({ id: "r1-new", title: "A stranger\u2019s hat" })]), [
+    live({ id: "uuid-dead", board_id: "r1-old", title: "A stranger's  hat", active: false }),
+  ]);
+  assert.equal(plan.collisions.length, 1);
+});
+
+test("swapping two titles is NOT a collision -- the end state is distinct", () => {
+  const plan = planTaskSync(
+    board([
+      task({ id: "r1-01", title: "Beta" }),
+      task({ id: "r1-02", docOrder: 2, title: "Alpha" }),
+    ]),
+    [
+      live({ id: "uuid-1", board_id: "r1-01", title: "Alpha" }),
+      live({ id: "uuid-2", board_id: "r1-02", title: "Beta", sort_order: 20 }),
+    ]
+  );
+  assert.equal(plan.collisions.length, 0, "a swap converges and must not be blocked");
+  assert.equal(plan.update.length, 2);
+});
+
+// --------------------------------------------------------- invalid board rows
+
+test("a board entry with an unusable id or round is skipped loudly, not silently", () => {
+  const warnings = [];
+  const rows = desiredRows(
+    board([
+      task(),
+      { ...task({ id: "r1-bad" }), round: 7 },
+      { ...task(), id: 42 },
+    ]),
+    warnings
+  );
+  assert.equal(rows.length, 1, "only the valid task produces a row");
+  assert.equal(warnings.length, 2);
+  assert.ok(warnings.some((w) => w.includes("r1-bad")));
+});
+
+test("a board entry with non-numeric points is skipped loudly", () => {
+  // Number(undefined) is NaN, which serializes to null against a `points not
+  // null` column, and compares unequal to itself so it would be re-proposed on
+  // every single run.
+  const warnings = [];
+  const rows = desiredRows(board([task({ id: "r1-np", points: undefined })]), warnings);
+  assert.equal(rows.length, 0);
+  assert.ok(warnings.some((w) => w.includes("r1-np") && /points/i.test(w)));
+});
+
+test("an invalid board entry surfaces through planTaskSync too", () => {
+  const plan = planTaskSync(board([{ ...task({ id: "r1-bad" }), round: 9 }]), []);
+  assert.equal(plan.insert.length, 0);
+  assert.ok(plan.warnings.some((w) => w.includes("r1-bad")));
+});
+
+// ------------------------------------------------------- board_id on cut rows
+
+test("a cut task linked only by title still gets its board_id written back", () => {
+  const plan = planTaskSync(board([task({ status: "cut" })]), [live({ board_id: null })]);
+  assert.equal(plan.deactivate.length, 1);
+  const patch = plan.update.find((u) => u.id === "uuid-1")?.patch;
+  assert.equal(patch?.board_id, "r1-01", "otherwise its migration warning never clears");
+});
+
+test("an already-inactive cut task linked only by title still gets its board_id", () => {
+  const plan = planTaskSync(board([task({ status: "cut" })]), [live({ board_id: null, active: false })]);
+  assert.equal(plan.deactivate.length, 0);
+  assert.equal(plan.update.find((u) => u.id === "uuid-1")?.patch.board_id, "r1-01");
+});
+
+// ---------------------------------------------------------------- applyPlan
+
+/**
+ * A stand-in for the tasks table that enforces `unique (round, title)` the way
+ * Postgres does and records every call. Deleting is not implemented on purpose:
+ * if applyPlan ever grows a delete, these tests fail loudly.
+ */
+function fakeDb(initial = []) {
+  const table = initial.map((r) => ({ ...r }));
+  const calls = [];
+  const violation = () => {
+    const seen = new Set();
+    for (const r of table) {
+      const k = `${r.round}|${normalizeTitle(r.title)}`;
+      if (seen.has(k)) return { error: { message: `duplicate key value violates unique constraint "tasks_round_title_key"` } };
+      seen.add(k);
+    }
+    return {};
+  };
+  const applyTo = (matcher, patch) => {
+    for (const r of table) if (matcher(r)) Object.assign(r, patch);
+    return violation();
+  };
+  return {
+    table,
+    calls,
+    from() {
+      return {
+        insert(rows) {
+          calls.push({ op: "insert", n: rows.length });
+          table.push(...rows.map((r) => ({ id: `new-${table.length}`, ...r })));
+          return Promise.resolve(violation());
+        },
+        update(patch) {
+          return {
+            eq(_col, id) {
+              calls.push({ op: "update", id, patch });
+              return Promise.resolve(applyTo((r) => r.id === id, patch));
+            },
+            in(_col, ids) {
+              calls.push({ op: "updateIn", ids, patch });
+              return Promise.resolve(applyTo((r) => ids.includes(r.id), patch));
+            },
+          };
+        },
+        delete() {
+          throw new Error("applyPlan must never delete a task");
+        },
+      };
+    },
+  };
+}
+
+test("applyPlan writes inserts, then updates, then deactivations, and never deletes", async () => {
+  const db = fakeDb([
+    { id: "uuid-1", board_id: "r1-01", round: 1, title: "A task", points: 3, requires_video: false, is_secret: false, sort_order: 10, active: true },
+    { id: "uuid-2", board_id: "r1-02", round: 1, title: "Doomed", points: 3, requires_video: false, is_secret: false, sort_order: 20, active: true },
+  ]);
+  const plan = planTaskSync(
+    board([
+      task({ points: 10 }),
+      task({ id: "r1-02", docOrder: 2, title: "Doomed", status: "cut" }),
+      task({ id: "r1-03", docOrder: 3, title: "Brand new" }),
+    ]),
+    db.table
+  );
+  assert.equal(plan.insert.length, 1);
+  assert.equal(plan.deactivate.length, 1);
+
+  await applyPlan(db, plan, { migrated: true });
+
+  const ops = db.calls.map((c) => c.op);
+  assert.equal(ops[0], "insert", "inserts go first");
+  assert.equal(ops.at(-1), "updateIn", "the deactivation batch goes last");
+  assert.ok(!ops.includes("delete"));
+  assert.equal(db.table.find((r) => r.id === "uuid-1").points, 10);
+  assert.equal(db.table.find((r) => r.id === "uuid-2").active, false);
+  assert.ok(db.table.some((r) => r.id === "uuid-2"), "the deactivated row is still there");
+  assert.equal(db.table.length, 3, "2 existing + 1 insert, nothing removed");
+});
+
+test("applyPlan converges when two tasks swap titles", async () => {
+  // Without parking, the first update collides with the row still holding the
+  // target title, and every re-run fails at the same point forever.
+  const db = fakeDb([
+    { id: "uuid-1", board_id: "r1-01", round: 1, title: "Alpha", points: 3, requires_video: false, is_secret: false, sort_order: 10, active: true },
+    { id: "uuid-2", board_id: "r1-02", round: 1, title: "Beta", points: 3, requires_video: false, is_secret: false, sort_order: 20, active: true },
+  ]);
+  const b = board([task({ id: "r1-01", title: "Beta" }), task({ id: "r1-02", docOrder: 2, title: "Alpha" })]);
+  await applyPlan(db, planTaskSync(b, db.table), { migrated: true });
+
+  assert.equal(db.table.find((r) => r.id === "uuid-1").title, "Beta");
+  assert.equal(db.table.find((r) => r.id === "uuid-2").title, "Alpha");
+  // And a second run is a no-op, which is what "converged" means.
+  const again = planTaskSync(b, db.table);
+  assert.equal(again.update.length, 0);
+  assert.equal(again.collisions.length, 0);
+});
+
+test("applyPlan converges on a three-way title rotation", async () => {
+  const db = fakeDb(
+    ["Alpha", "Beta", "Gamma"].map((t, i) => ({
+      id: `uuid-${i + 1}`, board_id: `r1-0${i + 1}`, round: 1, title: t,
+      points: 3, requires_video: false, is_secret: false, sort_order: (i + 1) * 10, active: true,
+    }))
+  );
+  const b = board([
+    task({ id: "r1-01", docOrder: 1, title: "Beta" }),
+    task({ id: "r1-02", docOrder: 2, title: "Gamma" }),
+    task({ id: "r1-03", docOrder: 3, title: "Alpha" }),
+  ]);
+  await applyPlan(db, planTaskSync(b, db.table), { migrated: true });
+  assert.deepEqual(db.table.map((r) => r.title), ["Beta", "Gamma", "Alpha"]);
+  assert.equal(planTaskSync(b, db.table).update.length, 0);
+});
+
+test("applyPlan refuses a plan with a genuine title collision and writes nothing", async () => {
+  const db = fakeDb([
+    { id: "uuid-dead", board_id: "r1-old", round: 1, title: "Pick up a pigeon", points: 3, requires_video: false, is_secret: false, sort_order: 10, active: false },
+  ]);
+  const plan = planTaskSync(board([task({ id: "r1-new", title: "Pick up a pigeon" })]), db.table);
+  assert.equal(plan.collisions.length, 1);
+  await assert.rejects(() => applyPlan(db, plan, { migrated: true }), /collision|duplicate/i);
+  assert.deepEqual(db.calls, [], "nothing may be written");
 });
