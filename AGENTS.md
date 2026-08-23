@@ -19,6 +19,13 @@ fail on the day**, and that outranks code cleanliness, tidiness and elegance eve
 
 `README.md` covers setup, seeding, running the event and fallbacks — read it, don't restate it.
 
+## Project workflow
+
+- This is a personal, single-owner event app. There is no external PR review: do not create pull
+  requests or invoke LinkedIn submit/review workflows unless the user explicitly asks for one.
+  After the relevant validation passes, commit and push directly to `origin/main` when the user
+  says to ship; a feature branch is only for an explicit preview or parallel work.
+
 ## Architecture
 
 - Next.js App Router + React 19 on Vercel (project `scavenger-hunt`), Supabase Pro. Git repo on
