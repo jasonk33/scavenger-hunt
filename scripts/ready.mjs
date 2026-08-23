@@ -12,7 +12,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { planTaskSync, loadBoard, fetchTaskRows } from "./task-sync.mjs";
+import { planTaskSync, loadBoard, fetchTaskRows, isReorderOnly } from "./task-sync.mjs";
 
 const env = Object.fromEntries(
   readFileSync(new URL("../.env.local", import.meta.url), "utf8")
@@ -93,11 +93,19 @@ check(stuck.length === 0, "no half-finished uploads",
 
 // The board is where tasks are actually decided, so "ready" has to mean the app
 // is showing what the board says, not just that it is showing something.
+//
+// Reordering is excluded for the same reason the publish banner excludes it:
+// sort_order is dense, so one cut or re-tier renumbers every task below it, and
+// counting those turns "1 edit pending" into "14 changes" a minute before the
+// event. They are still published; they are just not decisions.
 const drift = planTaskSync(loadBoard(), tasks ?? []);
-const pending = drift.insert.length + drift.update.length + drift.deactivate.length + drift.reactivate.length;
+const edited = drift.update.filter((u) => !isReorderOnly(u));
+const reordered = drift.update.length - edited.length;
+const pending = drift.insert.length + edited.length + drift.deactivate.length + drift.reactivate.length;
 check(pending === 0, "task list matches the planning board",
   `${pending} task change(s) on the board are not live yet ` +
-    `(${drift.insert.length} new, ${drift.update.length} edited, ${drift.deactivate.length} cut) — ` +
+    `(${drift.insert.length} new, ${edited.length} edited, ${drift.deactivate.length} cut` +
+    `${reordered ? `, plus ${reordered} reordering(s)` : ""}) — ` +
     `run npm run sync:tasks to see them`, false);
 
 // A collision cannot be published at all, so it is a hard stop rather than drift.
