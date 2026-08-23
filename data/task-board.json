@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 99,
   "model": {
     "weights": {
       "difficulty": 1.2,
@@ -18,7 +18,7 @@
       "round": 1,
       "docTitle": "Re-create an album cover with the whole team",
       "title": "Re-create an album cover with the whole team — name the album when you submit",
-      "points": 1,
+      "points": 5,
       "docOrder": 1,
       "difficulty": 2,
       "guts": 1,
