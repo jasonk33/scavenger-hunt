@@ -90,7 +90,7 @@ create table if not exists submissions (
 alter table submissions add column if not exists group_id uuid;
 
 -- board_id links a task back to its entry on the planning board
--- (`data/task-board.json`), which owns task content, tiers and cuts.
+-- (the `task_board` table), which owns task content, tiers and cuts.
 -- Nullable: a row added straight from Admin has no board entry, and
 -- `npm run sync:tasks` leaves anything it does not recognise alone.
 alter table tasks add column if not exists board_id text;
@@ -223,11 +223,11 @@ on conflict (round, name) do nothing;
 
 -- Tasks are NOT seeded here.
 --
--- The task list lives on the planning board at `data/task-board.json` -- titles,
+-- The task list lives on the planning board in the `task_board` table -- titles,
 -- point tiers, the clip flag and which tasks are cut -- and `npm run sync:tasks`
 -- is the only thing that writes it into this table. Keeping a second copy of the
 -- list here is what let the two drift apart in the first place.
 --
--- On a fresh project: run this file, then `supabase/migrate-task-board-id.sql`,
--- then `npm run sync:tasks -- --apply`.
+-- On a fresh project: run this file, then `supabase/migrate-task-board-id.sql`
+-- and `supabase/migrate-task-board.sql`, then `npm run sync:tasks -- --apply`.
 

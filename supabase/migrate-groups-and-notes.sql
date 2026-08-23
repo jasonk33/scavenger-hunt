@@ -4,7 +4,7 @@
 --
 -- (Historical: setup.sql used to carry the seed INSERTs for the task list, so
 -- re-running it resurrected every task since deleted. The task list now lives on
--- the planning board at `data/task-board.json` and is published by
+-- the planning board in the `task_board` table and is published by
 -- `npm run sync:tasks`, so setup.sql no longer touches tasks at all.)
 --
 -- Paste this whole file into the Supabase SQL editor and run it.

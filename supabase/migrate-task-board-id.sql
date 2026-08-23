@@ -4,7 +4,8 @@
 -- fills the column in by matching on title. Nothing is deleted and no existing
 -- column is altered, so it is safe to run against the live project.
 --
--- Why a column at all: `data/task-board.json` is the source of truth for task
+-- Why a column at all: the planning board (the `task_board` table) is the
+-- source of truth for task
 -- content, and `npm run sync:tasks` publishes it. Matching the two sides on the
 -- task text does not survive contact with an edit -- eight tasks already read
 -- differently on the board than in the app -- so the board's stable id
