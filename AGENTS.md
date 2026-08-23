@@ -50,8 +50,13 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
 - **The `task_board` table is the source of truth for task content, points and cuts** — not
   `setup.sql`, which no longer seeds tasks at all. It is edited through the Copilot canvas
   extension in `.github/extensions/scavenger-tasks/`, and reaches players **only** via
-  `npm run sync:tasks`. Nothing else writes task rows. Editing a title in Admin is a
-  field-day escape hatch; the next sync will put the board's wording back.
+  `npm run sync:tasks`. Editing a task in Admin is the field-day escape hatch: it writes
+  `tasks` directly, so it is live at once, and **mirrors title, points and `requires_video`
+  back onto the board** (`src/lib/board-mirror.mjs`) so the next publish does not silently
+  revert it. `is_secret` and `active` are deliberately NOT mirrored -- the board expresses a
+  secret as `round: 0` and a hidden task as `status: cut`, and neither is a field copy -- so
+  those two still lose to the next publish, and Admin says so on screen. Admin never creates
+  a board entry: a task added there has `board_id` null and the planner leaves it alone.
 - **`task_board` and `tasks` are two tables on purpose, and must stay that way.** Editing a
   rating changes nothing a player sees until someone publishes; that staging gap is the whole
   design. Queries and validators live in `scripts/board-store.mjs`, shared by the canvas and

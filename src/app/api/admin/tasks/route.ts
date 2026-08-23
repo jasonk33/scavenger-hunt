@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { isOrganizer } from "@/lib/settings";
 import { json, fail } from "@/lib/http";
+import { boardMirrorPatch } from "@/lib/board-mirror.mjs";
 import type { Database } from "@/lib/database.types";
 
 type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
@@ -68,7 +69,54 @@ export async function PATCH(req: Request) {
 
   const { error } = await db().from("tasks").update(patch).eq("id", id);
   if (error) return fail(error.message, 500);
-  return json({ ok: true });
+  return json({ ok: true, board: await mirrorToBoard(id, b) });
+}
+
+/**
+ * Carries an Admin edit back onto the planning board.
+ *
+ * Runs only after the `tasks` write has succeeded, and can never fail the
+ * request: the edit is already live and in front of players by this point, so
+ * reporting it as an error would be a lie about the thing that matters. A
+ * failure here leaves the board and the live task list disagreeing, which is
+ * exactly what `npm run ready` and the canvas's publish banner already detect
+ * and report as pending drift -- so it surfaces, rather than being swallowed.
+ *
+ * Deliberately not done on create: a task added from Admin has no board entry,
+ * and inventing one would put it under the planner's control and into the
+ * canvas, which is a different decision from fixing a typo mid-event.
+ *
+ * @returns a short account of what was and was not carried, for the response.
+ */
+async function mirrorToBoard(taskId: string, body: Record<string, unknown>) {
+  const { row, skipped } = boardMirrorPatch(body);
+  const notes = skipped.map((s) => `${s.field}: ${s.why}`);
+  if (!Object.keys(row).length) return { mirrored: false, reason: "nothing to carry", notes };
+
+  try {
+    const { data: task, error: readError } = await db()
+      .from("tasks")
+      .select("board_id")
+      .eq("id", taskId)
+      .maybeSingle();
+    if (readError) return { mirrored: false, reason: readError.message, notes };
+    // A task added from Admin was never on the board, so there is nothing to
+    // diverge from and nothing to write.
+    if (!task?.board_id) return { mirrored: false, reason: "this task is not on the board", notes };
+
+    const { data, error } = await db()
+      .from("task_board")
+      .update({ ...row, updated_at: new Date().toISOString() })
+      .eq("board_id", task.board_id)
+      .select("board_id");
+    if (error) return { mirrored: false, reason: error.message, notes };
+    if (!data?.length) return { mirrored: false, reason: `no board entry ${task.board_id}`, notes };
+    return { mirrored: true, boardId: task.board_id, notes };
+  } catch (e) {
+    // A missing task_board table on a project that has not run the migration
+    // must not take Admin down with it.
+    return { mirrored: false, reason: e instanceof Error ? e.message : String(e), notes };
+  }
 }
 
 /**
