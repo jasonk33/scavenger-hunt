@@ -21,9 +21,10 @@ fail on the day**, and that outranks code cleanliness, tidiness and elegance eve
 
 ## Architecture
 
-- Next.js App Router + React 19 on Vercel (project `scavenger-hunt`), Supabase Pro. Plain
-  local git repo on `main`, **no remote**. `/go` is the QR target: a re-targetable redirect
-  driven by the `fallback_url` setting, so the crowd can be moved without re-printing codes.
+- Next.js App Router + React 19 on Vercel (project `scavenger-hunt`), Supabase Pro. Git repo on
+  `main`, backed up to the private `jasonk33/scavenger-hunt`. `/go` is the QR target: a
+  re-targetable redirect driven by the `fallback_url` setting, so the crowd can be moved
+  without re-printing codes.
 - **Media bytes go browser → Supabase Storage directly** over resumable tus
   (`src/lib/upload.ts`), never through a route handler — Vercel caps bodies at 4.5 MB and
   iPhone videos reach 150 MB.
@@ -165,3 +166,8 @@ real device.
 - Names are organizer-typed and must **never** truncate — `.name`/`.pill-wrap` in `globals.css`
   carry the rule and `qa/probe-truncation.mjs` asserts zero clipping down to 260px. Adding a
   new place a name or reject reason renders means adding it to that probe's `SCREENS`.
+- `origin` is a **personal** repo (`jasonk33`), but agent shells are injected with a `GH_TOKEN`
+  and a `GIT_CONFIG_PARAMETERS` credential helper for an unrelated work account, which cannot
+  see it — the push fails as `Repository not found`, never as a permission error. From an agent
+  shell, push with `env -u GIT_CONFIG_PARAMETERS GH_TOKEN= git push`, and prefix `gh` with
+  `GH_TOKEN=`. A normal terminal is unaffected.
