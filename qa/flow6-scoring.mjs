@@ -24,7 +24,10 @@ try {
   await call("/api/admin/roster", { method: "POST", body: JSON.stringify({ round: 1, entries: [
     { playerId: alice.id, teamId: red1.id }, { playerId: bob.id, teamId: red1.id },
   ] }) });
-  const { data: tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).eq("points", 5).limit(2);
+  // Cut tasks are deactivated rather than deleted, and the API refuses a
+  // submission to one -- so an unfiltered pick lands on a board cut and the
+  // driver dies before it asserts anything.
+  const { data: tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).eq("points", 5).eq("active", true).limit(2);
   const task = tasks[0];
   note(`using a ${task.points}-point task, two teammates both submitting it`);
 

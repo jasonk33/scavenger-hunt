@@ -4,6 +4,7 @@
  *
  *   npm run dev        # in one terminal
  *   node qa/run-all.mjs
+ *   npm run qa -- judge    # just the drivers whose filename contains "judge"
  *
  * Each driver creates and tears down its own `__qa` fixtures and restores
  * settings in a `finally`, then diffs a snapshot of the real event data. A
@@ -13,15 +14,33 @@ import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 
 const dir = new URL("./", import.meta.url).pathname;
-const drivers = readdirSync(dir)
+const args = process.argv.slice(2);
+// Anything not a flag is a driver filter. Flags (--allow-prod, --allow-real-data)
+// still belong to the drivers and are forwarded; a filter must NOT be, or it
+// reaches lib.mjs as an unknown argument.
+const flags = args.filter((a) => a.startsWith("-"));
+const filters = args.filter((a) => !a.startsWith("-"));
+
+const all = readdirSync(dir)
   .filter((f) => /^(flow|probe)/.test(f) && f.endsWith(".mjs"))
   .sort();
+const drivers = filters.length
+  ? all.filter((f) => filters.some((n) => f.includes(n.replace(/\.mjs$/, ""))))
+  : all;
+
+// A filter that matches nothing would otherwise run zero drivers and exit 0,
+// reporting a clean suite for a run that tested absolutely nothing.
+if (!drivers.length) {
+  console.error(`\nNo driver matches ${JSON.stringify(filters)}. Available:\n` +
+    all.map((f) => `  ${f}`).join("\n") + "\n");
+  process.exit(1);
+}
 
 const run = (file) =>
   new Promise((resolve) => {
-    // Forward our own args (e.g. --allow-prod) so `npm run qa -- --allow-prod`
+    // Forward our own flags (e.g. --allow-prod) so `npm run qa -- --allow-prod`
     // reaches the per-driver guard in lib.mjs instead of being swallowed here.
-    const p = spawn(process.execPath, [`${dir}${file}`, ...process.argv.slice(2)], {
+    const p = spawn(process.execPath, [`${dir}${file}`, ...flags], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
