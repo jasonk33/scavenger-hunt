@@ -195,6 +195,9 @@ textarea { width: 100%; resize: vertical; }
 .publish-preview li[data-kind="update"]::before     { content: "~"; color: var(--true-color-blue, #0969da); }
 .publish-preview li[data-kind="reactivate"]::before { content: "^"; color: var(--true-color-purple, #8250df); }
 .publish-preview li[data-kind="deactivate"]::before { content: "\2013"; color: var(--true-color-red, #cf222e); }
+/* Not a decision, so it reads as a footnote rather than as a fifth change type. */
+.publish-preview li[data-kind="reorder"] { color: var(--text-color-muted, #59636e); font-style: italic; }
+.publish-preview li[data-kind="reorder"]::before { content: "\21C5"; color: var(--text-color-muted, #59636e); }
 
 .publish-warnings {
   margin-top: 6px;
@@ -288,6 +291,25 @@ textarea { width: 100%; resize: vertical; }
 .tier.t10 { background: var(--true-color-red-muted, #ffebe9);    color: var(--true-color-red, #cf222e); }
 
 .tier.suggested { border: 1px dashed currentColor; background: transparent; }
+/* The suggestion is an offer, so it has to look pressable. */
+.tier.suggested { cursor: pointer; }
+.tier.suggested:hover, .tier.suggested:focus-visible { border-style: solid; }
+
+.tier-dismiss {
+  flex: none;
+  padding: 0 5px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-color-muted, #59636e);
+  cursor: pointer;
+  font-size: 13px;
+}
+.tier-dismiss:hover, .tier-dismiss:focus-visible {
+  border-color: var(--border-color-default, #d1d9e0);
+  color: var(--text-color-default, #1f2328);
+}
 .arrow { flex: none; color: var(--text-color-muted, #59636e); font-size: var(--text-body-small, 12px); }
 
 .title {

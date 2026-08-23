@@ -92,6 +92,12 @@ export function publishState(report, { staleSince = 0 } = {}) {
   }
 
   const count = report.count;
+  // Reordering is published but not counted, so it cannot be allowed to vanish:
+  // a board whose only pending change is renumbering would otherwise read as
+  // "everything is live" while players still saw the old order. Absent on an
+  // older report, which means zero rather than unknown.
+  const reorder = isCount(report.counts?.reorder) ? report.counts.reorder : 0;
+  const tasks = (n) => `${n} task${n === 1 ? "" : "s"}`;
 
   if (report.applied === true) {
     return state("published", `Published ${plural(count)}`, "Players see the new task list now.", count);
@@ -110,11 +116,33 @@ export function publishState(report, { staleSince = 0 } = {}) {
   }
 
   if (count === 0) {
+    if (reorder > 0) {
+      return state(
+        "pending",
+        "Task order not yet live",
+        `${tasks(reorder)} would move in the player's list. No task wording, points or cuts changed.`,
+        0
+      );
+    }
     return state("clean", "Everything on the board is live", "The app matches the board.", 0);
   }
 
-  return state("pending", `${plural(count)} not yet live`, "Players are still seeing the old task list.", count);
+  return state(
+    "pending",
+    `${plural(count)} not yet live`,
+    reorder > 0
+      ? `Players are still seeing the old task list. ${tasks(reorder)} will also move position.`
+      : "Players are still seeing the old task list.",
+    count
+  );
 }
+
+/**
+ * Fields that exist for the machine rather than for a person. `sort_order` is
+ * covered by the reordering footnote, and `board_id` is migration bookkeeping;
+ * neither is a decision anyone made, so neither belongs on a change line.
+ */
+const INVISIBLE_FIELDS = new Set(["sort_order", "board_id"]);
 
 /**
  * One line per change, for the preview panel. Publishing is a live write to the
@@ -131,6 +159,7 @@ export function describeChanges(report) {
   }
   for (const u of c.update ?? []) {
     const fields = (u.fields ?? [])
+      .filter((f) => !INVISIBLE_FIELDS.has(f.field))
       .map((f) => `${f.field} ${JSON.stringify(f.from)} \u2192 ${JSON.stringify(f.to)}`)
       .join(", ");
     lines.push({ kind: "update", text: `Round ${u.round} "${u.title}" \u2014 ${fields}` });

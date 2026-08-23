@@ -21,6 +21,7 @@ const ASSETS = {
   "/ui.js": "ui.js",
   "/ui.css": "ui.css",
   "/publish-state.mjs": "publish-state.mjs",
+  "/tier.mjs": "tier.mjs",
 };
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css" };
 

@@ -22,7 +22,7 @@
         </div>
 
         <div class="seg" id="status-filter" role="group" aria-label="Status">
-          <button class="on" data-status="all">All</button>
+          <button class="on" data-status="all">In</button>
           <button data-status="keep">Keep</button>
           <button data-status="maybe">Maybe</button>
           <button data-status="cut">Cut</button>
@@ -78,7 +78,8 @@
           <button class="caret" aria-label="Expand"></button>
           <span class="tier"></span>
           <span class="arrow" hidden>&rarr;</span>
-          <span class="tier suggested" hidden></span>
+          <span class="tier suggested" role="button" tabindex="0" hidden></span>
+          <button class="tier-dismiss ghost" hidden aria-label="Keep this tier">&times;</button>
           <span class="title" role="textbox" contenteditable="plaintext-only" spellcheck="true"></span>
           <span class="chips"></span>
           <div class="seg status" role="group" aria-label="Status">

@@ -9,6 +9,7 @@
  */
 
 import { describeChanges, publishState } from "/publish-state.mjs";
+import { scoreOf as rawScore, tierAdvice } from "/tier.mjs";
 
 const RATINGS = [
   ["difficulty", "Difficulty", "How hard the thing is to actually pull off"],
@@ -51,20 +52,10 @@ const pending = new Map();
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
-const scoreOf = (t) => {
-  const w = board.model.weights;
-  return t.difficulty * w.difficulty + t.guts * w.guts + t.luck * w.luck;
-};
+const scoreOf = (t) => rawScore(t, board.model.weights);
 
-function suggestedPoints(t) {
-  if (t.round === 0) return 7;
-  const s = scoreOf(t);
-  const { t1, t3, t5 } = board.model.thresholds;
-  if (s <= t1) return 1;
-  if (s <= t3) return 3;
-  if (s <= t5) return 5;
-  return 10;
-}
+/** The single rule for "does this task disagree with its ratings". */
+const advice = (t) => tierAdvice(t, board.model);
 
 // ── Persistence ──────────────────────────────────────────────────────────────
 
@@ -106,7 +97,12 @@ function visibleTasks() {
   const q = filters.q.toLowerCase();
   let list = board.tasks.filter((t) => {
     if (filters.round !== "all" && t.round !== Number(filters.round)) return false;
-    if (filters.status !== "all" && t.status !== filters.status) return false;
+    // "In" is everything still in the running. A cut task is a decision already
+    // made, so it stops taking up room in the list you are working through --
+    // the Cut tab is where it lives, and is the only way back.
+    if (filters.status === "all") {
+      if (t.status === "cut") return false;
+    } else if (t.status !== filters.status) return false;
     if (filters.flagged && !t.rewrite) return false;
     if (q && !`${t.title} ${t.note}`.toLowerCase().includes(q)) return false;
     return true;
@@ -115,7 +111,10 @@ function visibleTasks() {
   const by = {
     doc: (a, b) => ROUND_RANK[a.round] - ROUND_RANK[b.round] || a.points - b.points || a.docOrder - b.docOrder,
     score: (a, b) => scoreOf(b) - scoreOf(a),
-    mismatch: (a, b) => Math.abs(b.points - suggestedPoints(b)) - Math.abs(a.points - suggestedPoints(a)) || scoreOf(b) - scoreOf(a),
+    // Dismissed tiers sort as agreeing, so the sort matches the header count.
+    mismatch: (a, b) =>
+      (advice(b).show ? Math.abs(b.points - advice(b).suggested) : 0) -
+      (advice(a).show ? Math.abs(a.points - advice(a).suggested) : 0) || scoreOf(b) - scoreOf(a),
     payoff: (a, b) => a.payoff - b.payoff || b.risk - a.risk,
     risk: (a, b) => b.risk - a.risk || a.payoff - b.payoff,
     luck: (a, b) => b.luck - a.luck,
@@ -137,7 +136,7 @@ function chipsFor(task) {
 }
 
 function paint(row, task) {
-  const suggested = suggestedPoints(task);
+  const { suggested, show } = advice(task);
 
   row.classList.toggle("is-cut", task.status === "cut");
 
@@ -147,13 +146,20 @@ function paint(row, task) {
 
   const sug = row.querySelector(".tier.suggested");
   const arrow = row.querySelector(".arrow");
-  const disagrees = suggested !== task.points;
-  sug.hidden = !disagrees;
-  arrow.hidden = !disagrees;
-  if (disagrees) {
+  const dismiss = row.querySelector(".tier-dismiss");
+  sug.hidden = !show;
+  arrow.hidden = !show;
+  dismiss.hidden = !show;
+  if (show) {
     sug.textContent = suggested;
     sug.className = `tier suggested t${suggested}`;
-    sug.title = `Ratings put this at ${suggested}, the doc has it at ${task.points} (score ${scoreOf(task).toFixed(1)})`;
+    sug.title =
+      `Suggestion, not a pending change: this task is ${task.points}pt, ` +
+      `but its ratings score ${scoreOf(task).toFixed(1)}, which lands in the ${suggested}pt tier. ` +
+      `Click to move it to ${suggested}pt.`;
+    dismiss.title =
+      `Keep this task at ${task.points}pt and stop suggesting ${suggested}pt. ` +
+      `If you re-rate it into a different tier the suggestion comes back.`;
   }
 
   const title = row.querySelector(".title");
@@ -218,6 +224,32 @@ function buildRow(task) {
   row.querySelector(".caret").addEventListener("click", () => {
     row.classList.toggle("open");
     row.querySelector(".body").hidden = !row.classList.contains("open");
+  });
+
+  // Accept: take the suggested tier. Clearing tierOk matters -- a tier the user
+  // has just agreed to is not a tier they have rejected, and leaving a stale
+  // rejection behind would silence the next genuine disagreement.
+  const acceptTier = () => {
+    const { suggested, show } = advice(task);
+    if (!show) return;
+    save(task, { points: suggested, tierOk: null });
+    paint(row, task);
+    renderSummary();
+  };
+  const sug = row.querySelector(".tier.suggested");
+  sug.addEventListener("click", acceptTier);
+  sug.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); acceptTier(); }
+  });
+
+  // Dismiss: record which suggestion was rejected, so re-rating into a
+  // different tier resurfaces it. See tier.mjs.
+  row.querySelector(".tier-dismiss").addEventListener("click", () => {
+    const { suggested, show } = advice(task);
+    if (!show) return;
+    save(task, { tierOk: suggested });
+    paint(row, task);
+    renderSummary();
   });
 
   const title = row.querySelector(".title");
@@ -295,7 +327,7 @@ function renderList() {
 
 function renderSummary() {
   const kept = board.tasks.filter((t) => t.status !== "cut");
-  const mismatched = kept.filter((t) => t.points !== suggestedPoints(t)).length;
+  const mismatched = kept.filter((t) => advice(t).show).length;
   const flagged = board.tasks.filter((t) => t.rewrite).length;
   el.stats.innerHTML =
     `<b>${kept.length}</b> in · <b>${board.tasks.length - kept.length}</b> cut · ` +
@@ -428,6 +460,7 @@ function closePreview() {
 
 function openPreview() {
   const lines = describeChanges(report);
+  const reorder = report?.counts?.reorder ?? 0;
   el.publishChanges.replaceChildren(
     ...lines.map(({ kind, text }) => {
       const li = document.createElement("li");
@@ -436,6 +469,17 @@ function openPreview() {
       return li;
     })
   );
+
+  // Disclosed as one line rather than one line per task. Cutting a task
+  // renumbers everything below it, so itemizing these buries the decisions that
+  // matter -- but hiding them entirely would mean the preview did not account
+  // for something the publish is about to write.
+  if (reorder > 0) {
+    const li = document.createElement("li");
+    li.dataset.kind = "reorder";
+    li.textContent = `${reorder} other task${reorder === 1 ? "" : "s"} move position in the player's list`;
+    el.publishChanges.append(li);
+  }
 
   const warnings = report?.warnings ?? [];
   el.publishWarnings.hidden = !warnings.length;
@@ -447,7 +491,10 @@ function openPreview() {
     })
   );
 
-  el.publishConfirm.textContent = `Publish ${lines.length} change${lines.length === 1 ? "" : "s"}`;
+  // Counts decisions, not rows written, so it matches the banner above it.
+  el.publishConfirm.textContent = lines.length
+    ? `Publish ${lines.length} change${lines.length === 1 ? "" : "s"}`
+    : "Publish new task order";
   el.publishPreview.hidden = false;
   el.publishReview.textContent = "Hide";
 }

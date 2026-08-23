@@ -119,6 +119,27 @@ export function desiredRows(board, warnings = []) {
 const OWNED = ["title", "points", "requires_video", "is_secret", "sort_order"];
 
 /**
+ * True when an update changes nothing a player could see.
+ *
+ * `sort_order` is dense -- `(i + 1) * 10` over the live tasks only -- so cutting
+ * one task renumbers every task below it. Two real cuts produced 31 updates, 29
+ * of which were renumbering, and the preview listed all 31 directly above a live
+ * write button. Reordering is still published; it just stops being counted and
+ * itemized as though someone had decided something.
+ *
+ * `board_id` is migration bookkeeping rather than anything a player sees, so it
+ * does not promote a slot move into a content change, and a patch that is
+ * nothing but a link write is not a change either. Every other field is.
+ */
+const INVISIBLE = new Set(["sort_order", "board_id"]);
+
+export function isReorderOnly(update) {
+  const keys = Object.keys(update?.patch ?? {});
+  if (!keys.length) return false;
+  return keys.every((k) => INVISIBLE.has(k));
+}
+
+/**
  * Works out what would have to change for the app to match the board.
  *
  * Nothing here can express a deletion. A task that is cut is deactivated
@@ -544,15 +565,24 @@ export function syncReport({ plan, live = [], migrated = true, refusal = null, a
     });
 
   const collisions = plan.collisions ?? [];
+  // Split, never drop: the reorderings are still applied by applyPlan, which
+  // reads `plan.update`. Only the number and the list the canvas shows change,
+  // so `counts.reorder` keeps them visible rather than silently disappearing a
+  // difference between the board and what players see.
+  const reorder = plan.update.filter(isReorderOnly);
+  const material = plan.update.filter((u) => !isReorderOnly(u));
   return {
     ok: !refusal && !collisions.length && migrated,
     applied,
-    count: changeCount(plan),
+    // Deliberately not `changeCount(plan)`, which stays the number of rows that
+    // would be written and is what the CLI and the apply path want.
+    count: plan.insert.length + material.length + plan.deactivate.length + plan.reactivate.length,
     counts: {
       insert: plan.insert.length,
-      update: plan.update.length,
+      update: material.length,
       deactivate: plan.deactivate.length,
       reactivate: plan.reactivate.length,
+      reorder: reorder.length,
     },
     migrated,
     refusal: refusal ?? null,
@@ -565,7 +595,7 @@ export function syncReport({ plan, live = [], migrated = true, refusal = null, a
         title: r.title,
         points: r.points,
       })),
-      update: itemize(plan.update),
+      update: itemize(material),
       reactivate: itemize(plan.reactivate),
       deactivate: plan.deactivate.map((d) => ({ board_id: d.board_id, round: d.round, title: d.title })),
     },

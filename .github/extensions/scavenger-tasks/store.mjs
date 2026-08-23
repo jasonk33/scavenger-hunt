@@ -41,6 +41,9 @@ const EDITABLE = {
   status: (v) => (STATUSES.includes(v) ? v : undefined),
   needsClip: (v) => (typeof v === "boolean" ? v : undefined),
   rewrite: (v) => (typeof v === "boolean" ? v : undefined),
+  // The tier suggestion this task's owner rejected, or null for "never
+  // dismissed". A number rather than a flag on purpose: see tier.mjs.
+  tierOk: (v) => (v === null ? null : TIERS.includes(Number(v)) ? Number(v) : undefined),
   ...Object.fromEntries(
     RATINGS.map((k) => [k, (v) => (Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 5 ? Number(v) : undefined)])
   ),
@@ -52,7 +55,7 @@ let cache = null;
 const CUSTOM_DEFAULTS = {
   round: 1, docTitle: "", title: "Untitled task", points: 3, docOrder: 999,
   difficulty: 3, guts: 3, luck: 3, payoff: 3, risk: 1,
-  needsClip: false, prop: "", status: "maybe", rewrite: false, note: "", custom: true,
+  needsClip: false, prop: "", status: "maybe", rewrite: false, note: "", tierOk: null, custom: true,
 };
 
 function emptyBoard() {

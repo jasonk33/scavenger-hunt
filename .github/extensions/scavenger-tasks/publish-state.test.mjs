@@ -18,7 +18,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { publishState } from "./publish-state.mjs";
+import { describeChanges, publishState } from "./publish-state.mjs";
 
 /** A well-formed converged report, as `task-sync.mjs --json` emits one. */
 const clean = (over = {}) => ({
@@ -193,4 +193,130 @@ test("a blocked report stays blocked rather than being softened to stale", () =>
   );
   assert.equal(state.kind, "blocked");
   assert.equal(state.canPublish, false);
+});
+
+// --------------------------------------------------------------- reordering
+//
+// `syncReport` reports a slot move separately from a content change, so the
+// count above the publish button describes decisions rather than renumbering.
+// The banner then has one new way to be wrong, and it is the familiar one: a
+// board whose ONLY pending change is reordering must not read as "all live",
+// because the order players see would still be the old one.
+
+const reorder = (n, over = {}) =>
+  clean({
+    counts: { insert: 0, update: 0, deactivate: 0, reactivate: 0, reorder: n },
+    ...over,
+  });
+
+test("reordering alone is publishable and never reads as everything being live", () => {
+  const state = publishState(reorder(29));
+  assert.notEqual(state.kind, "clean", "the player-visible order is still the old one");
+  assert.equal(state.canPublish, true);
+  assert.match(state.headline + " " + state.detail, /29/);
+});
+
+test("one reordering reads as singular", () => {
+  const state = publishState(reorder(1));
+  assert.match(state.headline + " " + state.detail, /1 task\b/);
+  assert.doesNotMatch(state.headline + " " + state.detail, /1 tasks/);
+});
+
+test("real changes alongside reordering count only the real ones, but say so", () => {
+  const state = publishState(reorder(29, { count: 2, counts: { insert: 0, update: 0, deactivate: 2, reactivate: 0, reorder: 29 } }));
+  assert.equal(state.kind, "pending");
+  assert.equal(state.count, 2, "the headline number is the number of decisions");
+  assert.match(state.headline, /2 changes/);
+  assert.match(state.detail, /29/, "the reordering is still disclosed, not hidden");
+});
+
+test("no changes and no reordering is still clean", () => {
+  const state = publishState(reorder(0));
+  assert.equal(state.kind, "clean");
+  assert.equal(state.canPublish, false);
+});
+
+test("a report from before reordering was split out is still clean at zero", () => {
+  // counts.reorder is absent on an older report; a missing field must not be
+  // read as "there is reordering pending".
+  const state = publishState(clean());
+  assert.equal(state.kind, "clean");
+});
+
+test("reordering never rescues a broken report into looking publishable", () => {
+  for (const bad of [null, undefined, "nope", { ok: false, counts: { reorder: 5 } }, { error: "boom", counts: { reorder: 5 } }]) {
+    const state = publishState(bad);
+    assert.equal(state.canPublish, false);
+    assert.equal(state.count, null);
+  }
+});
+
+test("reordering does not survive the board going stale underneath it", () => {
+  const state = publishState(reorder(29, { checkedAt: 100 }), { staleSince: 200 });
+  assert.equal(state.canPublish, false, "the renumbering was measured against an older board");
+});
+
+// ------------------------------------------------- what a change line says
+//
+// Filtering out updates that are ONLY a slot move is not enough: a real change
+// that happens to also move the task still carried `sort_order 90 -> 240` on
+// the end of its line, which is the same noise in a place the filter could not
+// reach. A change line should say what a person decided and nothing else.
+
+const updateReport = (fields) =>
+  clean({
+    count: 1,
+    counts: { insert: 0, update: 1, deactivate: 0, reactivate: 0, reorder: 0 },
+    changes: {
+      insert: [],
+      reactivate: [],
+      deactivate: [],
+      update: [{ board_id: "r2-04", round: 2, title: "Get an old lady to flip off the camera", fields }],
+    },
+  });
+
+test("a change line shows the decision without the slot move that came with it", () => {
+  const [line] = describeChanges(
+    updateReport([
+      { field: "points", from: 3, to: 10 },
+      { field: "sort_order", from: 90, to: 240 },
+    ])
+  );
+  assert.match(line.text, /points 3 → 10/);
+  assert.doesNotMatch(line.text, /sort_order/, "the reordering footnote already accounts for this");
+  assert.doesNotMatch(line.text, /240/);
+});
+
+test("board_id linking is bookkeeping and never appears on a change line", () => {
+  const [line] = describeChanges(
+    updateReport([
+      { field: "title", from: "Old wording", to: "New wording" },
+      { field: "board_id", from: null, to: "r2-04" },
+    ])
+  );
+  assert.match(line.text, /title/);
+  assert.doesNotMatch(line.text, /board_id/);
+});
+
+test("every other field still shows, so nothing real is filtered out", () => {
+  const [line] = describeChanges(
+    updateReport([
+      { field: "points", from: 3, to: 10 },
+      { field: "title", from: "A", to: "B" },
+      { field: "requires_video", from: false, to: true },
+      { field: "is_secret", from: false, to: true },
+    ])
+  );
+  for (const f of ["points", "title", "requires_video", "is_secret"]) {
+    assert.match(line.text, new RegExp(f), `${f} must survive the filter`);
+  }
+});
+
+test("a change line is never left empty by the filter", () => {
+  // An update with nothing but invisible fields is excluded upstream by
+  // syncReport, so this asserts the two halves agree: if a line is produced at
+  // all, it has something to say.
+  for (const line of describeChanges(updateReport([{ field: "points", from: 1, to: 3 }]))) {
+    assert.match(line.text, /\S — \S/, "a line always names at least one real field");
+  }
 });
