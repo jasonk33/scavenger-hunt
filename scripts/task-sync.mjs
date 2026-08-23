@@ -250,25 +250,50 @@ export function loadBoard() {
  * about, so this cannot pass unnoticed.
  */
 export async function fetchTaskRows(db, extra = "") {
+  return (await readTasks(db, extra)).rows;
+}
+
+/**
+ * @returns {{rows: object[], migrated: boolean}} `migrated` is false when the
+ * board_id column is not there yet, which is the signal that
+ * migrate-task-board-id.sql still needs running.
+ */
+async function readTasks(db, extra = "") {
   const columns = `id,round,title,points,requires_video,is_secret,sort_order,active${extra}`;
   let { data, error } = await db.from("tasks").select(`${columns},board_id`);
-  if (error?.message?.includes("board_id")) ({ data, error } = await db.from("tasks").select(columns));
+  if (error?.message?.includes("board_id")) {
+    ({ data, error } = await db.from("tasks").select(columns));
+    if (!error) return { rows: data ?? [], migrated: false };
+  }
   if (error) throw new Error(`could not read tasks: ${error.message}`);
-  return data ?? [];
+  return { rows: data ?? [], migrated: true };
 }
 
 /** Reads the board and the live table and returns the plan. Read-only. */
 export async function buildPlan(db) {
-  const tasks = await fetchTaskRows(db);
+  const { rows, migrated } = await readTasks(db);
   const { data: subs } = await db.from("submissions").select("task_id");
   const submissionCounts = {};
   for (const s of subs ?? []) submissionCounts[s.task_id] = (submissionCounts[s.task_id] ?? 0) + 1;
 
-  return { plan: planTaskSync(loadBoard(), tasks, { submissionCounts }), live: tasks };
+  return { plan: planTaskSync(loadBoard(), rows, { submissionCounts }), live: rows, migrated };
 }
 
-/** Applies a plan. Only ever writes to `tasks`. */
-export async function applyPlan(db, plan) {
+/**
+ * Applies a plan. Only ever writes to `tasks`.
+ *
+ * Refuses outright if the board_id column is missing. Every insert and update
+ * carries a board_id, so an unmigrated database would reject the first write and
+ * leave the rest unapplied -- a half-published task list, which is precisely the
+ * state that cannot be allowed to happen on the day.
+ */
+export async function applyPlan(db, plan, { migrated = true } = {}) {
+  if (!migrated) {
+    throw new Error(
+      "tasks.board_id does not exist -- run supabase/migrate-task-board-id.sql first. " +
+        "Nothing was written."
+    );
+  }
   if (plan.insert.length) {
     const { error } = await db.from("tasks").insert(plan.insert);
     if (error) throw new Error(`insert failed: ${error.message}`);
@@ -338,15 +363,18 @@ async function main() {
   });
 
   const apply = process.argv.includes("--apply");
-  const { plan, live } = await buildPlan(db);
+  const { plan, live, migrated } = await buildPlan(db);
   console.log(describePlan(plan, live));
 
   const n = plan.insert.length + plan.update.length + plan.deactivate.length + plan.reactivate.length;
   if (!apply) {
-    console.log(`\nDry run. ${n} change(s) would be written. Re-run with --apply to publish.`);
+    console.log(
+      `\nDry run. ${n} change(s) would be written. Re-run with --apply to publish.` +
+        (migrated ? "" : "\nRun supabase/migrate-task-board-id.sql first -- --apply will refuse until you do.")
+    );
     return;
   }
-  await applyPlan(db, plan);
+  await applyPlan(db, plan, { migrated });
   console.log(`\nPublished ${n} change(s) to the tasks table. Submissions and media untouched.`);
 }
 

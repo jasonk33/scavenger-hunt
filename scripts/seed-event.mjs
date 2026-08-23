@@ -198,8 +198,8 @@ async function wipe() {
  * deactivated rather than deleted -- this must not take submissions with it.
  */
 async function reconcileTasks() {
-  const { plan } = await buildPlan(db);
-  await applyPlan(db, plan);
+  const { plan, migrated } = await buildPlan(db);
+  await applyPlan(db, plan, { migrated });
   for (const w of plan.warnings) console.log(`  ! ${w}`);
   return {
     inserted: plan.insert.length,

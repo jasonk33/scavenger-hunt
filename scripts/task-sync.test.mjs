@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeTitle, effectiveTitle, desiredRows, planTaskSync } from "./task-sync.mjs";
+import { normalizeTitle, effectiveTitle, desiredRows, planTaskSync, applyPlan } from "./task-sync.mjs";
 
 /** Minimal board task; every field the planner reads has a default. */
 function task(over = {}) {
@@ -244,12 +244,40 @@ test("the plan never proposes writing revealed_at", () => {
   for (const r of plan.insert) assert.ok(!("revealed_at" in r));
 });
 
-test("two tasks in the same round may not resolve to the same title", () => {
-  // unique (round, title) survives the migration, so a collision has to be caught
+test("two tasks in the same round may not resolve to the same title", () => {  // unique (round, title) survives the migration, so a collision has to be caught
   // here rather than as a constraint violation halfway through an --apply.
   const plan = planTaskSync(
     board([task({ id: "r1-a", title: "Same" }), task({ id: "r1-b", docOrder: 2, title: "Same" })]),
     []
   );
   assert.ok(plan.warnings.some((w) => /duplicate title/i.test(w)));
+});
+
+// ------------------------------------------------------------------- applying
+
+test("applyPlan refuses to write anything if the migration has not been run", async () => {
+  // Every insert and update carries a board_id, so an unmigrated database would
+  // reject the first write and leave the rest unapplied -- a half-published task
+  // list. Refusing up front is the only safe behaviour.
+  const calls = [];
+  const db = {
+    from(tableName) {
+      calls.push(tableName);
+      throw new Error("must not reach the database");
+    },
+  };
+  const plan = planTaskSync(board([task()]), []);
+  assert.equal(plan.insert.length, 1);
+  await assert.rejects(
+    () => applyPlan(db, plan, { migrated: false }),
+    /migrate-task-board-id\.sql/
+  );
+  assert.deepEqual(calls, [], "nothing may be written");
+});
+
+test("applyPlan is a no-op on an empty plan", async () => {
+  const calls = [];
+  const db = { from: (t) => (calls.push(t), { insert: async () => ({}), update: () => ({ eq: async () => ({}), in: async () => ({}) }) }) };
+  await applyPlan(db, planTaskSync(board([task()]), [live()]), { migrated: true });
+  assert.deepEqual(calls, []);
 });
