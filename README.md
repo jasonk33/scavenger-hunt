@@ -109,13 +109,18 @@ submissions; `npm run smoke -- --allow-prod` overrides that once the event is
 not running.
 
 ```bash
-npm run qa        # also with the dev server running
+npm run qa            # also with the dev server running
+npm run qa -- judge   # just the drivers matching "judge"
 ```
 
 `qa` drives the app through a real browser with Playwright: picking files through
 the actual file chooser, cancelling mid-upload, judging, flipping to Round 2 with
 a Round 1 backlog still pending, and racing two judges against the same
 submission. `smoke` proves the API is right; `qa` proves the screens are.
+
+The full suite is 17 drivers and takes about six minutes, so while you are
+iterating, name the one you want — `AGENTS.md` lists what each driver covers. It
+needs Round 1 to be the active round.
 
 On a fresh clone, download the browser binary once first:
 

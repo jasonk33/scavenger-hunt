@@ -141,7 +141,33 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
 `npm run dev` first for the first two. **Localhost and production share one Supabase project**
 — "testing locally" writes real data. Prefer localhost for destructive exploration.
 
-- `npm run qa` — 17 Playwright drivers in `qa/` driving the real UI.
+- `npm run qa` — 17 Playwright drivers in `qa/` driving the real UI. ~6 min, strictly
+  serial. **Run only the driver(s) covering what you changed**, not the suite: `npm run qa
+  -- judge` runs every driver whose filename matches (`node qa/flow2-judge.mjs` also works
+  and is identical). The whole suite is for before a PR, and before the event.
+  Every driver assumes **Round 1 is active** — the fixtures are rostered into round 1, so
+  the suite fails wholesale while `active_round` is 2.
+
+  | driver | covers | ~ |
+  |---|---|---|
+  | `flow1-upload` | `/` join → identity, `/submit` upload via the real file chooser, progress card, mid-flight Cancel, `.mov` relabel, offline failure copy, no phantom `uploading` rows | 15s |
+  | `flow2-judge` | `/judge` PIN gate, approve with bonus + star, controls resetting between items, reject reasons, the player's rejection banner and Retry, re-review, Undo, reassignment, `/leaderboard` | 12s |
+  | `flow3-roundflip` | the 3:30 break: Admin round flip, remix, the **remix defence**, judging a Round 1 backlog while Round 2 is live, player mid-flip, two judges racing one item, closing submissions | 40s |
+  | `flow4-identity-theme` | identity switching and its warnings, stale/unrostered players, theme toggle + pre-paint persistence, `/go`, the notice banner, editing a task after it scored, deleting a task that has submissions | 40s |
+  | `flow5-admin` | `/admin` tabs, task add/edit/validation, roster copy and cross-round refusal, player/team delete guards, `/api/admin/health`, PIN gating of every admin + judge endpoint, feed past 60 approvals | 25s |
+  | `flow6-scoring` | scoring invariants: once per team, best-of duplicates, fallback, bonus clamp, `/api/export` CSV, feed weight on a phone | 17s |
+  | `flow7-concurrency` | 10 simultaneous reservations + bursts of 30/60 for **object-path collisions**, 10 real browsers uploading at once, team attribution, queue completeness, poll load | 10s |
+  | `flow8-load` | the same shape with real iPhone-sized media (3 MB photos, a 20 MB clip past the tus chunk boundary), 12 phones, storage sizes, organizer screens under load. `QA_N` overrides the count | 12s |
+  | `probe-admin-ui` | `/admin` as an organizer actually taps it: tab state, tap-a-task inline editor (title, points, video-only, secret), tap-a-player editor, event-tab controls | 20s |
+  | `probe-cancel-race` | holds the finalize PATCH to force the cancel-vs-complete window — the `settled` ref. The UI must never say "Nothing was sent" about a queued row | 17s |
+  | `probe-cancel-video` | the same two failures isolated from flow 1: video upload alone, a genuinely throttled mid-flight cancel, cancel racing completion | 14s |
+  | `probe-groups-notes` | `group_id`: many files as one decision, notes reaching the judge, group forgery across teams/tasks, notes frozen once judged, the player's and the feed's collapsed view, counts meaning decisions not files | 23s |
+  | `probe-loading` | holds each screen's data endpoint and asserts `/leaderboard`, `/feed`, `/judge`, `/submit` never claim a result during the pre-load window | 20s |
+  | `probe-media` | media actually decodes: judge photo pixels, `<video>` with `#t=0.1` + `preload=auto` + `playsinline` + metadata, feed rendering | 14s |
+  | `probe-secret` | secret challenges: hidden from the list *and* from `/api/state`, server refuses a guessed id, Reveal from the Secret challenges card, un-reveal, real secrets untouched | 16s |
+  | `probe-truncation` | geometry of every name on `/`, `/leaderboard`, `/submit`, `/feed`, `/judge` at 390→260px, including an unbreakable team name. Zero clipping, no sideways scroll | 30s |
+  | `probe-visibility` | `See` on a team's submissions, the judge reaching the **back** of the queue, rejected items in the feed and their filter, 320px overflow, and a filter outliving the control that clears it | 70s |
+
 - `npm run smoke` — API-level suite; self-contained, doesn't import `qa/lib.mjs`.
 - `npm test` — `node --test` over `scripts/*.test.mjs`. Pure functions, no DB, no dev server;
   this is where the task-sync planner is proved.
