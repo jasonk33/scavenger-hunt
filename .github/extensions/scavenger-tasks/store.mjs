@@ -8,25 +8,31 @@
  * instance of the canvas reads and writes this one file.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBoardPath } from "../../../scripts/board-path.mjs";
 import { DEFAULT_MODEL, SEED_TASKS } from "./seed.mjs";
 
 /*
- * Resolved relative to this file, which lives at `.github/extensions/
- * scavenger-tasks/` inside the app repo -- so the canvas and
- * `scripts/task-sync.mjs` always read and write the same board in the same
- * checkout. It used to be an absolute path into one person's home directory,
- * which is both unshippable in a committed file and the asymmetry that made a
- * worktree publish a stale board.
+ * The canonical board, which is not necessarily the copy in this checkout.
  *
- * The remaining worktree hazard -- a canvas opened in a linked worktree editing
- * a board nobody publishes -- is caught by `worktreeRefusal` in
- * `scripts/task-sync.mjs` and surfaced in the publish banner, rather than being
- * checked a second time here.
+ * Resolution lives in `scripts/board-path.mjs` because `scripts/task-sync.mjs`
+ * has to reach exactly the same file: if the canvas writes one board and the
+ * publisher reads another, the publisher computes a plan from a board nobody
+ * edited and pushes it over live tasks while reporting success.
+ *
+ * In a linked worktree that means the MAIN checkout's board rather than the
+ * worktree's own committed copy, so a worktree session can edit and publish
+ * like any other. `canonical: false` is the single case that is still unsafe --
+ * a worktree whose main checkout cannot be located -- and it is surfaced rather
+ * than silently written to.
  */
-export const BOARD_PATH = fileURLToPath(new URL("../../../data/task-board.json", import.meta.url));
+const LOCAL_BOARD = fileURLToPath(new URL("../../../data/task-board.json", import.meta.url));
+const RESOLVED = resolveBoardPath(LOCAL_BOARD);
+export const BOARD_PATH = RESOLVED.path;
+export const BOARD_IS_CANONICAL = RESOLVED.canonical;
+export const BOARD_REASON = RESOLVED.reason;
 
 const RATINGS = ["difficulty", "guts", "luck", "payoff", "risk"];
 const STATUSES = ["keep", "maybe", "cut"];
@@ -50,6 +56,27 @@ const EDITABLE = {
 };
 
 let cache = null;
+/**
+ * Identity of the file the cache was read from. The cache used to have nothing
+ * that could invalidate it, so a process served its first read forever and any
+ * later save wrote that stale copy back -- silently reverting whatever another
+ * session had done in between. More than one canvas can be open on this board
+ * at once, so the cache has to be able to notice it is out of date.
+ *
+ * `ino` is load-bearing rather than belt-and-braces: `saveBoard` writes a temp
+ * file and renames it over the board, so every save replaces the inode. That
+ * makes a concurrent save detectable even if the clock has not moved.
+ */
+let cacheStamp = "";
+
+function fileStamp() {
+  try {
+    const s = statSync(BOARD_PATH);
+    return `${s.mtimeMs}:${s.size}:${s.ino}`;
+  } catch {
+    return "";
+  }
+}
 
 /** Shape every task must have, used to backfill anything added after the seed. */
 const CUSTOM_DEFAULTS = {
@@ -103,10 +130,12 @@ function normalize(raw) {
 }
 
 export function loadBoard() {
-  if (cache) return cache;
+  const stamp = fileStamp();
+  if (cache && stamp && stamp === cacheStamp) return cache;
   try {
     if (existsSync(BOARD_PATH)) {
       cache = normalize(JSON.parse(readFileSync(BOARD_PATH, "utf8")));
+      cacheStamp = stamp;
       return cache;
     }
   } catch {
@@ -125,6 +154,9 @@ export function saveBoard(board) {
   const tmp = `${BOARD_PATH}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(board, null, 2)}\n`, "utf8");
   renameSync(tmp, BOARD_PATH);
+  // Adopt the identity of what was just written, so this process does not
+  // immediately re-read its own save.
+  cacheStamp = fileStamp();
   return board;
 }
 

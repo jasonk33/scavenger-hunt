@@ -17,7 +17,7 @@ import {
   desiredRows,
   planTaskSync,
   applyPlan,
-  worktreeRefusal,
+  boardRefusal,
   changeCount,
   isReorderOnly,
   syncReport,
@@ -531,63 +531,37 @@ test("applyPlan refuses a plan with a genuine title collision and writes nothing
 // ------------------------------------------------------- wrong-checkout guard
 
 /**
- * The canvas resolves the board by an absolute path into the main checkout, so a
- * run from a linked worktree would read that worktree's committed copy and
- * publish a plan computed from a stale board. `worktreeRefusal` is the pure half
- * of the guard: it takes the two git answers rather than shelling out, so every
- * branch here is reachable from a fixture.
+ * A linked worktree no longer refuses: `scripts/board-path.mjs` resolves it to
+ * the MAIN checkout's board, which is the same file the canvas edits, so a
+ * worktree session is usable for task work. Which path is chosen is proved in
+ * `board-path.test.mjs`.
+ *
+ * What survives here is the one case that is still unsafe: a worktree whose
+ * main checkout could not be located, where the only reachable board is known
+ * to be the wrong one. Publishing it would revert live tasks to a stale copy.
  */
-const MAIN = { gitDir: ".git", gitCommonDir: ".git", cwd: "/repo", boardPath: "/repo/data/task-board.json" };
-const LINKED = {
-  gitDir: "/repo/.git/worktrees/wt",
-  gitCommonDir: "/repo/.git",
-  cwd: "/wt",
-  boardPath: "/wt/data/task-board.json",
-};
 
-test("the guard stays quiet in the main checkout, where both git dirs are the same", () => {
-  assert.equal(worktreeRefusal(MAIN), null);
-  // Absolute and relative forms of the same directory must not read as a split.
-  assert.equal(worktreeRefusal({ ...MAIN, gitCommonDir: "/repo/.git" }), null);
+test("a resolvable board never refuses, however it was resolved", () => {
+  for (const reason of ["main checkout", "main checkout via worktree", "not a git worktree"]) {
+    assert.equal(boardRefusal({ canonical: true, reason, path: "/repo/data/task-board.json" }), null);
+  }
 });
 
-test("the guard fires in a linked worktree and names both boards", () => {
-  const msg = worktreeRefusal(LINKED);
-  assert.ok(msg, "a linked worktree must refuse");
-  assert.ok(msg.includes("/wt/data/task-board.json"), "must name the board it would have read");
-  assert.ok(msg.includes("/repo/data/task-board.json"), "must name the canonical board");
-  assert.match(msg, /canvas/i, "must explain that the canvas writes to the main checkout");
-  // Different paths entirely: the canonical board must be derived, not hardcoded.
-  const other = worktreeRefusal({
-    gitDir: "/a/b/.git/worktrees/z",
-    gitCommonDir: "/a/b/.git",
-    cwd: "/x/y",
-    boardPath: "/x/y/data/task-board.json",
+test("an unlocatable main checkout refuses and names the board it would have read", () => {
+  const msg = boardRefusal({
+    canonical: false,
+    reason: "this is a linked git worktree and the main checkout could not be located from /srv/bare.git",
+    path: "/wt/data/task-board.json",
   });
-  assert.ok(other.includes("/a/b/data/task-board.json"), "the canonical board is derived");
+  assert.ok(msg, "an unlocatable main checkout must refuse");
+  assert.ok(msg.includes("/wt/data/task-board.json"), "must name the board it would have read");
+  assert.match(msg, /revert live tasks/, "must say what goes wrong, not just that it stopped");
+  assert.match(msg, /TASK_SYNC_ALLOW_WORKTREE/, "must name the override");
 });
 
-test("the guard degrades to quiet when git cannot answer", () => {
-  // No git binary, a tarball, or any other non-repo: refusing here would break a
-  // fresh clone and CI, and a guard that cries wolf gets disabled.
-  assert.equal(worktreeRefusal({ ...MAIN, gitDir: null, gitCommonDir: null }), null);
-  assert.equal(worktreeRefusal({ ...MAIN, gitDir: "", gitCommonDir: "" }), null);
-  // A git too old for --git-common-dir echoes the flag back instead of failing.
-  assert.equal(worktreeRefusal({ ...MAIN, gitCommonDir: "--git-common-dir" }), null);
-});
-
-test("the guard still refuses when the main checkout cannot be located", () => {
-  // A common dir that is not named `.git` (bare, or a relocated git dir) leaves
-  // nothing to point at, but the read is no less wrong, so it must not pass.
-  const msg = worktreeRefusal({ ...LINKED, gitCommonDir: "/repo/bare.git" });
-  assert.ok(msg, "an unlocatable main checkout must still refuse");
-  assert.ok(msg.includes("/wt/data/task-board.json"));
-});
-
-test("a submodule is not mistaken for a worktree", () => {
-  // `git rev-parse` gives a submodule the same answer twice, just not `.git`.
-  const g = "/repo/.git/modules/sub";
-  assert.equal(worktreeRefusal({ gitDir: g, gitCommonDir: g, cwd: "/repo/sub", boardPath: "/repo/sub/data/task-board.json" }), null);
+test("the refusal carries the resolver's own reason rather than a generic one", () => {
+  const msg = boardRefusal({ canonical: false, reason: "some specific git situation", path: "/wt/data/task-board.json" });
+  assert.ok(msg.includes("some specific git situation"), "the fix is in the reason, so it must survive");
 });
 
 // --------------------------------------------------------------- json report
@@ -631,10 +605,14 @@ test("a converged plan reports ok with a zero count", () => {
   assert.deepEqual(report.counts, { insert: 0, update: 0, deactivate: 0, reactivate: 0, reorder: 0 });
 });
 
-test("a worktree refusal makes the report not-ok and carries the reason verbatim", () => {
+test("a board refusal makes the report not-ok and carries the reason verbatim", () => {
   // The canvas renders `refusal` straight into the banner, so it has to survive
   // intact rather than being flattened into a generic failure.
-  const refusal = worktreeRefusal(LINKED);
+  const refusal = boardRefusal({
+    canonical: false,
+    reason: "this is a linked git worktree and the main checkout could not be located from /srv/bare.git",
+    path: "/wt/data/task-board.json",
+  });
   const report = syncReport({ plan: emptyPlan(), live: [], migrated: true, refusal });
   assert.equal(report.ok, false, "a refusal must never report ok");
   assert.equal(report.refusal, refusal);

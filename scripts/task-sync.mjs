@@ -17,10 +17,9 @@
  * against fixtures instead of against the one shared project. See
  * `scripts/task-sync.test.mjs`.
  */
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveBoardPath } from "./board-path.mjs";
 
 /** Tasks are ordered for players by tier, with the secrets last. */
 const secretsLast = (row) => [row.is_secret ? 1 : 0, row.points, row.docOrder];
@@ -321,71 +320,43 @@ export function planTaskSync(board, liveRows, opts = {}) {
 // entry point, so importing the planner in a test never opens a connection.
 // ---------------------------------------------------------------------------
 
-export const BOARD_PATH = new URL("../data/task-board.json", import.meta.url);
+/*
+ * The canonical board, resolved exactly as the scavenger-tasks canvas resolves
+ * it (`scripts/board-path.mjs`). The two MUST agree: if the canvas edits one
+ * file and this reads another, this computes a plan from a board nobody touched
+ * and publishes it over live tasks while reporting success.
+ *
+ * In a linked worktree that means the MAIN checkout's board rather than the
+ * worktree's own committed copy, which is what makes a worktree session usable
+ * for task work at all. It used to refuse outright instead.
+ */
+const LOCAL_BOARD = fileURLToPath(new URL("../data/task-board.json", import.meta.url));
+const RESOLVED = resolveBoardPath(LOCAL_BOARD);
+export const BOARD_PATH = RESOLVED.path;
 
 /**
- * The board and the app must be read from the same checkout. In a linked
- * worktree they are not: the worktree holds its own committed copy of
- * `data/task-board.json`, which is older than whatever is being edited in the
- * main checkout -- and there is only ever one Supabase project behind all of
- * them. So a run there computes a plan from a stale board and publishes it,
- * quietly reverting live tasks while reporting success. It fails silently and in
- * the wrong direction, so both the dry run and `--apply` refuse.
+ * The one remaining reason to refuse: a linked worktree whose main checkout
+ * could not be located, so the only board reachable from here is known to be
+ * the wrong one. Publishing it would revert live tasks to a stale copy, which
+ * fails silently and in the wrong direction -- so both the dry run and
+ * `--apply` stop.
  *
- * The scavenger-tasks canvas resolves the board relative to itself for the same
- * reason, which means a canvas opened in a worktree session edits that
- * worktree's board -- edits nobody publishes and the worktree throws away. The
- * canvas surfaces this refusal rather than repeating the check, so both halves
- * are governed by this one function.
- *
- * Git separates the two with no absolute path baked in: `--git-dir` and
- * `--git-common-dir` name the same directory in the main checkout and diverge in
- * a linked worktree. Pure, so every branch is provable from a fixture.
- *
- * @returns {string|null} the refusal, or null when the board is the canonical one.
+ * Pure, so the refusal is provable from a fixture.
  */
-export function worktreeRefusal({ gitDir, gitCommonDir, cwd, boardPath }) {
-  // No git, not a repo, or a git too old for --git-common-dir (which echoes the
-  // flag back instead of failing). Refusing here would break a fresh clone.
-  if (!gitDir || !gitCommonDir || gitCommonDir.startsWith("-")) return null;
-  const common = resolve(cwd, gitCommonDir);
-  if (resolve(cwd, gitDir) === common) return null;
-
-  const root = basename(common) === ".git" ? dirname(common) : null;
-  const canonical = root ? join(root, "data", "task-board.json") : "(main checkout not locatable)";
+export function boardRefusal({ canonical, reason, path }) {
+  if (canonical) return null;
   return (
-    `refusing to run: this is a linked git worktree.\n` +
-    `  would read: ${boardPath}\n` +
-    `  canonical:  ${canonical}\n` +
-    `The scavenger-tasks canvas writes the board by absolute path into the main checkout, ` +
-    `so edits made there are invisible here and this run would publish a stale board over ` +
-    `live tasks. Run it from the main checkout -- use a branch session rather than a ` +
-    `worktree for task work. TASK_SYNC_ALLOW_WORKTREE=1 overrides deliberately.`
+    `refusing to run: ${reason}.\n` +
+    `  would read: ${path}\n` +
+    `That board is this worktree's own committed copy, not the one the canvas edits, ` +
+    `so publishing it would revert live tasks. Run from the main checkout. ` +
+    `TASK_SYNC_ALLOW_WORKTREE=1 overrides deliberately.`
   );
 }
 
-/** Asks git about this script's own directory, since BOARD_PATH is relative to it. */
 function checkoutRefusal() {
   if (process.env.TASK_SYNC_ALLOW_WORKTREE) return null;
-  const cwd = dirname(fileURLToPath(import.meta.url));
-  let dirs = [];
-  try {
-    dirs = execFileSync("git", ["rev-parse", "--git-dir", "--git-common-dir"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .split("\n")
-      .map((l) => l.trim());
-  } catch {
-    // No git binary, or not a repo at all. Nothing to check against.
-  }
-  return worktreeRefusal({
-    gitDir: dirs[0],
-    gitCommonDir: dirs[1],
-    cwd,
-    boardPath: fileURLToPath(BOARD_PATH),
-  });
+  return boardRefusal({ canonical: RESOLVED.canonical, reason: RESOLVED.reason, path: BOARD_PATH });
 }
 
 export function loadBoard() {
