@@ -48,19 +48,27 @@ Schema and the `team_scores` view live in `supabase/setup.sql`; incremental chan
 `alter table ... add column if not exists` so it stays the whole picture.
 
 - **`data/task-board.json` is the source of truth for task content, points and cuts** — not
-  `setup.sql`, which no longer seeds tasks at all. It is edited through a Copilot canvas
-  extension living outside this repo at `~/.copilot/extensions/scavenger-tasks/`
-  (`store.mjs` holds the schema and validators), and reaches players **only** via
+  `setup.sql`, which no longer seeds tasks at all. It is edited through the Copilot canvas
+  extension in `.github/extensions/scavenger-tasks/` (`store.mjs` holds the schema and
+  validators, and resolves the board relative to itself), and reaches players **only** via
   `npm run sync:tasks`. Nothing else writes task rows. Editing a title in Admin is a
   field-day escape hatch; the next sync will put the board's wording back.
+- **The canvas is project-scoped, so it only loads in a session opened on this repo.** It will
+  not appear in a general chat session. Its publish button shells out to the real
+  `scripts/task-sync.mjs --json`, so it inherits every refusal rather than reimplementing one —
+  **never duplicate planning logic into the canvas.** Its banner must never report a count it
+  did not actually measure; `publish-state.mjs` fails towards `unknown` on purpose, and
+  `publish-state.test.mjs` exists to keep it that way.
 - **Commit a board edit on its own.** The canvas writes the file the moment the user changes a
   rating, so a session doing code work will find it already dirty through no action of its own.
   Never let `git add -A` fold it into an unrelated commit: what changed on the board, and when,
   is the event's own history.
-- **Task work belongs in a branch session, not a worktree.** The canvas resolves the board by
-  absolute path into the main checkout, so a worktree's copy is always the stale committed one.
-  `sync:tasks` now refuses there — `git rev-parse --git-dir` vs `--git-common-dir`; override with
-  `TASK_SYNC_ALLOW_WORKTREE=1`.
+- **Task work belongs in a branch session, not a worktree.** Both the canvas and `sync:tasks`
+  resolve the board relative to themselves, so in a worktree they agree — on that worktree's
+  stale committed copy, while the one shared Supabase project is behind all of them. Publishing
+  there reverts live tasks; editing there produces board changes nobody publishes. `sync:tasks`
+  refuses — `git rev-parse --git-dir` vs `--git-common-dir` — and the canvas surfaces that same
+  refusal in its banner. Override with `TASK_SYNC_ALLOW_WORKTREE=1`.
 - Board tasks carry a stable `id` (`r1-01`, `s-04`) mirrored onto `tasks.board_id`. That is
   the sync key — **never match tasks on their title**, which 8 tasks have already outgrown.
 - **Secrets sit at `round: 0` on the board but `tasks.round` is `check (round in (1, 2))`**,

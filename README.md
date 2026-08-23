@@ -65,12 +65,23 @@ something. Use `seed:reset` to clear your own testing before the day.
 ```bash
 npm run sync:tasks            # show what would change, write nothing
 npm run sync:tasks -- --apply # publish it
+npm run sync:tasks -- --json  # the same run as one JSON object, for the canvas
 ```
 
 Tasks are edited on the board at `data/task-board.json` — titles, point tiers,
-which need a clip, and which are cut — through the Copilot canvas at
-`~/.copilot/extensions/scavenger-tasks/`. This is the only thing that carries
-those edits to players.
+which need a clip, and which are cut — through the Copilot canvas in
+`.github/extensions/scavenger-tasks/`. This is the only thing that carries those
+edits to players.
+
+The canvas has a banner showing how many board edits are not yet live and a
+button that publishes them, which just runs the command above — so it refuses
+for exactly the same reasons, and says why. If it cannot work out the count, it
+says so; it never reports zero for a check that failed.
+
+Because the extension lives in `.github/extensions/`, it is **only available in
+a session opened on this repo** — it will not appear in a general chat session.
+That is deliberate: publishing needs the repo anyway, and it keeps the board
+under version control instead of loose in `~/.copilot/`.
 
 Unlike `seed`, it is safe during the event: it writes to the `tasks` table and
 nothing else, so submissions, media, the roster and any revealed secrets are
