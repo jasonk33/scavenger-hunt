@@ -9,11 +9,13 @@
 
 import { createServer } from "node:http";
 import { execFile, execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
 import { addTask, loadBoard, summarize, updateModel, updateTask } from "./store.mjs";
+import { mainCheckout } from "../../../scripts/board-store.mjs";
 import { scoreOf, suggestedPoints } from "./tier.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
@@ -33,12 +35,21 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/ja
 // refusal are inherited rather than reimplemented, and cannot drift from the
 // thing they are meant to guard.
 //
-// It runs from THIS checkout, which is now always the right one: the board is a
-// table, so there is no other checkout to reach for. What still matters is that
-// `node_modules` and `.env.local` are gitignored, so they exist only where
-// someone has actually set the app up.
+// It runs the sync from a checkout that can actually run it. The BOARD is a
+// table and reachable from anywhere, but `task-sync` imports the Supabase client
+// and reads `.env.local`, and both `node_modules` and `.env.local` are
+// gitignored -- so they exist only where someone set the app up. In a worktree
+// that is the main checkout, not this one. Running the worktree's own copy fails
+// on `Cannot find package @supabase/supabase-js` before it reaches a credential.
 
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const THIS_CHECKOUT = fileURLToPath(new URL("../../../", import.meta.url));
+
+/** The nearest checkout with a `node_modules`, since that is what `node` needs. */
+const REPO_ROOT = (() => {
+  if (existsSync(join(THIS_CHECKOUT, "node_modules"))) return THIS_CHECKOUT;
+  const main = mainCheckout(THIS_CHECKOUT);
+  return main && existsSync(join(main, "node_modules")) ? main : THIS_CHECKOUT;
+})();
 const SYNC_SCRIPT = join(REPO_ROOT, "scripts", "task-sync.mjs");
 /** `api()` having no timeout is a named sharp edge in AGENTS.md; a hung Supabase
  *  call must land in the banner's error state rather than spinning forever. */

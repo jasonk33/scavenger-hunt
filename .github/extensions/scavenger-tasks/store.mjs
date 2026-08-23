@@ -21,7 +21,7 @@
 import {
   TIERS,
   addTask as insertTask,
-  createAdminClient,
+  createBoardClient,
   readBoard,
   updateModel as writeModel,
   updateTask as patchTask,
@@ -29,14 +29,20 @@ import {
 import { suggestedPoints } from "./tier.mjs";
 
 /**
- * Built on first use, not on import.
+ * Built on first use, never on import.
  *
  * The extension is forked by Copilot at session start, long before anyone opens
- * the canvas, and a missing `.env.local` must surface as a failed request with a
- * readable message rather than as an extension that never registers at all.
+ * the canvas. Anything that can throw up here does not fail the board, it fails
+ * the EXTENSION -- no registration, no panel, nothing on screen to explain
+ * itself. That is exactly how this broke once: a package import at module scope,
+ * in a worktree that has no `node_modules`.
+ *
+ * So nothing in this file's import graph may need a package or a credential.
+ * `scripts/board-portable.test.mjs` imports it in a bare directory to prove it,
+ * and a missing `.env.local` surfaces as a failed request the panel can render.
  */
 let db = null;
-const client = () => (db ??= createAdminClient());
+const client = () => (db ??= createBoardClient());
 
 /** Every write is per-field on one row, so two people editing different tasks never interact. */
 export const loadBoard = () => readBoard(client());

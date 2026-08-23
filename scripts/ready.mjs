@@ -10,11 +10,11 @@
  * nothing about the app looks broken in that state -- every player just sees
  * "Submissions are closed right now" and assumes it's them.
  */
-import { createAdminClient, loadEnv, readBoard } from "./board-store.mjs";
+import { createAdminClient, createBoardClient, loadEnv, readBoard } from "./board-store.mjs";
 import { planTaskSync, fetchTaskRows, isReorderOnly } from "./task-sync.mjs";
 
 const env = loadEnv();
-const admin = createAdminClient(env);
+const admin = await createAdminClient(env);
 
 const problems = [];
 const warnings = [];
@@ -30,7 +30,7 @@ const [{ data: settings }, { data: players }, { data: teams }, { data: roster },
     admin.from("roster").select("round,player_id,team_id"),
     fetchTaskRows(admin, ",revealed_at"),
     admin.from("submissions").select("id,status"),
-    readBoard(admin),
+    readBoard(createBoardClient(env)),
   ]);
 
 const s = Object.fromEntries((settings ?? []).map((r) => [r.key, r.value]));

@@ -1,26 +1,25 @@
 /**
- * The board's query layer, proved against a fake Supabase client.
+ * The board's query layer, proved against a fake `fetch`.
  *
  *   node --test scripts/board-db.test.mjs
  *
  * There is exactly ONE Supabase project and it holds the live event: the real
  * 76-task board, the real roster, real submissions and real media. So the
- * escape hatch is the point of this file. Every query here takes `db` as its
- * first argument, which means a test can hand it a fake and prove the SQL-facing
- * behaviour without a network, without `.env.local`, and above all without the
- * ability to touch Jason's board. Driving the real board as a fixture has cost
- * real edits twice; this is what makes it structurally impossible instead of
- * merely discouraged.
+ * escape hatch is the point of this file. Every query takes a client whose
+ * `fetch` is injectable, which means a test can prove the HTTP that would go
+ * over the wire without a network, without `.env.local`, and above all without
+ * the ability to touch Jason's board. Driving the real board as a fixture has
+ * cost real edits twice; this is what makes it structurally impossible rather
+ * than merely discouraged.
  *
- * The fake records every call, so the assertions are about what was SENT, not
- * only about what came back -- "it wrote the whole board" and "it wrote one
- * field" return the same value and are the difference between losing someone
- * else's edits and not.
+ * The fake records every request, so the assertions are about what was SENT.
+ * "It wrote the whole board" and "it wrote one field" return the same value and
+ * are the difference between losing someone else's edits and not.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { BOARD_TABLE, MODEL_KEY, addTask, readBoard, updateModel, updateTask } from "./board-store.mjs";
+import { BOARD_TABLE, MODEL_KEY, addTask, createBoardClient, readBoard, updateModel, updateTask } from "./board-store.mjs";
 
 const ROW = {
   board_id: "r1-01",
@@ -43,91 +42,63 @@ const ROW = {
 };
 
 /**
- * The smallest thing that behaves like the query builder for the calls this
- * module actually makes. Every builder method returns `this` and the promise
- * resolves to whatever the fixture says, so a chain of any shape terminates.
+ * A client whose `fetch` answers from fixtures and records every request.
+ *
+ * Routing is by method and table, which is all these queries need -- and it
+ * deliberately does NOT interpret the query string, so an assertion about
+ * filtering has to look at the recorded URL rather than trusting the fake.
  */
 function fakeDb({ rows = [ROW], settings = null, failOn = null } = {}) {
   const calls = [];
   const state = { rows: rows.map((r) => ({ ...r })), settings };
 
-  const builder = (table) => {
-    const call = { table, op: "select", filters: {}, payload: null };
-    calls.push(call);
+  const respond = (url, init) => {
+    const method = init.method ?? "GET";
+    const table = url.split("/rest/v1/")[1].split("?")[0];
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ method, table, url, body, headers: init.headers });
 
-    const result = () => {
-      if (failOn === table) return { data: null, error: { message: `boom on ${table}` } };
-      if (table === "settings") {
-        if (call.op === "upsert") {
-          state.settings = call.payload.value;
-          return { data: call.payload, error: null };
-        }
-        return { data: state.settings === null ? null : { key: MODEL_KEY, value: state.settings }, error: null };
-      }
-      if (call.op === "update") {
-        const row = state.rows.find((r) => r.board_id === call.filters.board_id);
-        if (!row) return { data: null, error: null };
-        Object.assign(row, call.payload);
-        return { data: { ...row }, error: null };
-      }
-      if (call.op === "insert") {
-        const row = { ...ROW, ...call.payload };
-        state.rows.push(row);
-        return { data: row, error: null };
-      }
-      const rows = call.filters.board_id
-        ? state.rows.filter((r) => r.board_id === call.filters.board_id)
-        : state.rows;
-      return { data: rows.map((r) => ({ ...r })), error: null };
-    };
+    if (failOn === table) return { ok: false, status: 500, text: JSON.stringify({ message: `boom on ${table}` }) };
 
-    const chain = {
-      select(columns) {
-        call.columns = columns;
-        return chain;
-      },
-      update(payload) {
-        call.op = "update";
-        call.payload = payload;
-        return chain;
-      },
-      insert(payload) {
-        call.op = "insert";
-        call.payload = payload;
-        return chain;
-      },
-      upsert(payload) {
-        call.op = "upsert";
-        call.payload = payload;
-        return chain;
-      },
-      eq(column, value) {
-        call.filters[column] = value;
-        return chain;
-      },
-      order(column) {
-        (call.order ??= []).push(column);
-        return chain;
-      },
-      maybeSingle() {
-        const { data, error } = result();
-        return Promise.resolve({ data: Array.isArray(data) ? (data[0] ?? null) : data, error });
-      },
-      single() {
-        const { data, error } = result();
-        return Promise.resolve({ data: Array.isArray(data) ? (data[0] ?? null) : data, error });
-      },
-      then(onFulfilled, onRejected) {
-        return Promise.resolve(result()).then(onFulfilled, onRejected);
-      },
-    };
-    return chain;
+    if (table === "settings") {
+      if (method === "POST") {
+        state.settings = body.value;
+        return { ok: true, status: 201, text: "" };
+      }
+      return { ok: true, status: 200, text: JSON.stringify(state.settings === null ? [] : [{ value: state.settings }]) };
+    }
+
+    const idMatch = /board_id=eq\.([^&]+)/.exec(url);
+    const id = idMatch ? decodeURIComponent(idMatch[1]) : null;
+
+    if (method === "PATCH") {
+      const row = state.rows.find((r) => r.board_id === id);
+      if (!row) return { ok: true, status: 200, text: "[]" };
+      Object.assign(row, body);
+      return { ok: true, status: 200, text: JSON.stringify([row]) };
+    }
+    if (method === "POST") {
+      const row = { ...ROW, ...body };
+      state.rows.push(row);
+      return { ok: true, status: 201, text: JSON.stringify([row]) };
+    }
+    const found = id ? state.rows.filter((r) => r.board_id === id) : state.rows;
+    return { ok: true, status: 200, text: JSON.stringify(found.map((r) => ({ ...r }))) };
   };
 
-  return { from: builder, calls, state };
+  const fetchImpl = async (url, init = {}) => {
+    const { ok, status, text } = respond(url, init);
+    return { ok, status, text: async () => text };
+  };
+
+  const client = createBoardClient({ SUPABASE_URL: "https://fake.test", SUPABASE_SERVICE_ROLE_KEY: "k" }, fetchImpl);
+  client.calls = calls;
+  client.state = state;
+  return client;
 }
 
 const boardCalls = (db) => db.calls.filter((c) => c.table === BOARD_TABLE);
+const writeOf = (db) => boardCalls(db).find((c) => c.method === 'PATCH');
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 
@@ -165,8 +136,8 @@ test("reading names its columns rather than selecting everything", async () => {
   const db = fakeDb();
   await readBoard(db);
   const call = boardCalls(db)[0];
-  assert.ok(call.columns.includes("board_id"), "the select list is explicit");
-  assert.ok(!call.columns.includes("*"), "a new column must not arrive unmapped");
+  assert.ok(call.url.includes("select=board_id"), "the select list is explicit");
+  assert.ok(!call.url.includes("select=*"), "a new column must not arrive unmapped");
 });
 
 // ── Writing ──────────────────────────────────────────────────────────────────
@@ -177,26 +148,26 @@ test("an update writes ONLY the fields that changed", async () => {
   // assertion that stops that from coming back.
   const db = fakeDb();
   await updateTask(db, "r1-01", { points: 5 });
-  const write = boardCalls(db).find((c) => c.op === "update");
-  assert.deepEqual(Object.keys(write.payload).sort(), ["points", "updated_at"]);
-  assert.equal(write.payload.points, 5);
-  assert.equal(write.filters.board_id, "r1-01", "scoped to one row");
+  const write = writeOf(db);
+  assert.deepEqual(Object.keys(write.body).sort(), ["points", "updated_at"]);
+  assert.equal(write.body.points, 5);
+  assert.ok(write.url.includes("board_id=eq.r1-01"), "scoped to one row");
 });
 
 test("an update carries no field the caller did not name", async () => {
   const db = fakeDb();
   await updateTask(db, "r1-01", { note: "why" });
-  const write = boardCalls(db).find((c) => c.op === "update");
+  const write = writeOf(db);
   for (const key of ["title", "status", "difficulty", "round", "doc_title"]) {
-    assert.ok(!(key in write.payload), `${key} must not be rewritten`);
+    assert.ok(!(key in write.body), `${key} must not be rewritten`);
   }
 });
 
 test("an update drops invalid fields but still applies the valid ones", async () => {
   const db = fakeDb();
   const task = await updateTask(db, "r1-01", { points: 4, note: "kept" });
-  const write = boardCalls(db).find((c) => c.op === "update");
-  assert.deepEqual(Object.keys(write.payload).sort(), ["note", "updated_at"]);
+  const write = writeOf(db);
+  assert.deepEqual(Object.keys(write.body).sort(), ["note", "updated_at"]);
   assert.equal(task.note, "kept");
 });
 
@@ -205,7 +176,7 @@ test("a patch with nothing legal in it writes nothing at all", async () => {
   // nobody made -- and not an error either, since the task does exist.
   const db = fakeDb();
   const task = await updateTask(db, "r1-01", { round: 2, bogus: true });
-  assert.equal(boardCalls(db).some((c) => c.op === "update"), false, "no write may be issued");
+  assert.equal(boardCalls(db).some((c) => c.method === "PATCH"), false, "no write may be issued");
   assert.equal(task.id, "r1-01", "the unchanged task is still returned");
 });
 
@@ -253,9 +224,10 @@ test("the model merges rather than replacing what it was not given", async () =>
   assert.equal(model.weights.guts, 4, "the change lands");
   assert.equal(model.weights.difficulty, 9, "everything else survives");
   assert.equal(model.thresholds.t5, 3);
-  const write = db.calls.find((c) => c.op === "upsert");
-  assert.equal(write.payload.key, MODEL_KEY);
-  assert.deepEqual(JSON.parse(write.payload.value), model, "what was stored is what was returned");
+  const write = db.calls.find((c) => c.table === "settings" && c.method === "POST");
+  assert.equal(write.body.key, MODEL_KEY);
+  assert.deepEqual(JSON.parse(write.body.value), model, "what was stored is what was returned");
+  assert.match(write.headers.Prefer, /merge-duplicates/, "an upsert, so a first save and a later one both work");
 });
 
 test("a nonsense model value cannot be stored", async () => {
@@ -264,4 +236,88 @@ test("a nonsense model value cannot be stored", async () => {
   for (const n of [...Object.values(model.weights), ...Object.values(model.thresholds)]) {
     assert.ok(Number.isFinite(n), `${n} is not a number`);
   }
+});
+
+// ── The wire itself ──────────────────────────────────────────────────────────
+//
+// These queries are hand-rolled HTTP now rather than a library's, so the parts
+// the library used to get right have to be asserted.
+
+test("every request carries the service_role key both ways round", async () => {
+  // PostgREST needs `apikey`; RLS needs the bearer token. Missing either returns
+  // an empty result rather than an error, which would read as an empty board.
+  const db = fakeDb();
+  await readBoard(db);
+  for (const call of db.calls) {
+    assert.equal(call.headers.apikey, "k");
+    assert.equal(call.headers.Authorization, "Bearer k");
+  }
+});
+
+test("a write asks for the row back, or the canvas cannot show what it saved", async () => {
+  const db = fakeDb();
+  await updateTask(db, "r1-01", { points: 5 });
+  assert.match(writeOf(db).headers.Prefer, /return=representation/);
+});
+
+test("a board id is escaped into the URL rather than concatenated", async () => {
+  // An id is `r1-01` today, but a hand-built query string that trusts its input
+  // is how a filter silently stops filtering -- and an unfiltered PATCH would
+  // rewrite every row on the board.
+  const db = fakeDb();
+  await updateTask(db, "r1-01&board_id=neq.x", { points: 5 });
+  const call = boardCalls(db).find((c) => c.method === "PATCH") ?? boardCalls(db).at(-1);
+  assert.ok(!call.url.includes("&board_id=neq.x"), "the injected filter must not survive as syntax");
+  assert.ok(call.url.includes("board_id=eq.r1-01%26board_id%3Dneq.x"), "it is one encoded value");
+});
+
+test("a PostgREST error message reaches the caller, not just a status code", async () => {
+  // A check-constraint violation names the constraint, and that is the entire
+  // actionable content. `HTTP 400` on the banner is unactionable.
+  await assert.rejects(() => readBoard(fakeDb({ failOn: BOARD_TABLE })), /boom on task_board/);
+});
+
+test("a thrown fetch is reported as unreachable rather than as undefined", async () => {
+  // Offline, DNS, a paused project. This is the state the canvas has to be able
+  // to distinguish from an empty board.
+  const client = createBoardClient({ SUPABASE_URL: "https://fake.test", SUPABASE_SERVICE_ROLE_KEY: "k" }, async () => {
+    throw new Error("getaddrinfo ENOTFOUND");
+  });
+  await assert.rejects(() => readBoard(client), /could not reach the database/);
+});
+
+test("an empty body is an empty result, not a parse failure", async () => {
+  // `return=minimal` and a 204 both come back with no body.
+  const client = createBoardClient({ SUPABASE_URL: "https://fake.test", SUPABASE_SERVICE_ROLE_KEY: "k" }, async () => ({
+    ok: true,
+    status: 204,
+    text: async () => "",
+  }));
+  const board = await readBoard(client);
+  assert.deepEqual(board.tasks, []);
+});
+
+test("an HTML error page is reported as such rather than crashing the parser", async () => {
+  const client = createBoardClient({ SUPABASE_URL: "https://fake.test", SUPABASE_SERVICE_ROLE_KEY: "k" }, async () => ({
+    ok: true,
+    status: 200,
+    text: async () => "<html>gateway timeout</html>",
+  }));
+  await assert.rejects(() => readBoard(client), /not JSON/);
+});
+
+test("building a client without credentials fails immediately and says what is missing", async () => {
+  for (const env of [{}, { SUPABASE_URL: "https://x.test" }, { SUPABASE_SERVICE_ROLE_KEY: "k" }]) {
+    assert.throws(() => createBoardClient(env), /SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/);
+  }
+});
+
+test("a trailing slash on the URL does not produce a double slash", async () => {
+  const seen = [];
+  const client = createBoardClient({ SUPABASE_URL: "https://fake.test/", SUPABASE_SERVICE_ROLE_KEY: "k" }, async (url) => {
+    seen.push(url);
+    return { ok: true, status: 200, text: async () => "[]" };
+  });
+  await readBoard(client);
+  for (const url of seen) assert.ok(!url.includes(".test//"), url);
 });

@@ -24,8 +24,13 @@
  *     can prove the query layer without a database either.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** This checkout, resolved from this file so the cwd is irrelevant. */
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 export const TIERS = [1, 3, 5, 7, 10];
 export const STATUSES = ["keep", "maybe", "cut"];
@@ -190,6 +195,80 @@ export function serializeModel(model) {
   return JSON.stringify(parseModel(model));
 }
 
+// ── Talking to PostgREST ─────────────────────────────────────────────────────
+//
+// Deliberately `fetch` and nothing else. This module is in the canvas's import
+// graph, and `node_modules` is gitignored -- so a worktree does not have one.
+// A top-level `import ... from "@supabase/supabase-js"` here does not fail the
+// board, it fails the EXTENSION: the import throws before registration, the
+// canvas never appears, and there is nothing on screen to click or to explain
+// itself. That happened. Node has had global fetch since 18, the queries here
+// are four shapes of CRUD, and the board is supposed to be editable from any
+// session -- so the dependency is not worth its cost.
+
+/** Builds the client the board queries take. `fetchImpl` is injectable for tests. */
+export function createBoardClient(env = loadEnv(), fetchImpl = globalThis.fetch) {
+  const url = String(env?.SUPABASE_URL ?? "").replace(/\/+$/, "");
+  const key = String(env?.SUPABASE_SERVICE_ROLE_KEY ?? "");
+  if (!url || !key) {
+    throw new Error(
+      "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set, in .env.local or the environment. " +
+        "In a worktree they are read from the main checkout, which has to have been set up first."
+    );
+  }
+  return { url, key, fetch: fetchImpl };
+}
+
+/**
+ * One PostgREST request.
+ *
+ * Errors carry the response body, because PostgREST puts the useful part there
+ * -- a check-constraint violation names the constraint -- and a bare status code
+ * on the canvas banner is unactionable.
+ */
+async function rest(client, { method = "GET", path, body, prefer }) {
+  const headers = {
+    apikey: client.key,
+    Authorization: `Bearer ${client.key}`,
+    Accept: "application/json",
+  };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (prefer) headers.Prefer = prefer;
+
+  let res;
+  try {
+    res = await client.fetch(`${client.url}/rest/v1/${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    // Offline, DNS, a dead project. A thrown fetch must not surface as
+    // "undefined" three frames later.
+    throw new Error(`could not reach the database: ${String(e?.message ?? e)}`);
+  }
+
+  const text = await res.text();
+  if (!res.ok) {
+    let detail = text.trim();
+    try {
+      const parsed = JSON.parse(text);
+      detail = parsed.message || parsed.error || parsed.hint || detail;
+    } catch {
+      // Not JSON -- a gateway error page. The raw text is what there is.
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+  if (!text.trim()) return [];
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("the database returned a response that was not JSON");
+  }
+}
+
+const eq = (value) => `eq.${encodeURIComponent(value)}`;
+
 // ── Queries ──────────────────────────────────────────────────────────────────
 
 /**
@@ -202,19 +281,14 @@ export function serializeModel(model) {
  *
  * @returns {Promise<{model: object, tasks: object[]}>}
  */
-export async function readBoard(db) {
-  const [tasks, settings] = await Promise.all([
-    db.from(BOARD_TABLE).select(SELECT).order("round").order("doc_order").order("board_id"),
-    db.from("settings").select("key,value").eq("key", MODEL_KEY).maybeSingle(),
+export async function readBoard(client) {
+  const [rows, model] = await Promise.all([
+    rest(client, { path: `${BOARD_TABLE}?select=${SELECT}&order=round.asc,doc_order.asc,board_id.asc` }).catch((e) => {
+      throw new Error(`could not read the task board: ${e.message}`);
+    }),
+    readModel(client),
   ]);
-  if (tasks.error) throw new Error(`could not read the task board: ${tasks.error.message}`);
-  // A missing model row is a working board on the defaults, so only a real
-  // failure is worth raising. `maybeSingle` reports no rows as no error.
-  if (settings.error) throw new Error(`could not read the board model: ${settings.error.message}`);
-  return {
-    model: parseModel(settings.data?.value),
-    tasks: (tasks.data ?? []).map(rowToTask),
-  };
+  return { model, tasks: (Array.isArray(rows) ? rows : []).map(rowToTask) };
 }
 
 /**
@@ -229,25 +303,29 @@ export async function readBoard(db) {
  *
  * @returns {Promise<object|null>} the updated task, or null if the id is unknown.
  */
-export async function updateTask(db, boardId, patch) {
+export async function updateTask(client, boardId, patch) {
   if (typeof boardId !== "string" || !boardId) return null;
   const row = taskPatchToRow(patch);
+
   // Nothing legal to write. Still a read, so the caller can tell "no such task"
-  // from "nothing to do" -- returning the task unchanged is the honest answer.
+  // from "nothing to do" -- returning the task unchanged is the honest answer,
+  // and an empty UPDATE would move updated_at for an edit nobody made.
   if (!Object.keys(row).length) {
-    const { data, error } = await db.from(BOARD_TABLE).select(SELECT).eq("board_id", boardId).maybeSingle();
-    if (error) throw new Error(`could not read task ${boardId}: ${error.message}`);
-    return data ? rowToTask(data) : null;
+    const found = await rest(client, { path: `${BOARD_TABLE}?select=${SELECT}&board_id=${eq(boardId)}` }).catch((e) => {
+      throw new Error(`could not read task ${boardId}: ${e.message}`);
+    });
+    return found[0] ? rowToTask(found[0]) : null;
   }
 
-  const { data, error } = await db
-    .from(BOARD_TABLE)
-    .update({ ...row, updated_at: new Date().toISOString() })
-    .eq("board_id", boardId)
-    .select(SELECT)
-    .maybeSingle();
-  if (error) throw new Error(`could not update task ${boardId}: ${error.message}`);
-  return data ? rowToTask(data) : null;
+  const updated = await rest(client, {
+    method: "PATCH",
+    path: `${BOARD_TABLE}?board_id=${eq(boardId)}&select=${SELECT}`,
+    body: { ...row, updated_at: new Date().toISOString() },
+    prefer: "return=representation",
+  }).catch((e) => {
+    throw new Error(`could not update task ${boardId}: ${e.message}`);
+  });
+  return updated[0] ? rowToTask(updated[0]) : null;
 }
 
 /**
@@ -258,12 +336,13 @@ export async function updateTask(db, boardId, patch) {
  * arbiter: `board_id` is the primary key, so a genuinely simultaneous add fails
  * loudly on the duplicate instead of overwriting the other one.
  */
-export async function addTask(db, input) {
+export async function addTask(client, input) {
   const round = [0, 1, 2].includes(Number(input?.round)) ? Number(input.round) : 1;
   const prefix = round === 0 ? "s" : `r${round}`;
-  const { data: existing, error: readError } = await db.from(BOARD_TABLE).select("board_id");
-  if (readError) throw new Error(`could not read the task board: ${readError.message}`);
-  const taken = new Set((existing ?? []).map((r) => r.board_id));
+  const existing = await rest(client, { path: `${BOARD_TABLE}?select=board_id` }).catch((e) => {
+    throw new Error(`could not read the task board: ${e.message}`);
+  });
+  const taken = new Set(existing.map((r) => r.board_id));
   let n = 1;
   while (taken.has(`${prefix}-x${n}`)) n += 1;
 
@@ -280,54 +359,132 @@ export async function addTask(db, input) {
     ...taskPatchToRow(Object.fromEntries(RATINGS.map((k) => [k, input?.[k]]))),
   };
 
-  const { data, error } = await db.from(BOARD_TABLE).insert(row).select(SELECT).single();
-  if (error) throw new Error(`could not add a task: ${error.message}`);
-  return rowToTask(data);
+  const created = await rest(client, {
+    method: "POST",
+    path: `${BOARD_TABLE}?select=${SELECT}`,
+    body: row,
+    prefer: "return=representation",
+  }).catch((e) => {
+    throw new Error(`could not add a task: ${e.message}`);
+  });
+  return rowToTask(created[0]);
 }
 
 /** Merges a partial model into the stored one and returns the result. */
-export async function updateModel(db, patch) {
-  const current = await readModel(db);
+export async function updateModel(client, patch) {
+  const current = await readModel(client);
   const merged = parseModel({
     weights: { ...current.weights, ...(patch?.weights ?? {}) },
     thresholds: { ...current.thresholds, ...(patch?.thresholds ?? {}) },
   });
-  const { error } = await db.from("settings").upsert({ key: MODEL_KEY, value: JSON.stringify(merged) });
-  if (error) throw new Error(`could not save the board model: ${error.message}`);
+  await rest(client, {
+    method: "POST",
+    path: "settings",
+    body: { key: MODEL_KEY, value: JSON.stringify(merged) },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  }).catch((e) => {
+    throw new Error(`could not save the board model: ${e.message}`);
+  });
   return merged;
 }
 
-export async function readModel(db) {
-  const { data, error } = await db.from("settings").select("value").eq("key", MODEL_KEY).maybeSingle();
-  if (error) throw new Error(`could not read the board model: ${error.message}`);
-  return parseModel(data?.value);
+export async function readModel(client) {
+  // A missing row is a working board on the defaults, so only a real failure is
+  // worth raising -- a board that refuses to load over one absent settings row
+  // would be a canvas that will not open.
+  const rows = await rest(client, { path: `settings?select=value&key=${eq(MODEL_KEY)}` }).catch((e) => {
+    throw new Error(`could not read the board model: ${e.message}`);
+  });
+  return parseModel(rows[0]?.value);
 }
 
-// ── Connecting ───────────────────────────────────────────────────────────────
+// ── Finding the credentials ──────────────────────────────────────────────────
 
 /**
- * `.env.local`, resolved next to this file rather than from the cwd.
+ * The main checkout, or null.
  *
- * The canvas extension is forked by Copilot from somewhere unrelated, and the
- * publisher is run from whichever directory the user happens to be in. Both have
- * to find the same file.
+ * A worktree has no `.env.local` and no `node_modules` -- both are gitignored,
+ * so they exist only where someone actually set the app up. Git names the
+ * difference without an absolute path baked in: `--git-dir` and
+ * `--git-common-dir` are the same in the main checkout and diverge in a linked
+ * worktree, where the common dir points back at the main one.
+ *
+ * This is NOT the old board-path resolution wearing a new hat. That had to pick
+ * between two copies of the board and could pick the stale one, which is why it
+ * had a refusal attached. There is one board now, in one table. The only
+ * question left is where the credentials live, and being wrong about that fails
+ * loudly at connect time rather than silently publishing the wrong thing.
  */
-export function loadEnv() {
-  return Object.fromEntries(
-    readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-      .split("\n")
-      .filter((l) => l.trim() && !l.trim().startsWith("#") && l.includes("="))
-      .map((l) => {
-        const i = l.indexOf("=");
-        return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-      })
-  );
+export function mainCheckout(startDir, run = gitRun) {
+  const gitDir = run(["rev-parse", "--git-dir"], startDir);
+  const commonDir = run(["rev-parse", "--git-common-dir"], startDir);
+  // No git, not a repo, or a git too old for --git-common-dir, which echoes the
+  // flag back instead of failing.
+  if (!gitDir || !commonDir || commonDir.startsWith("-")) return null;
+  const common = resolve(startDir, commonDir);
+  if (resolve(startDir, gitDir) === common) return null; // already the main checkout
+  return basename(common) === ".git" ? dirname(common) : null;
 }
 
-/** The service_role client. RLS is on with no policies, so nothing else can read these tables. */
-export function createAdminClient(env = loadEnv()) {
+function gitRun(args, cwd) {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function parseEnvFile(path) {
+  try {
+    return Object.fromEntries(
+      readFileSync(path, "utf8")
+        .split("\n")
+        .filter((l) => l.trim() && !l.trim().startsWith("#") && l.includes("="))
+        .map((l) => {
+          const i = l.indexOf("=");
+          return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+        })
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** The credentials this module needs, whichever of them are set. */
+const NEEDED = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_ANON_KEY", "SUPABASE_BUCKET", "ORGANIZER_PIN"];
+
+/**
+ * Credentials, from the first place that has them.
+ *
+ * An exported variable wins, then this checkout's `.env.local`, then the main
+ * checkout's -- which is what makes a worktree session work at all. Absence is
+ * an empty object rather than a throw: the canvas has to be able to open and say
+ * what is wrong, and an extension that throws while loading says nothing.
+ */
+export function loadEnv({ cwd = REPO_ROOT, mainCheckout: main, env = process.env } = {}) {
+  const found = {};
+  const fromFile =
+    parseEnvFile(join(cwd, ".env.local")) ??
+    parseEnvFile(join(main ?? mainCheckout(cwd) ?? cwd, ".env.local")) ??
+    {};
+  for (const key of NEEDED) {
+    const value = env?.[key] || fromFile[key];
+    if (value) found[key] = value;
+  }
+  return found;
+}
+
+/**
+ * The Supabase client, for the callers that query the rest of the schema.
+ *
+ * Imported dynamically so this module stays loadable without `node_modules`.
+ * Only `task-sync` and `ready` reach for it, and both already require a full
+ * checkout to run at all.
+ */
+export async function createAdminClient(env = loadEnv()) {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env.local");
   }
+  const { createClient } = await import("@supabase/supabase-js");
   return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 }

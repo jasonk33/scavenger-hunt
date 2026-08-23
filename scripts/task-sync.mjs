@@ -21,7 +21,7 @@
  * against fixtures instead of against the one shared project. See
  * `scripts/task-sync.test.mjs`.
  */
-import { createAdminClient, readBoard } from "./board-store.mjs";
+import { createAdminClient, createBoardClient, loadEnv, readBoard } from "./board-store.mjs";
 
 /** Tasks are ordered for players by tier, with the secrets last. */
 const secretsLast = (row) => [row.is_secret ? 1 : 0, row.points, row.docOrder];
@@ -356,9 +356,15 @@ async function readTasks(db, extra = "") {
   return { rows: data ?? [], migrated: true };
 }
 
-/** Reads the board and the live table and returns the plan. Read-only. */
-export async function buildPlan(db) {
-  const [{ rows, migrated }, board] = await Promise.all([readTasks(db), readBoard(db)]);
+/**
+ * Reads the board and the live table and returns the plan. Read-only.
+ *
+ * Two clients because they talk to different things: `db` is the Supabase client
+ * for the app's own tables, and `boardClient` is the dependency-free PostgREST
+ * client the board uses so the canvas can load without `node_modules`.
+ */
+export async function buildPlan(db, boardClient) {
+  const [{ rows, migrated }, board] = await Promise.all([readTasks(db), readBoard(boardClient)]);
   const { data: subs } = await db.from("submissions").select("task_id");
   const submissionCounts = {};
   for (const s of subs ?? []) submissionCounts[s.task_id] = (submissionCounts[s.task_id] ?? 0) + 1;
@@ -592,9 +598,10 @@ async function main() {
   const say = JSON_MODE ? () => {} : (line) => console.log(line);
   const apply = process.argv.includes("--apply");
 
-  const db = createAdminClient();
+  const env = loadEnv();
+  const db = await createAdminClient(env);
 
-  const { plan, live, migrated } = await buildPlan(db);
+  const { plan, live, migrated } = await buildPlan(db, createBoardClient(env));
   say(describePlan(plan, live));
 
   const n = changeCount(plan);
