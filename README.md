@@ -157,13 +157,25 @@ Open **Admin → health** for the same checks from the browser.
 
 ### 6. Deploy
 
-```bash
-npx vercel        # first run links the project
-npx vercel --prod
-```
+The repository is connected to the Vercel project `scavenger-hunt`. Normal
+deployments are automatic:
+
+1. Run the relevant checks locally.
+2. Commit the change.
+3. Push `main`:
+
+   ```bash
+   git push origin main
+   ```
+
+Vercel creates a production deployment for each push to `main` and preview
+deployments for other branches and pull requests. Do not run `npx vercel` for
+normal releases. If the Git integration is unavailable during an emergency,
+`npx vercel --prod` remains a manual fallback.
 
 Set the same four environment variables in the Vercel project settings.
-Re-deploy after changing them.
+Changing them requires a new deployment; use Vercel's redeploy action or push
+a follow-up commit.
 
 ---
 

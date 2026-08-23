@@ -24,14 +24,17 @@ fail on the day**, and that outranks code cleanliness, tidiness and elegance eve
 - This is a personal, single-owner event app. There is no external PR review: do not create pull
   requests or invoke LinkedIn submit/review workflows unless the user explicitly asks for one.
   After the relevant validation passes, commit and push directly to `origin/main` when the user
-  says to ship; a feature branch is only for an explicit preview or parallel work.
+  says to ship; Vercel's Git integration automatically deploys the production build. A feature
+  branch is only for an explicit preview or parallel work. Do not run `npx vercel` for normal
+  releases; keep it as an emergency fallback if the Git integration is unavailable.
 
 ## Architecture
 
-- Next.js App Router + React 19 on Vercel (project `scavenger-hunt`), Supabase Pro. Git repo on
-  `main`, backed up to the private `jasonk33/scavenger-hunt`. `/go` is the QR target: a
-  re-targetable redirect driven by the `fallback_url` setting, so the crowd can be moved
-  without re-printing codes.
+- Next.js App Router + React 19 on Vercel (project `scavenger-hunt`), Supabase Pro. The private
+  GitHub repository `jasonk33/scavenger-hunt` is connected to Vercel with `main` as the production
+  branch; pushes to other branches create previews. `/go` is the QR target: a re-targetable
+  redirect driven by the `fallback_url` setting, so the crowd can be moved without re-printing
+  codes.
 - **Media bytes go browser → Supabase Storage directly** over resumable tus
   (`src/lib/upload.ts`), never through a route handler — Vercel caps bodies at 4.5 MB and
   iPhone videos reach 150 MB.
