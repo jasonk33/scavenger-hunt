@@ -80,18 +80,33 @@ export function commitAndPush({ message, run }) {
     return { committed: false, pushed: false, note: `published, but the commit failed: ${firstLine(committed.out)}` };
   }
 
-  // No upstream is a normal local branch, not an error worth alarming about.
+  // Which branch it landed on is load-bearing, not trivia. The board is a
+  // record of what players are looking at RIGHT NOW, and the database already
+  // has it. A commit stranded on a feature branch means git and the live app
+  // disagree about the current state until that branch merges -- so if it is
+  // not on the default branch, say so rather than reporting a tidy success.
+  const head = git(["rev-parse", "--abbrev-ref", "HEAD"]);
+  const branch = head.ok ? head.out.trim() : "";
+  const stranded = branch && branch !== "main" && branch !== "HEAD";
+
   const upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
   if (!upstream.ok) {
-    return { committed: true, pushed: false, note: "committed locally; this branch has no upstream to push to" };
+    return { committed: true, pushed: false, branch, note: "committed locally; this branch has no upstream to push to" };
   }
 
   const pushed = git(["push"]);
   if (!pushed.ok) {
-    return { committed: true, pushed: false, note: `committed, but the push failed: ${firstLine(pushed.out)}` };
+    return { committed: true, pushed: false, branch, note: `committed, but the push failed: ${firstLine(pushed.out)}` };
   }
 
-  return { committed: true, pushed: true, note: "board committed and pushed" };
+  return {
+    committed: true,
+    pushed: true,
+    branch,
+    note: stranded
+      ? `board committed and pushed to ${branch} — merge it into main, or git and the live app disagree until you do`
+      : "board committed and pushed",
+  };
 }
 
 /** Git errors are multi-line and the first line is the useful one on a banner. */

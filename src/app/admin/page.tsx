@@ -606,6 +606,11 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
           Tap a task to change its wording or point value. Editing the value does NOT rescore
           anything already judged — each submission keeps the points it was worth at the time.
         </p>
+        <p className="warn tiny" style={{ margin: "0 0 8px" }}>
+          Wording, points, video and secret belong to the task board. Publishing from the board
+          overwrites whatever you set here, without asking. Change it on the board instead unless
+          this is an emergency — and if you do change it here, make the same change on the board.
+        </p>
         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
           {tasks.map((t) =>
             editing === t.id ? (

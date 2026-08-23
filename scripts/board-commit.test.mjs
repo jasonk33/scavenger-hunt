@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { BOARD_RELATIVE, commitAndPush, commitMessage } from "./board-commit.mjs";
 
 /** A fake git. `fail` maps a subcommand to the output it should fail with. */
-function fakeGit({ fail = {}, staged = true } = {}) {
+function fakeGit({ fail = {}, staged = true, branch = "main", noUpstream = false } = {}) {
   const calls = [];
   const run = (args) => {
     calls.push(args);
@@ -24,6 +24,10 @@ function fakeGit({ fail = {}, staged = true } = {}) {
     if (cmd in fail) return { ok: false, out: fail[cmd] };
     // `diff --cached --quiet` exits non-zero when something IS staged.
     if (cmd === "diff") return { ok: !staged, out: "" };
+    if (cmd === "rev-parse") {
+      if (args.includes("@{u}")) return noUpstream ? { ok: false, out: "fatal: no upstream" } : { ok: true, out: "origin/x" };
+      return { ok: true, out: `${branch}\n` };
+    }
     return { ok: true, out: "" };
   };
   return { run, calls };
@@ -57,7 +61,9 @@ test("a malformed report still produces a usable message", () => {
 test("a normal publish commits and pushes", () => {
   const { run, calls } = fakeGit();
   const r = commitAndPush({ root: "/repo", message: "m", run });
-  assert.deepEqual(r, { committed: true, pushed: true, note: "board committed and pushed" });
+  assert.equal(r.committed, true);
+  assert.equal(r.pushed, true);
+  assert.equal(r.note, "board committed and pushed");
   assert.ok(ran(calls, "push"));
 });
 
@@ -96,7 +102,7 @@ test("a failed push leaves the commit standing and says why", () => {
 });
 
 test("no upstream is reported calmly rather than as a failure", () => {
-  const { run } = fakeGit({ fail: { "rev-parse": "fatal: no upstream configured" } });
+  const { run } = fakeGit({ noUpstream: true });
   const r = commitAndPush({ root: "/repo", message: "m", run });
   assert.equal(r.committed, true);
   assert.equal(r.pushed, false);
@@ -142,4 +148,43 @@ test("the note never leaks git's hint noise", () => {
   const r = commitAndPush({ root: "/repo", message: "m", run });
   assert.match(r.note, /the real reason/);
   assert.doesNotMatch(r.note, /hint:/);
+});
+
+
+// ------------------------------------------------- where the commit landed
+//
+// The database already has the change. A board commit stranded on a feature
+// branch means git and the live app disagree about the current task list until
+// that branch merges, which is precisely the two-sources-of-truth problem the
+// commit exists to close. Landing somewhere unexpected must not read as a tidy
+// success.
+
+test("a commit on main reports plainly", () => {
+  const { run } = fakeGit({ branch: "main" });
+  const r = commitAndPush({ message: "m", run });
+  assert.equal(r.branch, "main");
+  assert.equal(r.note, "board committed and pushed");
+});
+
+test("a commit on a feature branch says it is not on main and why that matters", () => {
+  const { run } = fakeGit({ branch: "jakatz/some-work" });
+  const r = commitAndPush({ message: "m", run });
+  assert.equal(r.committed, true);
+  assert.equal(r.pushed, true, "it is still safely pushed");
+  assert.match(r.note, /jakatz\/some-work/, "names where it actually went");
+  assert.match(r.note, /merge it into main/, "and says what to do about it");
+});
+
+test("a detached HEAD is not reported as a stranded branch", () => {
+  const { run } = fakeGit({ branch: "HEAD" });
+  const r = commitAndPush({ message: "m", run });
+  assert.equal(r.note, "board committed and pushed");
+});
+
+test("the branch is reported even when the push fails", () => {
+  const { run } = fakeGit({ branch: "jakatz/x", fail: { push: "fatal: offline" } });
+  const r = commitAndPush({ message: "m", run });
+  assert.equal(r.branch, "jakatz/x");
+  assert.equal(r.committed, true);
+  assert.equal(r.pushed, false);
 });

@@ -12,7 +12,9 @@
  */
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { planTaskSync, loadBoard, fetchTaskRows, isReorderOnly } from "./task-sync.mjs";
+import { execFileSync } from "node:child_process";
+import { dirname } from "node:path";
+import { planTaskSync, loadBoard, fetchTaskRows, isReorderOnly, BOARD_PATH } from "./task-sync.mjs";
 
 const env = Object.fromEntries(
   readFileSync(new URL("../.env.local", import.meta.url), "utf8")
@@ -116,6 +118,24 @@ check(drift.collisions.length === 0, "no task would collide on title",
 check(env.SUPABASE_ANON_KEY?.startsWith("ey"), "upload key is the legacy anon JWT",
   "SUPABASE_ANON_KEY is not a JWT — uploads will fail. It must be the legacy anon key.");
 check(Boolean(env.ORGANIZER_PIN), "organizer PIN is set", "no ORGANIZER_PIN — the judge screen is wide open", false);
+
+// Publishing commits the board to whatever branch this checkout is on. On a
+// feature branch that record is stranded until the branch merges, while the
+// database already has it -- so git and the live app disagree about the current
+// task list. Worth knowing before the day, not after a publish.
+let branch = "";
+try {
+  branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: dirname(dirname(BOARD_PATH)),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+} catch {
+  // No git, or not a repo. Nothing to say.
+}
+check(!branch || branch === "main" || branch === "HEAD", "board commits land on main",
+  `this checkout is on ${branch}, so a publish records the board there rather than on main — ` +
+    `switch to main for task work, or merge afterwards`, false);
 
 console.log(`\nRound ${round} · ${players?.length ?? 0} players · ${(teams ?? []).filter((t) => t.round === round).length} teams · ${activeTasks.length} tasks · ${(subs ?? []).filter((x) => x.status === "pending").length} waiting on the judge\n`);
 for (const line of ok) console.log(`  \x1b[32mok\x1b[0m   ${line}`);
