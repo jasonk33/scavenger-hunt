@@ -13,8 +13,7 @@
  */
 
 import * as tus from "tus-js-client";
-import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient, loadEnv } from "./board-store.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 
@@ -32,22 +31,12 @@ if (!isLocal && !process.argv.includes("--allow-prod")) {
   process.exit(1);
 }
 
-// Read .env.local directly so the script needs no extra tooling.
-const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-    .split("\n")
-    .filter((l) => l.trim() && !l.trim().startsWith("#") && l.includes("="))
-    .map((l) => {
-      const i = l.indexOf("=");
-      return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-    })
-);
+// Resolve the same environment sources as the board and task-sync commands.
+const env = loadEnv();
 
 const PIN = env.ORGANIZER_PIN ?? "";
 const BUCKET = env.SUPABASE_BUCKET || "hunt";
-const admin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const admin = await createAdminClient(env);
 
 let cookie = "";
 let passed = 0;
@@ -143,7 +132,7 @@ async function main() {
   check("round 1 teams seeded", seeded.teams.filter((t) => t.round === 1).length >= 2);
   check("round 2 teams seeded", seeded.teams.filter((t) => t.round === 2).length >= 1);
   check("tasks seeded", seeded.tasks.length > 0, `${seeded.tasks.length} tasks`);
-  if (!seeded.tasks.length) throw new Error("Seed data missing — run supabase/setup.sql");
+  if (!seeded.tasks.length) throw new Error("Tasks missing — run npm run sync:tasks -- --apply");
 
   /*
    * The test scores against its OWN throwaway teams, never the real ones.
@@ -278,7 +267,7 @@ async function main() {
   const queue = (await call("/api/judge/queue")).body;
   const mine = queue.queue.find((q) => q.id === submissionId);
   check("submission appears in the judge queue", Boolean(mine));
-  check("queue exposes a playable media URL", Boolean(mine?.mediaUrl?.includes(objectName)));
+  check("queue exposes a playable media URL", Boolean(mine?.media?.[0]?.url?.includes(objectName)));
   check("queue marks it as video", mine?.isVideo === true);
 
   const approve = await call(`/api/judge/${submissionId}`, {

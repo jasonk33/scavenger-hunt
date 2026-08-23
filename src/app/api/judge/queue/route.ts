@@ -90,7 +90,6 @@ export async function GET(req: Request) {
       status: s.status,
       createdAt: s.created_at,
       media,
-      mediaUrl: media[0].url,
       // True if ANY file is a video. This only drives the "task is video-only"
       // warning, and one clip in the set does satisfy that task.
       isVideo: media.some((m) => m.isVideo),

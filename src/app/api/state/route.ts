@@ -150,7 +150,6 @@ export async function GET(req: Request) {
     settings: {
       round,
       submissions_open: settings.submissions_open,
-      event_name: settings.event_name,
     },
     me,
     team,
@@ -178,6 +177,5 @@ export async function GET(req: Request) {
       points: [...bestByTask.values()].reduce((a, b) => a + b.pts, 0),
     },
     upload: { endpoint: up.endpoint, anonKey: up.anonKey, bucket: up.bucket },
-    configOk: Boolean(up.keyLooksValid),
   });
 }

@@ -16,24 +16,13 @@
  * submissions, edit the board and run `npm run sync:tasks` instead.
  */
 
-import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient, loadEnv } from "./board-store.mjs";
 import { buildPlan, applyPlan } from "./task-sync.mjs";
 
-const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-    .split("\n")
-    .filter((l) => l.trim() && !l.trim().startsWith("#") && l.includes("="))
-    .map((l) => {
-      const i = l.indexOf("=");
-      return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-    })
-);
+const env = loadEnv();
 
 const BUCKET = env.SUPABASE_BUCKET || "hunt";
-const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const db = await createAdminClient(env);
 
 /*
  * Everyone marked Going on the invite, minus the two organizers -- the doc is

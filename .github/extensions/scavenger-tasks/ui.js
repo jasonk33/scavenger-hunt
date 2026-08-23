@@ -427,7 +427,7 @@ function renderBalance() {
 
 // ── Publishing ───────────────────────────────────────────────────────────────
 //
-// The board is written to disk the instant a slider moves, but none of it
+// The board is written to the database the instant a slider moves, but none of it
 // reaches players until the sync runs. That gap is the point -- it makes
 // re-tiering an hour before the event safe -- but it was invisible, which is
 // what this banner fixes.

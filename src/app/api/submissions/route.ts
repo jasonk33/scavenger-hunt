@@ -152,9 +152,7 @@ export async function POST(req: Request) {
 
   return json({
     submissionId: created.id,
-    groupId,
     objectName,
     contentType,
-    task: { id: t.id, title: t.title, points: t.points },
   });
 }

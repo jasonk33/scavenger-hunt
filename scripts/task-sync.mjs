@@ -375,14 +375,6 @@ export async function buildPlan(db, boardClient) {
 /**
  * Applies a plan. Only ever writes to `tasks`.
  *
- * Refuses outright if the board_id column is missing. Every insert and update
- * carries a board_id, so an unmigrated database would reject the first write and
- * leave the rest unapplied -- a half-published task list, which is precisely the
- * state that cannot be allowed to happen on the day.
- */
-/**
- * Applies a plan. Only ever writes to `tasks`.
- *
  * Refuses if the board_id column is missing, or if the plan carries a title
  * collision. Every insert and update carries a board_id, so an unmigrated
  * database would reject the first write and leave the rest unapplied -- a

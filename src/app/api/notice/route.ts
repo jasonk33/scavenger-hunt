@@ -5,5 +5,5 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const s = await getSettings();
-  return json({ notice: s.notice, round: s.active_round, open: s.submissions_open });
+  return json({ notice: s.notice });
 }

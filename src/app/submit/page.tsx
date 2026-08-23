@@ -40,14 +40,11 @@ type Rejection = {
 };
 
 type OtherTeamEntries = {
-  round: number;
-  taskId: string;
-  taskTitle: string;
   entries: EvidenceEntry[];
 };
 
 type State = {
-  settings: { round: number; submissions_open: boolean; event_name: string };
+  settings: { round: number; submissions_open: boolean };
   me: Me | null;
   team: { id: string; name: string; color: string } | null;
   tasks: Task[];
@@ -528,7 +525,6 @@ export default function SubmitPage() {
                 task={t}
                 subs={byTask.get(t.id) ?? []}
                 disabled={uploadBlocked}
-                meId={me.id}
                 playerId={me.id}
                 onPick={() => pickFor(t)}
                 onAddTo={(anchorId, note) => pickFor(t, { anchorId, note })}
@@ -556,7 +552,6 @@ function TaskRow({
   task,
   subs,
   disabled,
-  meId,
   playerId,
   onPick,
   onAddTo,
@@ -565,7 +560,6 @@ function TaskRow({
   task: Task;
   subs: Sub[];
   disabled: boolean;
-  meId: string;
   playerId: string;
   onPick: () => void;
   onAddTo: (anchorId: string, note: string) => void;
@@ -660,7 +654,7 @@ function TaskRow({
             <SubmissionView
               key={files[0].groupId}
               files={files}
-              mine={files[0].player_id === meId}
+              mine={files[0].player_id === playerId}
               disabled={disabled}
               onAddTo={onAddTo}
               onChanged={onChanged}

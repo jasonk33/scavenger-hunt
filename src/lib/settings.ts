@@ -1,6 +1,14 @@
 import { cookies } from "next/headers";
 import { db } from "./db";
-import type { Settings } from "./types";
+
+type Settings = {
+  active_round: number;
+  submissions_open: boolean;
+  fallback_url: string;
+  event_name: string;
+  /** Free-text banner shown on every screen. The organizer's broadcast channel. */
+  notice: string;
+};
 
 const DEFAULTS: Settings = {
   active_round: 1,

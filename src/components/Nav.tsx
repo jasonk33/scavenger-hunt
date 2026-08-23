@@ -27,7 +27,7 @@ export default function Nav() {
     check();
     const t = setInterval(check, 2000);
     return () => clearInterval(t);
-  }, [path]);
+  }, []);
 
   return (
     <nav className="nav">

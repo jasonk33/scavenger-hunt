@@ -9,8 +9,6 @@ type Feed = {
     id: string;
     status: "approved" | "rejected";
     media: Array<{ id: string; url: string; isVideo: boolean }>;
-    mediaUrl: string;
-    isVideo: boolean;
     note: string | null;
     taskTitle: string;
     points: number;

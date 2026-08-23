@@ -6,7 +6,7 @@
  * down. `restoreSettings` runs from a `finally` in every driver.
  */
 import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient, loadEnv } from "../scripts/board-store.mjs";
 
 export const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 
@@ -16,21 +16,11 @@ if (!isLocal && !process.argv.includes("--allow-prod")) {
   process.exit(1);
 }
 
-export const env = Object.fromEntries(
-  readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-    .split("\n")
-    .filter((l) => l.trim() && !l.trim().startsWith("#") && l.includes("="))
-    .map((l) => {
-      const i = l.indexOf("=");
-      return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-    })
-);
+export const env = loadEnv();
 
 export const PIN = env.ORGANIZER_PIN ?? "";
 export const BUCKET = env.SUPABASE_BUCKET || "hunt";
-export const admin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+export const admin = await createAdminClient(env);
 
 /* ---------- assertions ---------- */
 

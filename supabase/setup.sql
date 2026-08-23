@@ -190,7 +190,7 @@ on conflict (key) do nothing;
 -- 2. STORAGE
 -- ========================================================================
 
--- Storage setup. Run after 01-schema.sql.
+-- Storage setup.
 --
 -- Media bytes go browser -> Supabase Storage DIRECTLY, never through a Next.js
 -- route (Vercel caps request bodies at 4.5 MB; a 150 MB video would 413).
@@ -227,8 +227,7 @@ create policy "hunt public read" on storage.objects
 -- 3. SEED DATA
 -- ========================================================================
 
--- Seed data: teams only.
--- Run after 02-storage.sql. Re-running is safe (ON CONFLICT DO NOTHING).
+-- Seed data: teams only. Re-running is safe (ON CONFLICT DO NOTHING).
 
 insert into teams (round, name, color, sort_order) values
   (1, 'The Birthday Bureau', '#dc2626', 10),
@@ -252,4 +251,3 @@ on conflict (round, name) do nothing;
 --
 -- On a fresh project: run this file, then `supabase/migrate-task-board-id.sql`
 -- and `supabase/migrate-task-board.sql`, then `npm run sync:tasks -- --apply`.
-

@@ -19,7 +19,6 @@ export async function GET() {
   const teamOf = new Map((roster ?? []).map((r) => [r.player_id, teamById.get(r.team_id)]));
 
   return json({
-    round: settings.active_round,
     eventName: settings.event_name,
     players: (players ?? []).map((p) => ({
       id: p.id,

@@ -33,7 +33,9 @@ export async function GET(req: Request) {
   const [{ data: subs }, { data: tasks }, { data: teams }, { data: players }] = await Promise.all([
     sb
       .from("submissions")
-      .select("*")
+      .select(
+        "id,task_id,team_id,player_id,object_name,media_type,group_id,note,created_at,status,points_awarded,reject_reason"
+      )
       .eq("round", round)
       .in("status", ["approved", "rejected"])
       .order("judged_at", { ascending: false })
@@ -66,8 +68,6 @@ export async function GET(req: Request) {
           url: mediaUrl(f.object_name),
           isVideo: isVideoObject(f.media_type, f.object_name),
         })),
-        mediaUrl: mediaUrl(s.object_name),
-        isVideo: isVideoObject(s.media_type, s.object_name),
         note: files.find((f) => f.note)?.note ?? null,
         taskTitle: taskById.get(s.task_id)?.title ?? "",
         points: s.points_awarded ?? 0,
@@ -75,7 +75,6 @@ export async function GET(req: Request) {
         teamName: teamById.get(s.team_id)?.name ?? "",
         teamColor: teamById.get(s.team_id)?.color ?? "#666",
         playerName: playerById.get(s.player_id)?.name ?? "",
-        judgedAt: s.judged_at,
       };
     }),
   });

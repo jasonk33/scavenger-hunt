@@ -69,7 +69,7 @@ export async function GET() {
     checks.push({
       name: "Seed data loaded",
       ok: Boolean(taskCount && teamCount),
-      detail: taskCount ? "yes" : "run supabase/03-seed.sql",
+      detail: taskCount ? "yes" : "run npm run sync:tasks -- --apply",
     });
     checks.push({
       name: "Players added",
@@ -119,7 +119,7 @@ export async function GET() {
           res.status === 404
             ? `Bucket "${BUCKET}" not found. Create it, or fix SUPABASE_BUCKET.`
             : res.status === 403
-              ? "Blocked by policy. Run supabase/02-storage.sql."
+              ? "Blocked by policy. Run supabase/setup.sql."
               : res.status === 401
                 ? "Key rejected. Use the legacy anon key."
                 : res.status === 413

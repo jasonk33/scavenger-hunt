@@ -72,7 +72,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
         sortOrder: task?.sort_order ?? Number.MAX_SAFE_INTEGER,
         entry: {
           id: first.id,
-          taskId: first.task_id,
           taskTitle: task?.title ?? "(deleted task)",
           points: first.points_awarded ?? 0,
           media: files.map((file) => ({

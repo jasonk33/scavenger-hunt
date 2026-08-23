@@ -64,7 +64,7 @@ export async function GET(req: Request) {
   const groups = (winningGroups((submissions ?? []) as SubmissionRow[]) as SubmissionRow[][]).filter(
     (files) => files[0]?.team_id !== roster.team_id
   );
-  if (groups.length === 0) return json({ round, taskId: task.id, taskTitle: task.title, entries: [] });
+  if (groups.length === 0) return json({ entries: [] });
 
   const teamIds = [...new Set(groups.map((files) => files[0].team_id))];
   const playerIds = [...new Set(groups.flatMap((files) => files.map((file) => file.player_id)))];
@@ -88,7 +88,6 @@ export async function GET(req: Request) {
         sortOrder: teamOrder.get(first.team_id) ?? Number.MAX_SAFE_INTEGER,
         entry: {
           id: first.id,
-          taskId: first.task_id,
           taskTitle: task.title,
           points: first.points_awarded ?? 0,
           media: files.map((file) => ({
@@ -107,5 +106,5 @@ export async function GET(req: Request) {
     .sort((a, b) => a.sortOrder - b.sortOrder || a.entry.teamName.localeCompare(b.entry.teamName))
     .map(({ entry }) => entry);
 
-  return json({ round, taskId: task.id, taskTitle: task.title, entries });
+  return json({ entries });
 }

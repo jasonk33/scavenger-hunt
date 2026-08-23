@@ -8,7 +8,6 @@ type Item = {
   id: string;
   status: string;
   media: Array<{ id: string; url: string; isVideo: boolean; sizeBytes: number | null }>;
-  mediaUrl: string;
   isVideo: boolean;
   sizeBytes: number | null;
   note: string | null;
