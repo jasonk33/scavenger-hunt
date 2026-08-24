@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { createBoardClient } from "../../../scripts/board-store.mjs";
+import { createTaskClient } from "../../../scripts/task-store.mjs";
 import {
   addPlayers,
   addTeam,
@@ -125,7 +125,7 @@ function fakeDb({ players = PLAYERS, teams = TEAMS, roster = [], submissions = [
     };
   };
 
-  const db = createBoardClient(
+  const db = createTaskClient(
     { SUPABASE_URL: "https://fake.test", SUPABASE_SERVICE_ROLE_KEY: "service-role" },
     fetchImpl
   );

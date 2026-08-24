@@ -20,7 +20,8 @@ export async function GET() {
         .from("tasks")
         .select("id,round,title,points,requires_video,is_secret,revealed_at,sort_order,active")
         .order("round")
-        .order("sort_order"),
+        .order("sort_order")
+        .order("id"),
       sb.from("submissions").select("id,round,status,object_name,created_at,player_id,task_id"),
     ]);
 

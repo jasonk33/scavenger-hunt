@@ -10,7 +10,6 @@
     "smoke": "node scripts/smoke.mjs",
     "seed": "node scripts/seed-event.mjs",
     "seed:reset": "node scripts/seed-event.mjs --reset",
-    "sync:tasks": "node scripts/task-sync.mjs",
     "test": "node --test scripts/*.test.mjs src/lib/*.test.mjs .github/extensions/scavenger-tasks/*.test.mjs",
     "qa": "node qa/flow2-judge.mjs",
     "ready": "node scripts/ready.mjs"

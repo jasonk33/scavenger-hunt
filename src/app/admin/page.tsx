@@ -564,12 +564,9 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
         <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
           Tap a task to change its wording or point value. Editing the value does NOT rescore
           anything already judged — each submission keeps the points it was worth at the time.
-        </p>
-        <p className="warn tiny" style={{ margin: "0 0 8px" }}>
-          Wording, points and video-only are saved back to the task board too, so publishing
-          won&apos;t undo them. <b>Secret and Remove are not</b> — the board still owns those, and
-          publishing overwrites whatever you set here. On a secret challenge, an edit changes the
-          board entry both rounds share.
+          This is the same task list the planner canvas edits, so there is nothing to publish.
+          A secret challenge is offered in both rounds: everything except Reveal changes both,
+          and Reveal only unlocks the round you are in.
         </p>
         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
           {tasks.map((t) =>

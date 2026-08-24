@@ -27,7 +27,11 @@ try {
     ] }),
   });
 
-  const { data: tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).order("sort_order").limit(4);
+  // Cut tasks keep their row and now keep a position in the ordering too --
+  // sort_order is generated for every row, live or not -- so an unfiltered pick
+  // can land on one, and /api/submissions rightly refuses it as "no longer
+  // exists". Filter here, as flow6 already does.
+  const { data: tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).eq("active", true).order("sort_order").limit(4);
   const subA = await seed({ playerId: alice.id, taskId: tasks[0].id });
   const subB = await seed({ playerId: alice.id, taskId: tasks[1].id });
   const subC = await seed({ playerId: bob.id, taskId: tasks[2].id, file: "clip.mp4" });

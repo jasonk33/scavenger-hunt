@@ -1,19 +1,19 @@
 /**
  * Task renderer. Talks to the extension over plain HTTP on the same origin:
- * GET /api/board, PATCH /api/task/:id, PATCH /api/model, and an SSE stream at
+ * GET /api/tasks, PATCH /api/task/:slug, PATCH /api/model, and an SSE stream at
  * /events. The Roster tab is rendered by roster.js and shares that stream.
  *
- * The board is a database table any session can write, so the page POLLS
- * /api/board. The stream only reaches panels served by the same extension
- * process -- one per session -- so it is same-process immediacy, not the
- * mechanism. See "Staying current" at the bottom.
+ * Every edit here is LIVE. These rows are the `tasks` table the app itself
+ * reads, so moving a slider, retitling a task or cutting one is in front of
+ * players on their next poll. There is no draft and no publish step; there used
+ * to be, and supabase/migrate-tasks-one-table.sql says why there is not.
  *
- * Publishing goes through GET /api/publish/status and POST /api/publish, both of
- * which run the real `scripts/task-sync.mjs`. The banner's wording and its
- * enabled/disabled decision live in publish-state.mjs, which is pure and tested.
+ * The table is one any session can write, so the page POLLS /api/tasks. The
+ * stream only reaches panels served by the same extension process -- one per
+ * session -- so it is same-process immediacy, not the mechanism. See "Staying
+ * current" at the bottom.
  */
 
-import { describeChanges, publishState } from "/publish-state.mjs";
 import { scoreOf as rawScore, tierAdvice } from "/tier.mjs";
 
 const RATINGS = [
@@ -39,19 +39,9 @@ const el = {
   search: document.getElementById("search"),
   sort: document.getElementById("sort"),
   onlyFlagged: document.getElementById("only-flagged"),
-  publish: document.getElementById("publish"),
-  publishHeadline: document.getElementById("publish-headline"),
-  publishDetail: document.getElementById("publish-detail"),
-  publishRecheck: document.getElementById("publish-recheck"),
-  publishReview: document.getElementById("publish-review"),
-  publishPreview: document.getElementById("publish-preview"),
-  publishChanges: document.getElementById("publish-changes"),
-  publishWarnings: document.getElementById("publish-warnings"),
-  publishConfirm: document.getElementById("publish-confirm"),
-  publishCancel: document.getElementById("publish-cancel"),
 };
 
-const filters = { round: "all", status: "all", q: "", sort: "doc", flagged: false };
+const filters = { round: "all", shown: "live", q: "", sort: "doc", flagged: false };
 
 function setView(view) {
   const roster = view === "roster";
@@ -69,25 +59,25 @@ el.tasksTab.addEventListener("click", () => setView("tasks"));
 el.rosterTab.addEventListener("click", () => setView("roster"));
 setView("tasks");
 
-let board = { tasks: [], model: { weights: {}, thresholds: {} } };
+let data = { tasks: [], model: { weights: {}, thresholds: {} } };
 /**
- * Whether a board has ever actually arrived, and why the last attempt did not.
- * The empty board above is a placeholder, not a result: without these two the
- * list would say "Nothing matches those filters" about a board it never read.
+ * Whether a task list has ever actually arrived, and why the last attempt did
+ * not. The empty list above is a placeholder, not a result: without these two
+ * the page would say "Nothing matches those filters" about a list it never read.
  */
 let loaded = false;
-let boardError = null;
+let loadError = null;
 /** Rows currently rendered, so an update can patch in place instead of rebuilding. */
 const rows = new Map();
-/** id -> { patch, timer } for edits still waiting to be sent. */
+/** slug -> { patch, timer } for edits still waiting to be sent. */
 const pending = new Map();
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
-const scoreOf = (t) => rawScore(t, board.model.weights);
+const scoreOf = (t) => rawScore(t, data.model.weights);
 
 /** The single rule for "does this task disagree with its ratings". */
-const advice = (t) => tierAdvice(t, board.model);
+const advice = (t) => tierAdvice(t, data.model);
 
 // ── Persistence ──────────────────────────────────────────────────────────────
 
@@ -96,18 +86,20 @@ const advice = (t) => tierAdvice(t, board.model);
  * applies the patch locally first so the UI never waits on the round trip.
  * The timer is held alongside the patch rather than inside it, so what gets
  * sent is exactly the patch and nothing has to be stripped back out.
+ *
+ * The 250ms is a write-rate limit, not a staging step: the request that follows
+ * writes the table players read.
  */
 function save(task, patch) {
   Object.assign(task, patch);
-  touchBoard();
-  const queued = pending.get(task.id) ?? { patch: {}, timer: 0 };
+  const queued = pending.get(task.slug) ?? { patch: {}, timer: 0 };
   Object.assign(queued.patch, patch);
-  pending.set(task.id, queued);
+  pending.set(task.slug, queued);
   clearTimeout(queued.timer);
   queued.timer = setTimeout(async () => {
-    const body = pending.get(task.id)?.patch ?? {};
-    pending.delete(task.id);
-    await fetch(`/api/task/${task.id}`, {
+    const body = pending.get(task.slug)?.patch ?? {};
+    pending.delete(task.slug);
+    await fetch(`/api/task/${task.slug}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -119,7 +111,7 @@ async function saveModel() {
   await fetch("/api/model", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(board.model),
+    body: JSON.stringify(data.model),
   }).catch(() => {});
 }
 
@@ -127,14 +119,13 @@ async function saveModel() {
 
 function visibleTasks() {
   const q = filters.q.toLowerCase();
-  let list = board.tasks.filter((t) => {
+  const list = data.tasks.filter((t) => {
     if (filters.round !== "all" && t.round !== Number(filters.round)) return false;
-    // "In" is everything still in the running. A cut task is a decision already
+    // "Live" is everything players can see. A cut task is a decision already
     // made, so it stops taking up room in the list you are working through --
-    // the Cut tab is where it lives, and is the only way back.
-    if (filters.status === "all") {
-      if (t.status === "cut") return false;
-    } else if (t.status !== filters.status) return false;
+    // the Cut tab is where it lives, and is the way back.
+    if (filters.shown === "live" && !t.active) return false;
+    if (filters.shown === "cut" && t.active) return false;
     if (filters.flagged && !t.rewrite) return false;
     if (q && !`${t.title} ${t.note}`.toLowerCase().includes(q)) return false;
     return true;
@@ -158,7 +149,7 @@ function visibleTasks() {
 
 function chipsFor(task) {
   const chips = [];
-  if (task.needsClip) chips.push(["clip", ""]);
+  if (task.requiresVideo) chips.push(["clip", ""]);
   if (task.prop) chips.push(["prop", ""]);
   if (task.luck >= 4) chips.push(["luck", "warn"]);
   if (task.risk >= 4) chips.push(["risk", "alert"]);
@@ -170,7 +161,7 @@ function chipsFor(task) {
 function paint(row, task) {
   const { suggested, show } = advice(task);
 
-  row.classList.toggle("is-cut", task.status === "cut");
+  row.classList.toggle("is-cut", !task.active);
 
   const tier = row.querySelector(".tier:not(.suggested)");
   tier.textContent = task.points;
@@ -206,7 +197,9 @@ function paint(row, task) {
     })
   );
 
-  for (const b of row.querySelectorAll(".status button")) b.classList.toggle("on", b.dataset.status === task.status);
+  for (const b of row.querySelectorAll(".shown button")) {
+    b.classList.toggle("on", (b.dataset.active === "true") === Boolean(task.active));
+  }
 
   for (const [key] of RATINGS) {
     const slider = row.querySelector(`.slider.${key}`);
@@ -225,7 +218,7 @@ function paint(row, task) {
   const note = row.querySelector(".note");
   if (document.activeElement !== note) note.value = task.note;
 
-  row.querySelector(".clip").checked = task.needsClip;
+  row.querySelector(".clip").checked = task.requiresVideo;
   row.querySelector(".rewrite").checked = task.rewrite;
 
   const docTitle = row.querySelector(".doc-title");
@@ -236,7 +229,7 @@ function paint(row, task) {
 
 function buildRow(task) {
   const row = document.getElementById("row-tpl").content.firstElementChild.cloneNode(true);
-  row.dataset.id = task.id;
+  row.dataset.slug = task.slug;
 
   const sliders = row.querySelector(".sliders");
   for (const [key, label, hint] of RATINGS) {
@@ -296,12 +289,17 @@ function buildRow(task) {
     if (e.key === "Escape") { title.textContent = task.title; title.blur(); }
   });
 
-  row.querySelector(".status").addEventListener("click", (e) => {
+  // Cut hides a task from players immediately. It is never a delete -- that
+  // would cascade to submissions -- so anything already scored on it stands,
+  // and turning it back on puts it straight back in the list.
+  row.querySelector(".shown").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
-    save(task, { status: btn.dataset.status });
+    save(task, { active: btn.dataset.active === "true" });
     paint(row, task);
     renderSummary();
+    // The row may no longer belong in the current filter.
+    if (filters.shown !== "all") renderList();
   });
 
   const points = row.querySelector(".points");
@@ -314,7 +312,7 @@ function buildRow(task) {
   for (const [sel, key, read] of [
     [".prop", "prop", (n) => n.value],
     [".note", "note", (n) => n.value],
-    [".clip", "needsClip", (n) => n.checked],
+    [".clip", "requiresVideo", (n) => n.checked],
     [".rewrite", "rewrite", (n) => n.checked],
   ]) {
     const node = row.querySelector(sel);
@@ -335,13 +333,13 @@ function renderList() {
   el.list.replaceChildren();
 
   if (!loaded) {
-    // Never "Nothing matches those filters" for a board that has not arrived.
+    // Never "Nothing matches those filters" for a list that has not arrived.
     // A screen claiming a result it does not have is the bug class that has
-    // produced most of the serious bugs in this app, and an unreachable board
+    // produced most of the serious bugs in this app, and an unreachable list
     // and an empty one look identical unless this says which it is.
     const p = document.createElement("p");
     p.className = "empty";
-    p.textContent = boardError ? `The board could not be read. ${boardError}` : "Loading the board\u2026";
+    p.textContent = loadError ? `The task list could not be read. ${loadError}` : "Loading the task list\u2026";
     el.list.replaceChildren(p);
     return;
   }
@@ -362,7 +360,7 @@ function renderList() {
       lastGroup = group;
     }
     const row = buildRow(task);
-    rows.set(task.id, row);
+    rows.set(task.slug, row);
     el.list.append(row);
   }
 }
@@ -370,21 +368,21 @@ function renderList() {
 // ── Summary and balance ──────────────────────────────────────────────────────
 
 function renderSummary() {
-  const kept = board.tasks.filter((t) => t.status !== "cut");
-  const mismatched = kept.filter((t) => advice(t).show).length;
-  const flagged = board.tasks.filter((t) => t.rewrite).length;
+  const live = data.tasks.filter((t) => t.active);
+  const mismatched = live.filter((t) => advice(t).show).length;
+  const flagged = data.tasks.filter((t) => t.rewrite).length;
   el.stats.innerHTML =
-    `<b>${kept.length}</b> in · <b>${board.tasks.length - kept.length}</b> cut · ` +
+    `<b>${live.length}</b> live · <b>${data.tasks.length - live.length}</b> cut · ` +
     `<b>${mismatched}</b> tier disagreements` +
     (flagged ? ` · <b>${flagged}</b> flagged` : "");
-  // The board on screen was real when it was fetched, so it is not withdrawn.
-  // But any session can edit these rows now, so a board that has stopped
-  // refreshing must not be indistinguishable from a current one. Appended as
-  // text, matching how every other untrusted string in here is rendered.
-  if (loaded && boardError) {
+  // What is on screen was real when it was fetched, so it is not withdrawn. But
+  // any session can edit these rows, so a page that has stopped refreshing must
+  // not be indistinguishable from a current one. Appended as text, matching how
+  // every other untrusted string in here is rendered.
+  if (loaded && loadError) {
     const note = document.createElement("span");
     note.className = "stale";
-    note.textContent = ` · not refreshing — ${boardError}`;
+    note.textContent = ` · not refreshing — ${loadError}`;
     el.stats.append(note);
   }
   if (!el.balance.hidden) renderBalance();
@@ -394,7 +392,7 @@ function renderBalance() {
   const tiers = [1, 3, 5, 10];
   const rowsHtml = [1, 2, 0]
     .map((round) => {
-      const inRound = board.tasks.filter((t) => t.round === round && t.status !== "cut");
+      const inRound = data.tasks.filter((t) => t.round === round && t.active);
       if (!inRound.length) return "";
       const cells = round === 0
         ? `<td colspan="4">${inRound.length} @ 7</td>`
@@ -412,8 +410,8 @@ function renderBalance() {
     })
     .join("");
 
-  const w = board.model.weights;
-  const th = board.model.thresholds;
+  const w = data.model.weights;
+  const th = data.model.thresholds;
   el.balance.innerHTML = `
     <table>
       <thead><tr>
@@ -436,154 +434,21 @@ function renderBalance() {
     input.addEventListener("change", () => {
       const value = Number(input.value);
       if (!Number.isFinite(value)) return;
-      if (input.dataset.weight) board.model.weights[input.dataset.weight] = value;
-      else board.model.thresholds[input.dataset.threshold] = value;
+      if (input.dataset.weight) data.model.weights[input.dataset.weight] = value;
+      else data.model.thresholds[input.dataset.threshold] = value;
       saveModel();
-      for (const [id, row] of rows) paint(row, board.tasks.find((t) => t.id === id));
+      for (const [slug, row] of rows) {
+        const task = data.tasks.find((t) => t.slug === slug);
+        if (task) paint(row, task);
+      }
       renderSummary();
     });
   }
 }
 
-// ── Publishing ───────────────────────────────────────────────────────────────
-//
-// The board is written to the database the instant a slider moves, but none of it
-// reaches players until the sync runs. That gap is the point -- it makes
-// re-tiering an hour before the event safe -- but it was invisible, which is
-// what this banner fixes.
-//
-// No planning logic lives here. `/api/publish/status` runs the real
-// `scripts/task-sync.mjs --json`, so every refusal it can raise arrives intact.
-
-/** Last report from the sync, or null before the first one comes back. */
-let report = null;
-/** When the board was last edited locally. Newer than the report means the count is stale. */
-let staleSince = 0;
-let recheckTimer;
-let checking = false;
-
-function renderPublish() {
-  const state = publishState(report, { staleSince });
-  el.publish.dataset.kind = state.kind;
-  el.publishHeadline.textContent = checking && !report ? "Checking what's live\u2026" : state.headline;
-  el.publishDetail.textContent = checking && !report ? "" : state.detail ?? "";
-  el.publishRecheck.disabled = checking;
-  el.publishRecheck.textContent = checking ? "Checking\u2026" : "Recheck";
-
-  // Only ever offered from `pending`: a stale, blocked, failed or already-clean
-  // state must not be publishable, and that decision belongs to publish-state.
-  el.publishReview.hidden = !state.canPublish;
-  if (!state.canPublish && !el.publishPreview.hidden) closePreview();
-}
-
-async function refreshStatus() {
-  clearTimeout(recheckTimer);
-  checking = true;
-  renderPublish();
-  try {
-    const res = await fetch("/api/publish/status");
-    report = await res.json();
-  } catch (e) {
-    // Never fall back to a count. A check that did not happen is unknown.
-    report = { ok: false, count: null, error: `Could not reach the sync: ${e.message}` };
-  }
-  // Staleness is decided purely by the report's own `checkedAt`, which the
-  // extension stamps at the moment the run started. An edit made while the run
-  // was in flight is therefore newer than the count, and correctly stays stale.
-  checking = false;
-  renderPublish();
-}
-
-/**
- * A local edit invalidates the count immediately, then schedules one recount
- * once editing settles. Recomputing per keystroke would hammer Supabase; not
- * recomputing at all would leave a number on screen that quietly stopped being
- * true. This does neither.
- */
-function touchBoard() {
-  staleSince = Date.now();
-  renderPublish();
-  clearTimeout(recheckTimer);
-  recheckTimer = setTimeout(refreshStatus, 4000);
-}
-
-function closePreview() {
-  el.publishPreview.hidden = true;
-  el.publishReview.textContent = "Review & publish";
-}
-
-function openPreview() {
-  const lines = describeChanges(report);
-  const reorder = report?.counts?.reorder ?? 0;
-  el.publishChanges.replaceChildren(
-    ...lines.map(({ kind, text }) => {
-      const li = document.createElement("li");
-      li.dataset.kind = kind;
-      li.textContent = text;
-      return li;
-    })
-  );
-
-  // Disclosed as one line rather than one line per task. Cutting a task
-  // renumbers everything below it, so itemizing these buries the decisions that
-  // matter -- but hiding them entirely would mean the preview did not account
-  // for something the publish is about to write.
-  if (reorder > 0) {
-    const li = document.createElement("li");
-    li.dataset.kind = "reorder";
-    li.textContent = `${reorder} other task${reorder === 1 ? "" : "s"} move position in the player's list`;
-    el.publishChanges.append(li);
-  }
-
-  const warnings = report?.warnings ?? [];
-  el.publishWarnings.hidden = !warnings.length;
-  el.publishWarnings.replaceChildren(
-    ...warnings.map((w) => {
-      const p = document.createElement("p");
-      p.textContent = `! ${w}`;
-      return p;
-    })
-  );
-
-  // Counts decisions, not rows written, so it matches the banner above it.
-  el.publishConfirm.textContent = lines.length
-    ? `Publish ${lines.length} change${lines.length === 1 ? "" : "s"}`
-    : "Publish new task order";
-  el.publishPreview.hidden = false;
-  el.publishReview.textContent = "Hide";
-}
-
-el.publishRecheck.addEventListener("click", refreshStatus);
-
-el.publishReview.addEventListener("click", () => {
-  if (el.publishPreview.hidden) openPreview();
-  else closePreview();
-});
-
-el.publishCancel.addEventListener("click", closePreview);
-
-el.publishConfirm.addEventListener("click", async () => {
-  el.publishConfirm.disabled = true;
-  el.publishCancel.disabled = true;
-  el.publishConfirm.textContent = "Publishing\u2026";
-  try {
-    const res = await fetch("/api/publish", { method: "POST" });
-    report = await res.json();
-  } catch (e) {
-    report = { ok: false, count: null, error: `The publish did not come back: ${e.message}` };
-  }
-  el.publishConfirm.disabled = false;
-  el.publishCancel.disabled = false;
-  closePreview();
-  renderPublish();
-  // Re-read rather than trusting the applied report, so what the banner settles
-  // on is a fresh measurement of the live table.
-  if (report?.applied) setTimeout(refreshStatus, 1200);
-});
-
 // ── Wiring ───────────────────────────────────────────────────────────────────
 
-for (const [id, key] of [["round-filter", "round"], ["status-filter", "status"]]) {
+for (const [id, key] of [["round-filter", "round"], ["shown-filter", "shown"]]) {
   document.getElementById(id).addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
@@ -608,23 +473,23 @@ document.getElementById("toggle-balance").addEventListener("click", (e) => {
   if (!el.balance.hidden) renderBalance();
 });
 
-/** Board pushes and poll results both arrive here. Rebuild only if the task set changed. */
-function applyBoard(next) {
-  const sameIds =
-    next.tasks.length === board.tasks.length &&
-    next.tasks.every((t, i) => t.id === board.tasks[i]?.id);
-  board.model = next.model;
+/** Pushes and poll results both arrive here. Rebuild only if the task set changed. */
+function applyTasks(next) {
+  const sameTasks =
+    next.tasks.length === data.tasks.length &&
+    next.tasks.every((t, i) => t.slug === data.tasks[i]?.slug);
+  data.model = next.model;
 
-  if (!sameIds || !rows.size) {
-    board.tasks = next.tasks;
+  if (!sameTasks || !rows.size) {
+    data.tasks = next.tasks;
     renderList();
   } else {
     // Merge in place rather than swapping the array: every row's event handlers
     // closed over its task object, so replacing them would leave the DOM wired
     // to objects nothing else reads.
-    next.tasks.forEach((incoming, i) => Object.assign(board.tasks[i], incoming));
-    for (const [id, row] of rows) {
-      const task = board.tasks.find((t) => t.id === id);
+    next.tasks.forEach((incoming, i) => Object.assign(data.tasks[i], incoming));
+    for (const [slug, row] of rows) {
+      const task = data.tasks.find((t) => t.slug === slug);
       if (task) paint(row, task);
     }
   }
@@ -633,16 +498,13 @@ function applyBoard(next) {
 
 // ── Staying current ──────────────────────────────────────────────────────────
 //
-// The board is a table any session can write, so freshness is a requirement
-// rather than an edge case. `/events` is served by THIS extension process and
-// each session forks its own, so an edit made in another session's canvas can
-// never arrive over the stream -- it is same-process immediacy and nothing more.
-// The poll is what makes this correct, which matches the rest of the app: it
-// polls everywhere and has no WebSockets or Realtime anywhere.
-//
-// A stale panel is cosmetic rather than dangerous, and deliberately so: publish
-// re-runs the real sync against the database, so what gets published is the
-// board's rows and never this page's copy of them.
+// These rows are a table any session can write -- and so can Admin, on a phone,
+// mid-event -- so freshness is a requirement rather than an edge case.
+// `/events` is served by THIS extension process and each session forks its own,
+// so an edit made in another session's canvas can never arrive over the stream;
+// it is same-process immediacy and nothing more. The poll is what makes this
+// correct, which matches the rest of the app: it polls everywhere and has no
+// WebSockets or Realtime anywhere.
 //
 // Deliberately no entry animation or crossfade on the list. A polled list
 // retriggers one on every tick, which is why there are none anywhere in the app.
@@ -650,34 +512,30 @@ function applyBoard(next) {
 const POLL_MS = 8000;
 let pollTimer = 0;
 
-async function fetchBoard() {
-  const res = await fetch("/api/board");
+async function fetchTasks() {
+  const res = await fetch("/api/tasks");
   const body = await res.json().catch(() => null);
-  // A body that is not a board is a failure however it arrived. Rendering it
-  // would empty the list and read as "there are no tasks".
+  // A body that is not a task list is a failure however it arrived. Rendering
+  // it would empty the list and read as "there are no tasks".
   if (!res.ok || !body || !Array.isArray(body.tasks)) {
-    throw new Error(body?.error || `the board could not be read (HTTP ${res.status})`);
+    throw new Error(body?.error || `the task list could not be read (HTTP ${res.status})`);
   }
   return body;
 }
 
-async function refreshBoard() {
+async function refreshTasks() {
   // An unsent edit is newer than anything the server can return, and applying
   // the poll over it would visibly undo what was just typed.
   if (pending.size) return;
   try {
-    const next = await fetchBoard();
-    const changed = loaded && JSON.stringify(next.tasks) !== JSON.stringify(board.tasks);
-    boardError = null;
+    const next = await fetchTasks();
+    loadError = null;
     loaded = true;
-    // Someone else changed the board, so the pending count the publish banner
-    // is showing was measured against a board that no longer exists.
-    if (changed) touchBoard();
-    applyBoard(next);
+    applyTasks(next);
   } catch (e) {
-    boardError = String(e?.message ?? e);
+    loadError = String(e?.message ?? e);
     // Before the first success there is nothing on screen to keep, so the list
-    // has to say why. After one, the board stands and renderSummary marks it.
+    // has to say why. After one, what is there stands and renderSummary marks it.
     if (loaded) renderSummary();
     else renderList();
   }
@@ -690,7 +548,7 @@ function schedulePoll() {
   // up to a full interval stale.
   if (document.hidden) return;
   pollTimer = setTimeout(async () => {
-    await refreshBoard();
+    await refreshTasks();
     schedulePoll();
   }, POLL_MS);
 }
@@ -700,20 +558,19 @@ document.addEventListener("visibilitychange", () => {
     clearTimeout(pollTimer);
     return;
   }
-  refreshBoard().finally(schedulePoll);
+  refreshTasks().finally(schedulePoll);
 });
 
 renderList();
-await refreshBoard();
+await refreshTasks();
 schedulePoll();
-refreshStatus();
 
 const events = new EventSource("/events");
 events.addEventListener("roster", (e) => {
   window.dispatchEvent(new CustomEvent("roster-update", { detail: e.data }));
 });
 
-events.addEventListener("board", (e) => {
+events.addEventListener("tasks", (e) => {
   // Ignore pushes while an edit is in flight; the local copy is newer.
   if (pending.size) return;
   let next;
@@ -723,10 +580,7 @@ events.addEventListener("board", (e) => {
     return;
   }
   if (!next || !Array.isArray(next.tasks)) return;
-  // An agent edit changes the board just as a slider does, so the pending count
-  // it was measured against is no longer the board that is on screen.
-  if (JSON.stringify(next.tasks) !== JSON.stringify(board.tasks)) touchBoard();
   loaded = true;
-  boardError = null;
-  applyBoard(next);
+  loadError = null;
+  applyTasks(next);
 });

@@ -29,7 +29,11 @@ export async function GET(req: Request) {
     .select("id,round,title,points,requires_video,is_secret,revealed_at,sort_order")
     .eq("round", round)
     .eq("active", true)
-    .order("sort_order");
+    // id only breaks ties. sort_order is derived from (is_secret, points,
+    // doc_order), so two tasks CAN share one -- and an unstable order on a list
+    // polled every 5 seconds would visibly reshuffle under the player's thumb.
+    .order("sort_order")
+    .order("id");
 
   const [{ data: tasksRaw }, { data: teams }] = await Promise.all([
     tasksQ,

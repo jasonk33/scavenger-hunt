@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   const [{ data: subs }, { data: tasks }, { data: teams }, { data: players }, { data: scores }] =
     await Promise.all([
       sb.from("submissions").select("*").order("created_at"),
-      sb.from("tasks").select("*").order("round").order("sort_order"),
+      sb.from("tasks").select("*").order("round").order("sort_order").order("id"),
       sb.from("teams").select("*").order("round").order("sort_order"),
       sb.from("players").select("*").order("name"),
       sb.from("team_scores").select("*"),

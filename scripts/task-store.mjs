@@ -1,26 +1,28 @@
 /**
- * The planning board: its schema, its validators, and the queries that read and
- * write it.
+ * The task list: its shape, its validators, and the queries that read and write
+ * it.
  *
- * The board is the source of truth for task content, points and cuts. It lives
- * in the `task_board` table (`supabase/migrate-task-board.sql`) and reaches
- * players only through `scripts/task-sync.mjs`, which writes `tasks` and nothing
- * else. Those two tables are deliberately not one: editing a rating must not
- * change what a player sees until someone publishes.
+ * There is one table. `tasks` is both what players see and where tasks are
+ * planned, so an edit made in the canvas is live the moment it is made -- the
+ * same way the roster tab has always worked.
  *
- * It used to be `data/task-board.json`. A file has one copy per checkout, so a
- * worktree edited a board nobody published, two processes could hold it in
- * memory and silently revert each other, and publishing stranded a commit on
- * whatever branch was checked out. There is one Supabase project behind every
- * session, so the board belongs in it.
+ * It used to be two. A `task_board` table held wording, points and cuts back
+ * until someone ran a publish step, and `scripts/task-sync.mjs` was the bridge.
+ * The gap did not survive contact with the event: Admin edited `tasks` live and
+ * then mirrored the same four fields back onto the board, so the live path
+ * already existed and the mirror was only there to stop the two tables
+ * disagreeing. Everything the board added on top of those four fields -- the
+ * ratings, the notes, the props -- is never shown to a player at all, so there
+ * was nothing left for a staging step to protect. See
+ * `supabase/migrate-tasks-one-table.sql`.
  *
  * Two halves, split on purpose:
  *
- *   - Everything above `── Queries ──` is pure. `board-store.test.mjs` proves it
+ *   - Everything above `── Queries ──` is pure. `task-store.test.mjs` proves it
  *     with no client, no network and no `.env.local` -- and therefore with no
  *     way to touch the real event.
  *   - The queries all take `db` as their first argument. Nothing here creates a
- *     connection on import, so a test can pass a fake and `board-db.test.mjs`
+ *     connection on import, so a test can pass a fake and `task-db.test.mjs`
  *     can prove the query layer without a database either.
  */
 
@@ -33,29 +35,28 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 export const TIERS = [1, 3, 5, 7, 10];
-export const STATUSES = ["keep", "maybe", "cut"];
 export const RATINGS = ["difficulty", "guts", "luck", "payoff", "risk"];
 
 /**
- * Which table the board lives in. Overridable so a scratch copy can be pointed
- * at without editing code: there is exactly one Supabase project and it holds
- * the real event, so anything that writes needs a way to write somewhere else.
+ * Which table the tasks live in. Overridable so a scratch copy can be pointed at
+ * without editing code: there is exactly one Supabase project and it holds the
+ * real event, so anything that writes needs a way to write somewhere else.
  */
-export const BOARD_TABLE = process.env.SCAVENGER_BOARD_TABLE || "task_board";
+export const TASK_TABLE = process.env.SCAVENGER_TASK_TABLE || "tasks";
 
-/** Where the scoring model is kept in the key/value `settings` table. */
-export const MODEL_KEY = "board_model";
+/** Where the tier model is kept in the key/value `settings` table. */
+export const MODEL_KEY = "tier_model";
 
 /**
  * Column -> the key that column has on a task object.
  *
- * The task shape stays camelCase and is exactly what the planner and the canvas
- * already consume, so moving the board into a table changed no consumer. This
- * map is the only place the two vocabularies meet.
+ * The task object stays camelCase and is what the canvas consumes. This map is
+ * the only place the two vocabularies meet.
+ *
+ * `round` is deliberately absent: it is derived, not copied. See `rowsToTask`.
  */
 export const COLUMNS = {
-  board_id: "id",
-  round: "round",
+  slug: "slug",
   doc_title: "docTitle",
   title: "title",
   points: "points",
@@ -65,29 +66,54 @@ export const COLUMNS = {
   luck: "luck",
   payoff: "payoff",
   risk: "risk",
-  needs_clip: "needsClip",
+  requires_video: "requiresVideo",
+  is_secret: "isSecret",
+  active: "active",
   prop: "prop",
-  status: "status",
   rewrite: "rewrite",
   note: "note",
   tier_ok: "tierOk",
 };
 
 /** Named explicitly rather than `*`, so a column added later cannot arrive unmapped. */
-export const SELECT = Object.keys(COLUMNS).join(",");
+export const SELECT = ["id", "round", ...Object.keys(COLUMNS)].join(",");
 
 const TASK_KEY_TO_COLUMN = Object.fromEntries(Object.entries(COLUMNS).map(([column, key]) => [key, column]));
 
-export function rowToTask(row) {
+/**
+ * The rows sharing one slug, as the single task the canvas edits.
+ *
+ * A secret challenge is offered in BOTH halves of the event, and `tasks.round`
+ * is `check (round in (1, 2))`, so it is stored as two rows that share a slug.
+ * That is the only reason grouping exists, and it is why `round` is presented as
+ * 0 for a secret rather than read off a row: 0 means "both", which is the thing
+ * the planner is actually deciding about. Every other task is a single row and
+ * groups to itself.
+ *
+ * @param {object[]} rows  one or more rows, all with the same slug
+ */
+export function rowsToTask(rows) {
+  const [first] = rows ?? [];
+  if (!first) return null;
   const task = {};
-  for (const [column, key] of Object.entries(COLUMNS)) task[key] = row?.[column] ?? null;
+  for (const [column, key] of Object.entries(COLUMNS)) task[key] = first[column] ?? null;
+  task.round = first.is_secret ? 0 : first.round;
+  // Which rows this task actually is. Nothing in the UI reads it; it is here so
+  // a caller can tell a secret from a normal task without re-querying.
+  task.rowIds = rows.map((r) => r.id);
   return task;
 }
 
-export function taskToRow(task) {
-  const row = {};
-  for (const [column, key] of Object.entries(COLUMNS)) row[column] = task?.[key] ?? null;
-  return row;
+/** Groups rows by slug, preserving the order the first row of each slug arrived in. */
+export function groupRows(rows) {
+  const bySlug = new Map();
+  for (const row of rows ?? []) {
+    if (!row || typeof row.slug !== "string" || !row.slug) continue;
+    const group = bySlug.get(row.slug);
+    if (group) group.push(row);
+    else bySlug.set(row.slug, [row]);
+  }
+  return [...bySlug.values()].map(rowsToTask);
 }
 
 const int = (v) => (typeof v === "boolean" ? NaN : Number(v));
@@ -100,11 +126,13 @@ const rating = (v) => {
  * The fields a caller may change, with a validator each. Anything not listed is
  * dropped rather than written.
  *
- * `id`, `round`, `docTitle` and `docOrder` are deliberately absent. They are
- * identity and provenance: `docTitle` is the planning doc's own wording and the
- * evidence of what a task used to say, and `id` is the key `tasks.board_id`
- * joins on. A patch that could move a task between rounds would silently break
- * that join.
+ * `slug`, `round`, `isSecret`, `docTitle` and `docOrder` are deliberately
+ * absent. They are identity and provenance: `docTitle` is the planning doc's own
+ * wording and the evidence of what a task used to say, and slug/round/isSecret
+ * together decide how many rows a task is. A patch that could move a task
+ * between rounds, or turn one row into two, is a different operation from
+ * editing one -- and `revealed_at` is not here either, because revealing a
+ * secret is per-round and belongs to Admin on the day.
  *
  * Every validator returns `undefined` for "not a legal value", which is what
  * drops the field. Returning the raw value instead would send it to a column
@@ -116,8 +144,10 @@ export const EDITABLE = {
   note: (v) => (typeof v === "string" ? v : undefined),
   prop: (v) => (typeof v === "string" ? v : undefined),
   points: (v) => (TIERS.includes(int(v)) ? int(v) : undefined),
-  status: (v) => (STATUSES.includes(v) ? v : undefined),
-  needsClip: (v) => (typeof v === "boolean" ? v : undefined),
+  // Cut. Never a delete, which would cascade to submissions: a cut task is
+  // hidden from players and its scores stand.
+  active: (v) => (typeof v === "boolean" ? v : undefined),
+  requiresVideo: (v) => (typeof v === "boolean" ? v : undefined),
   rewrite: (v) => (typeof v === "boolean" ? v : undefined),
   // The tier suggestion this task's owner rejected, or null for "never
   // dismissed". A number rather than a flag on purpose: see tier.mjs.
@@ -147,7 +177,7 @@ export function taskPatchToRow(patch) {
  *
  * The thresholds are fitted, not invented: they are the score cutoffs that
  * reproduce the planning doc's own tier distribution (10/22/23/14) across the
- * tasks it already had. Arbitrary cutoffs would flag half the board and the
+ * tasks it already had. Arbitrary cutoffs would flag half the list and the
  * disagreements would be noise.
  */
 export const DEFAULT_MODEL = Object.freeze({
@@ -161,7 +191,7 @@ export const DEFAULT_MODEL = Object.freeze({
  *
  * Every failure lands on the defaults rather than on a partial model: one NaN
  * weight makes every tier comparison false, which would quietly re-tier the
- * whole board without anything looking broken.
+ * whole list without anything looking broken.
  */
 export function parseModel(value) {
   let raw = null;
@@ -199,15 +229,15 @@ export function serializeModel(model) {
 //
 // Deliberately `fetch` and nothing else. This module is in the canvas's import
 // graph, and `node_modules` is gitignored -- so a worktree does not have one.
-// A top-level `import ... from "@supabase/supabase-js"` here does not fail the
-// board, it fails the EXTENSION: the import throws before registration, the
+// A top-level `import ... from "@supabase/supabase-js"` here does not fail a
+// query, it fails the EXTENSION: the import throws before registration, the
 // canvas never appears, and there is nothing on screen to click or to explain
 // itself. That happened. Node has had global fetch since 18, the queries here
-// are four shapes of CRUD, and the board is supposed to be editable from any
-// session -- so the dependency is not worth its cost.
+// are four shapes of CRUD, and the canvas is supposed to work from any session
+// -- so the dependency is not worth its cost.
 
-/** Builds the client the board queries take. `fetchImpl` is injectable for tests. */
-export function createBoardClient(env = loadEnv(), fetchImpl = globalThis.fetch) {
+/** Builds the client the queries take. `fetchImpl` is injectable for tests. */
+export function createTaskClient(env = loadEnv(), fetchImpl = globalThis.fetch) {
   const url = String(env?.SUPABASE_URL ?? "").replace(/\/+$/, "");
   const key = String(env?.SUPABASE_SERVICE_ROLE_KEY ?? "");
   if (!url || !key) {
@@ -272,102 +302,122 @@ const eq = (value) => `eq.${encodeURIComponent(value)}`;
 // ── Queries ──────────────────────────────────────────────────────────────────
 
 /**
- * The whole board: every task plus the scoring model.
+ * Every task plus the tier model.
  *
  * Read fresh every time, with no cache. The cache this replaces was the cause of
  * its own bug -- a process served its first read forever and wrote that stale
  * copy back over whatever another session had done since. Any session can edit
- * the board now, so "the copy I loaded" is never a safe thing to hold.
+ * the task list, so "the copy I loaded" is never a safe thing to hold.
  *
  * @returns {Promise<{model: object, tasks: object[]}>}
  */
-export async function readBoard(client) {
+export async function readTasks(client) {
   const [rows, model] = await Promise.all([
-    rest(client, { path: `${BOARD_TABLE}?select=${SELECT}&order=round.asc,doc_order.asc,board_id.asc` }).catch((e) => {
-      throw new Error(`could not read the task board: ${e.message}`);
+    rest(client, {
+      // Secrets last, then by tier and by the planning doc's own order, which is
+      // what the canvas lists in and what groups a secret's two rows together.
+      path: `${TASK_TABLE}?select=${SELECT}&order=is_secret.asc,round.asc,doc_order.asc,slug.asc,id.asc`,
+    }).catch((e) => {
+      throw new Error(`could not read the task list: ${e.message}`);
     }),
     readModel(client),
   ]);
-  return { model, tasks: (Array.isArray(rows) ? rows : []).map(rowToTask) };
+  return { model, tasks: groupRows(Array.isArray(rows) ? rows : []) };
 }
 
 /**
- * Writes only the fields that changed, on one row.
+ * Writes only the fields that changed, on the rows of one task.
  *
- * Per-field rather than whole-board on purpose. Saving the whole board is what
- * let one process overwrite another's unrelated edits; patching named columns of
- * a named row makes that impossible rather than unlikely. Two people editing
- * different tasks -- or different fields of the same task -- no longer interact
- * at all, and last-write-wins on the same field is the only remaining race,
- * which is the expected one.
+ * Per-field rather than whole-list on purpose. Saving everything is what let one
+ * process overwrite another's unrelated edits; patching named columns of a named
+ * slug makes that impossible rather than unlikely. Two people editing different
+ * tasks -- or different fields of the same task -- no longer interact at all,
+ * and last-write-wins on the same field is the only remaining race, which is the
+ * expected one.
  *
- * @returns {Promise<object|null>} the updated task, or null if the id is unknown.
+ * Filtering on the slug rather than a row id is also what keeps a secret's two
+ * rounds in step: one statement, both rows, no window in which they disagree.
+ *
+ * @returns {Promise<object|null>} the updated task, or null if the slug is unknown.
  */
-export async function updateTask(client, boardId, patch) {
-  if (typeof boardId !== "string" || !boardId) return null;
+export async function updateTask(client, slug, patch) {
+  if (typeof slug !== "string" || !slug) return null;
   const row = taskPatchToRow(patch);
 
   // Nothing legal to write. Still a read, so the caller can tell "no such task"
   // from "nothing to do" -- returning the task unchanged is the honest answer,
   // and an empty UPDATE would move updated_at for an edit nobody made.
   if (!Object.keys(row).length) {
-    const found = await rest(client, { path: `${BOARD_TABLE}?select=${SELECT}&board_id=${eq(boardId)}` }).catch((e) => {
-      throw new Error(`could not read task ${boardId}: ${e.message}`);
+    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&slug=${eq(slug)}` }).catch((e) => {
+      throw new Error(`could not read task ${slug}: ${e.message}`);
     });
-    return found[0] ? rowToTask(found[0]) : null;
+    return groupRows(found)[0] ?? null;
   }
 
   const updated = await rest(client, {
     method: "PATCH",
-    path: `${BOARD_TABLE}?board_id=${eq(boardId)}&select=${SELECT}`,
+    path: `${TASK_TABLE}?slug=${eq(slug)}&select=${SELECT}`,
     body: { ...row, updated_at: new Date().toISOString() },
     prefer: "return=representation",
   }).catch((e) => {
-    throw new Error(`could not update task ${boardId}: ${e.message}`);
+    throw new Error(`could not update task ${slug}: ${e.message}`);
   });
-  return updated[0] ? rowToTask(updated[0]) : null;
+  return groupRows(updated)[0] ?? null;
 }
 
 /**
- * Adds a task. It lands as `maybe` so it has to be reviewed before it counts.
+ * Adds a task, live.
  *
- * The id is allocated by looking at what is already there, which is a read
+ * A secret (`round: 0`) is inserted once per round, sharing a slug -- the fan-out
+ * the old publish step used to do. Both rows go in one request so a task can
+ * never exist in half the event.
+ *
+ * The slug is allocated by looking at what is already there, which is a read
  * followed by a write and therefore racy in principle. The insert is the
- * arbiter: `board_id` is the primary key, so a genuinely simultaneous add fails
- * loudly on the duplicate instead of overwriting the other one.
+ * arbiter: (round, slug) is unique, so a genuinely simultaneous add fails loudly
+ * on the duplicate instead of overwriting the other one.
  */
 export async function addTask(client, input) {
   const round = [0, 1, 2].includes(Number(input?.round)) ? Number(input.round) : 1;
   const prefix = round === 0 ? "s" : `r${round}`;
-  const existing = await rest(client, { path: `${BOARD_TABLE}?select=board_id` }).catch((e) => {
-    throw new Error(`could not read the task board: ${e.message}`);
+  const existing = await rest(client, { path: `${TASK_TABLE}?select=slug,round,doc_order` }).catch((e) => {
+    throw new Error(`could not read the task list: ${e.message}`);
   });
-  const taken = new Set(existing.map((r) => r.board_id));
+  const taken = new Set(existing.map((r) => r.slug));
   let n = 1;
   while (taken.has(`${prefix}-x${n}`)) n += 1;
 
-  const row = {
-    board_id: `${prefix}-x${n}`,
-    round,
+  // Last in its tier. Allocated the same way Admin allocates it -- highest plus
+  // one -- because the two must not be able to pick the same number: doc_order
+  // is the tie-break inside a tier, and two tasks sharing a sort_order would
+  // swap places between polls in the player's list.
+  const rounds = round === 0 ? [1, 2] : [round];
+  const lastOrder = existing
+    .filter((r) => rounds.includes(Number(r.round)))
+    .reduce((max, r) => Math.max(max, Number(r.doc_order) || 0), 0);
+
+  const shared = {
+    slug: `${prefix}-x${n}`,
     // Empty is what marks a task as not having come from the planning doc.
     doc_title: "",
     title: String(input?.title ?? "").trim() || "Untitled task",
     points: TIERS.includes(Number(input?.points)) ? Number(input.points) : round === 0 ? 7 : 3,
-    doc_order: 999 + n,
-    status: "maybe",
+    doc_order: lastOrder + 1,
+    is_secret: round === 0,
+    active: true,
     note: typeof input?.note === "string" ? input.note : "",
     ...taskPatchToRow(Object.fromEntries(RATINGS.map((k) => [k, input?.[k]]))),
   };
 
   const created = await rest(client, {
     method: "POST",
-    path: `${BOARD_TABLE}?select=${SELECT}`,
-    body: row,
+    path: `${TASK_TABLE}?select=${SELECT}`,
+    body: rounds.map((r) => ({ ...shared, round: r })),
     prefer: "return=representation",
   }).catch((e) => {
     throw new Error(`could not add a task: ${e.message}`);
   });
-  return rowToTask(created[0]);
+  return groupRows(created)[0] ?? null;
 }
 
 /** Merges a partial model into the stored one and returns the result. */
@@ -383,17 +433,17 @@ export async function updateModel(client, patch) {
     body: { key: MODEL_KEY, value: JSON.stringify(merged) },
     prefer: "resolution=merge-duplicates,return=minimal",
   }).catch((e) => {
-    throw new Error(`could not save the board model: ${e.message}`);
+    throw new Error(`could not save the tier model: ${e.message}`);
   });
   return merged;
 }
 
 export async function readModel(client) {
-  // A missing row is a working board on the defaults, so only a real failure is
-  // worth raising -- a board that refuses to load over one absent settings row
-  // would be a canvas that will not open.
+  // A missing row is a working list on the defaults, so only a real failure is
+  // worth raising -- a canvas that refuses to open over one absent settings row
+  // would be a canvas nobody can use.
   const rows = await rest(client, { path: `settings?select=value&key=${eq(MODEL_KEY)}` }).catch((e) => {
-    throw new Error(`could not read the board model: ${e.message}`);
+    throw new Error(`could not read the tier model: ${e.message}`);
   });
   return parseModel(rows[0]?.value);
 }
@@ -409,11 +459,8 @@ export async function readModel(client) {
  * `--git-common-dir` are the same in the main checkout and diverge in a linked
  * worktree, where the common dir points back at the main one.
  *
- * This is NOT the old board-path resolution wearing a new hat. That had to pick
- * between two copies of the board and could pick the stale one, which is why it
- * had a refusal attached. There is one board now, in one table. The only
- * question left is where the credentials live, and being wrong about that fails
- * loudly at connect time rather than silently publishing the wrong thing.
+ * The only question this answers is where the credentials live, and being wrong
+ * about that fails loudly at connect time.
  */
 export function mainCheckout(startDir, run = gitRun) {
   const gitDir = run(["rev-parse", "--git-dir"], startDir);
@@ -478,8 +525,8 @@ export function loadEnv({ cwd = REPO_ROOT, mainCheckout: main, env = process.env
  * The Supabase client, for the callers that query the rest of the schema.
  *
  * Imported dynamically so this module stays loadable without `node_modules`.
- * Only `task-sync` and `ready` reach for it, and both already require a full
- * checkout to run at all.
+ * Only `ready` and `seed` reach for it, and both already require a full checkout
+ * to run at all.
  */
 export async function createAdminClient(env = loadEnv()) {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {

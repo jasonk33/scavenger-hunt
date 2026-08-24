@@ -38,18 +38,65 @@ create table if not exists roster (
   primary key (round, player_id)
 );
 
+-- ONE task list. `tasks` is both what players see and where tasks are planned:
+-- the canvas in .github/extensions/scavenger-tasks edits these rows directly and
+-- every edit is live at once, exactly like the roster.
+--
+-- There used to be a second `task_board` table holding wording, points and cuts
+-- back until someone published. It bought nothing -- Admin already edited tasks
+-- live and mirrored the same fields back onto the board, and the columns the
+-- board added on top (the ratings, the notes) are never shown to a player at
+-- all. supabase/migrate-tasks-one-table.sql folds it in and explains the rest.
 create table if not exists tasks (
   id             uuid primary key default gen_random_uuid(),
   round          int  not null check (round in (1, 2)),
+
+  -- The stable key. A secret challenge is offered in BOTH halves of the event,
+  -- and `round` is 1 or 2, so it is two rows sharing one slug -- the only thing
+  -- the canvas has to group by. The default means an insert that has no opinion
+  -- (Admin, a QA fixture) still gets a unique one.
+  slug           text not null default gen_random_uuid()::text,
+
+  -- What a player reads. The planning doc's original wording is kept beside it
+  -- for provenance and never edited; eight tasks have been reworded away from
+  -- it. Deliberately NOT unique per round: the slug is the identity, and a
+  -- unique title can only reject a rename halfway through typing it.
   title          text not null,
+  doc_title      text not null default '',
+
   points         int  not null check (points > 0),
   requires_video boolean not null default false,
   is_secret      boolean not null default false,
   revealed_at    timestamptz,
-  sort_order     int  not null default 0,
   active         boolean not null default true,
+
+  -- Position within the round in the planning doc: the canvas's own reading
+  -- order, and the tie-break within a tier below.
+  doc_order      int  not null default 999,
+
+  -- The player's order, derived rather than maintained. Tier ascending with the
+  -- secrets last, which is what the old publish step used to compute and then
+  -- renumber densely on every cut.
+  sort_order     int generated always as
+                   ((case when is_secret then 500000 else 0 end) + points * 1000 + doc_order) stored,
+
+  -- Planning only, never shown to a player. difficulty/guts/luck drive the
+  -- suggested tier; payoff and risk are the keep/cut axes.
+  difficulty     int  not null default 3 check (difficulty between 1 and 5),
+  guts           int  not null default 3 check (guts       between 1 and 5),
+  luck           int  not null default 3 check (luck       between 1 and 5),
+  payoff         int  not null default 3 check (payoff     between 1 and 5),
+  risk           int  not null default 1 check (risk       between 1 and 5),
+  prop           text not null default '',
+  note           text not null default '',
+  rewrite        boolean not null default false,
+  -- The tier suggestion this task's owner rejected, or null for "never
+  -- dismissed". A number rather than a flag so that changing a rating -- which
+  -- moves the suggestion -- re-raises it. See the canvas's tier.mjs.
+  tier_ok        int check (tier_ok in (1, 3, 5, 7, 10)),
+
   created_at     timestamptz not null default now(),
-  unique (round, title)
+  updated_at     timestamptz not null default now()
 );
 
 -- status lifecycle: uploading -> pending -> approved | rejected
@@ -87,13 +134,94 @@ create table if not exists submissions (
 -- that somehow misses one degrades to a group of one, which is the old behaviour.
 alter table submissions add column if not exists group_id uuid;
 
--- board_id links a task back to its entry on the planning board
--- (the `task_board` table), which owns task content, tiers and cuts.
--- Nullable: a row added straight from Admin has no board entry, and
--- `npm run sync:tasks` leaves anything it does not recognise alone.
-alter table tasks add column if not exists board_id text;
-create unique index if not exists tasks_round_board_id_idx
-  on tasks (round, board_id);
+-- The task list was two tables until supabase/migrate-tasks-one-table.sql folded
+-- the planning board into this one. These mirror the columns that migration
+-- adds, so this file stays the whole picture and stays re-runnable; the one-shot
+-- part -- carrying the board's rows over and retiring it -- lives only there.
+--
+-- On a database that predates the fold, RUN THAT FILE, not this one. This block
+-- gets the schema right on its own, but only the migration can recover the
+-- planning columns from the old table, and the ratings and notes are not
+-- recoverable from anywhere else.
+--
+-- The rename comes first and is not optional: on a database that still has
+-- `board_id`, adding `slug` beside it instead would leave every task with a
+-- fresh random key, and a secret challenge's two rows would stop sharing one.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'tasks' and column_name = 'board_id') then
+    alter table tasks rename column board_id to slug;
+  end if;
+end $$;
+
+alter table tasks add column if not exists slug       text;
+update tasks set slug = gen_random_uuid()::text where slug is null;
+alter table tasks alter column slug set default gen_random_uuid()::text;
+alter table tasks alter column slug set not null;
+alter table tasks add column if not exists doc_title  text not null default '';
+alter table tasks add column if not exists doc_order  int  not null default 999;
+alter table tasks add column if not exists difficulty int  not null default 3 check (difficulty between 1 and 5);
+alter table tasks add column if not exists guts       int  not null default 3 check (guts       between 1 and 5);
+alter table tasks add column if not exists luck       int  not null default 3 check (luck       between 1 and 5);
+alter table tasks add column if not exists payoff     int  not null default 3 check (payoff     between 1 and 5);
+alter table tasks add column if not exists risk       int  not null default 1 check (risk       between 1 and 5);
+alter table tasks add column if not exists prop       text not null default '';
+alter table tasks add column if not exists note       text not null default '';
+alter table tasks add column if not exists rewrite    boolean not null default false;
+alter table tasks add column if not exists tier_ok    int check (tier_ok in (1, 3, 5, 7, 10));
+alter table tasks add column if not exists updated_at timestamptz not null default now();
+
+-- unique (round, title) existed only so the old publish step could match tasks
+-- by their prose. Found by its columns rather than by its name, because a
+-- `drop constraint if exists` on a guessed name fails silently.
+do $$
+declare c text;
+begin
+  for c in
+    select con.conname
+    from pg_constraint con
+    where con.conrelid = 'public.tasks'::regclass
+      and con.contype = 'u'
+      -- attname is `name`, not `text`, and `name[] = text[]` has no operator at
+      -- all -- so this has to cast or the whole migration aborts here.
+      and (select array_agg(att.attname::text order by att.attname::text)
+           from unnest(con.conkey) k
+           join pg_attribute att on att.attrelid = con.conrelid and att.attnum = k) = array['round', 'title']
+  loop
+    execute format('alter table tasks drop constraint %I', c);
+  end loop;
+end $$;
+
+create unique index if not exists tasks_round_slug_idx on tasks (round, slug);
+drop index if exists tasks_round_board_id_idx;
+
+-- Only a secret challenge may repeat a slug, and only once per round. Two
+-- unrelated tasks sharing one would be merged into a single entry by the canvas,
+-- which patches every row with a given slug at once.
+create unique index if not exists tasks_slug_solo_idx on tasks (slug) where not is_secret;
+
+-- sort_order was a plain column the old publish step recomputed and renumbered.
+-- On a database that predates the fold it still is one, and nothing maintains it
+-- any more, so convert it in place. No-op everywhere else.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'tasks'
+               and column_name = 'sort_order' and is_generated = 'NEVER') then
+
+    -- The old dense sort_order is the only record of the order players are
+    -- looking at, and doc_order -- which replaces it as the tie-break inside a
+    -- tier -- has just defaulted every row to 999. Carrying it across keeps
+    -- every task where it is; without this, running THIS file instead of the
+    -- migration silently reshuffles each tier.
+    update tasks set doc_order = sort_order where doc_order = 999;
+
+    alter table tasks drop column sort_order;
+    alter table tasks add column sort_order int
+      generated always as ((case when is_secret then 500000 else 0 end) + points * 1000 + doc_order) stored;
+  end if;
+end $$;
 
 -- Free text the player attaches to say what the judge is looking at.
 alter table submissions add column if not exists note text;
@@ -243,10 +371,8 @@ on conflict (round, name) do nothing;
 
 -- Tasks are NOT seeded here.
 --
--- The task list lives on the planning board in the `task_board` table -- titles,
--- point tiers, the clip flag and which tasks are cut -- and `npm run sync:tasks`
--- is the only thing that writes it into this table. Keeping a second copy of the
--- list here is what let the two drift apart in the first place.
+-- Keeping a copy of the list in this file is what let two copies of it drift
+-- apart in the first place. Tasks are written and edited in the planner canvas,
+-- which reads and writes the `tasks` table above directly.
 --
--- On a fresh project: run this file, then `supabase/migrate-task-board-id.sql`
--- and `supabase/migrate-task-board.sql`, then `npm run sync:tasks -- --apply`.
+-- On a fresh project: run this file, then open the canvas and add tasks.

@@ -1,19 +1,22 @@
 // Extension: scavenger-tasks
-// A planner for tuning the scavenger hunt task list and editing the live roster.
-// Tasks wait for Publish; people, team names and round assignments write live.
+// A planner for the scavenger hunt: the task list and the roster, both live.
 //
-// extension.mjs is wiring only: store.mjs reads and writes the board in the
-// task_board table, tier.mjs owns the scoring model, and index.html/ui.js/ui.css
-// are the renderer served over loopback.
+// Every edit here writes the tables the app itself reads, so a player sees it on
+// their next poll. There is no publish step, and nothing is staged. There used to
+// be: task wording, points and cuts were held in a separate `task_board` table
+// until someone pressed a button. See supabase/migrate-tasks-one-table.sql for
+// why that is gone.
+//
+// extension.mjs is wiring only: store.mjs reads and writes the `tasks` table,
+// roster-store.mjs the roster, tier.mjs owns the scoring model, and
+// index.html/ui.js/ui.css are the renderer served over loopback.
 
 import { createServer } from "node:http";
-import { execFile, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
-import { addTask, loadBoard, summarize, updateModel, updateTask } from "./store.mjs";
+import { addTask, loadTasks, summarize, updateModel, updateTask } from "./store.mjs";
 import {
   addPlayers,
   addTeam,
@@ -26,7 +29,6 @@ import {
   updatePlayer,
   updateTeam,
 } from "./roster-store.mjs";
-import { mainCheckout } from "../../../scripts/board-store.mjs";
 import { scoreOf, suggestedPoints } from "./tier.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
@@ -35,155 +37,18 @@ const ASSETS = {
   "/ui.js": "ui.js",
   "/roster.js": "roster.js",
   "/ui.css": "ui.css",
-  "/publish-state.mjs": "publish-state.mjs",
   "/tier.mjs": "tier.mjs",
 };
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css" };
-
-// ── Publishing ───────────────────────────────────────────────────────────────
-//
-// The canvas deliberately contains no sync logic. It shells out to the real
-// `scripts/task-sync.mjs --json`, so the collision refusal and the pre-migration
-// refusal are inherited rather than reimplemented, and cannot drift from the
-// thing they are meant to guard.
-//
-// It runs the sync from a checkout that can actually run it. The BOARD is a
-// table and reachable from anywhere, but `task-sync` imports the Supabase client
-// and reads `.env.local`, and both `node_modules` and `.env.local` are
-// gitignored -- so they exist only where someone set the app up. In a worktree
-// that is the main checkout, not this one. Running the worktree's own copy fails
-// on `Cannot find package @supabase/supabase-js` before it reaches a credential.
-
-const THIS_CHECKOUT = fileURLToPath(new URL("../../../", import.meta.url));
-
-/** The nearest checkout with a `node_modules`, since that is what `node` needs. */
-const REPO_ROOT = (() => {
-  if (existsSync(join(THIS_CHECKOUT, "node_modules"))) return THIS_CHECKOUT;
-  const main = mainCheckout(THIS_CHECKOUT);
-  return main && existsSync(join(main, "node_modules")) ? main : THIS_CHECKOUT;
-})();
-const SYNC_SCRIPT = join(REPO_ROOT, "scripts", "task-sync.mjs");
-/** `api()` having no timeout is a named sharp edge in AGENTS.md; a hung Supabase
- *  call must land in the banner's error state rather than spinning forever. */
-const SYNC_TIMEOUT_MS = 30_000;
-
-/**
- * Which `node` to run the sync with.
- *
- * NOT `process.execPath`: extensions are forked from the Copilot binary, so that
- * resolves to Copilot itself, which parses `--json` as one of its own flags and
- * fails. Found once, at startup, so a missing node surfaces as a stated error in
- * the banner rather than as a mystery on the day.
- */
-const NODE_BIN = (() => {
-  const candidates = [
-    process.env.SCAVENGER_TASKS_NODE,
-    "node",
-    "/opt/homebrew/bin/node",
-    "/usr/local/bin/node",
-    "/usr/bin/node",
-  ].filter(Boolean);
-  for (const bin of candidates) {
-    try {
-      execFileSync(bin, ["--version"], { stdio: ["ignore", "ignore", "ignore"], timeout: 5000 });
-      return bin;
-    } catch {
-      // Not this one.
-    }
-  }
-  return null;
-})();
-
-/**
- * Runs are serialized end to end, and only a *status* run is ever shared.
- *
- * Sharing a run with a publish would be silent and catastrophic: a publish
- * arriving while a status poll was in flight would receive the dry run's report,
- * announce success, and never have written anything.
- */
-let statusInFlight = null;
-let chain = Promise.resolve();
-
-/**
- * Runs the sync and returns its report.
- *
- * A non-zero exit with parseable JSON is a *result* -- that is how a refusal and
- * a collision arrive. A non-zero exit with nothing parseable is a failure, and
- * is reported as one: the banner has to be able to tell those apart, because
- * confusing them is the difference between "blocked, here's why" and a silent
- * false "nothing to publish".
- */
-function execSync(apply) {
-  const args = [SYNC_SCRIPT, "--json"];
-  if (apply) args.push("--apply");
-  const startedAt = Date.now();
-
-  if (!NODE_BIN) {
-    return Promise.resolve({
-      ok: false,
-      count: null,
-      checkedAt: startedAt,
-      error:
-        "Could not find a node binary to run scripts/task-sync.mjs with. " +
-        "Set SCAVENGER_TASKS_NODE to its path, or publish from a terminal with " +
-        "`npm run sync:tasks -- --apply`.",
-    });
-  }
-
-  return new Promise((resolve) => {
-    execFile(
-      NODE_BIN,
-      args,
-      { cwd: REPO_ROOT, timeout: SYNC_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        const raw = String(stdout ?? "").trim();
-        let report = null;
-        if (raw) {
-          try {
-            report = JSON.parse(raw);
-          } catch {
-            report = null;
-          }
-        }
-        // `checkedAt` is when the run STARTED, not when it finished: the board
-        // it describes is the one that existed at the start, so an edit made
-        // while it was running must still read as newer than the count.
-        if (report && typeof report === "object" && !Array.isArray(report)) {
-          resolve({ ...report, checkedAt: startedAt });
-          return;
-        }
-        const why = err?.killed
-          ? `The check timed out after ${SYNC_TIMEOUT_MS / 1000}s.`
-          : String(stderr ?? "").trim() || err?.message || "the sync produced no output";
-        resolve({ ok: false, count: null, error: why, checkedAt: startedAt });
-      }
-    );
-  });
-}
-
-function runSync(apply = false) {
-  if (apply) {
-    const run = chain.then(() => execSync(true));
-    chain = run.catch(() => {});
-    return run;
-  }
-  if (statusInFlight) return statusInFlight;
-  const run = chain.then(() => execSync(false));
-  chain = run.catch(() => {});
-  statusInFlight = run.finally(() => {
-    statusInFlight = null;
-  });
-  return statusInFlight;
-}
 
 /** instanceId -> { server, url }. One loopback server per open panel. */
 const servers = new Map();
 /** Open SSE responses across every instance, so an agent edit reaches all panels. */
 const streams = new Set();
 
-/** The board plus everything derived from it, which is what the renderer wants. */
-async function boardPayload() {
-  const board = await loadBoard();
+/** The task list plus everything derived from it, which is what the renderer wants. */
+async function tasksPayload() {
+  const board = await loadTasks();
   return {
     model: board.model,
     tasks: board.tasks.map((t) => ({
@@ -199,12 +64,12 @@ async function rosterPayload() {
 }
 
 /**
- * Pushes the board to every panel this process is serving.
+ * Pushes the task list to every panel this process is serving.
  *
  * Same-process only, which is why it is an optimisation rather than the
  * mechanism: each session forks its own extension, so an edit made in one
  * session's canvas can never reach another session's panel over this stream.
- * The renderer polls `/api/board` for that, and the poll is what makes
+ * The renderer polls `/api/tasks` for that, and the poll is what makes
  * cross-session freshness correct. A failure here is therefore not worth
  * reporting -- the next poll fixes it.
  */
@@ -212,13 +77,13 @@ async function broadcast() {
   if (!streams.size) return;
   let data;
   try {
-    data = JSON.stringify(await boardPayload());
+    data = JSON.stringify(await tasksPayload());
   } catch {
     return;
   }
   for (const res of streams) {
     try {
-      res.write(`event: board\ndata: ${data}\n\n`);
+      res.write(`event: tasks\ndata: ${data}\n\n`);
     } catch {
       streams.delete(res);
     }
@@ -267,27 +132,19 @@ async function handle(req, res) {
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     });
-    res.write(`event: board\ndata: ${JSON.stringify(await boardPayload())}\n\n`);
+    res.write(`event: tasks\ndata: ${JSON.stringify(await tasksPayload())}\n\n`);
     try {
       res.write(`event: roster\ndata: ${JSON.stringify(await rosterPayload())}\n\n`);
     } catch {
-      // The roster poll reports this in the panel without taking down the task board.
+      // The roster poll reports this in the panel without taking down the task list.
     }
     streams.add(res);
     req.on("close", () => streams.delete(res));
     return;
   }
 
-  if (path === "/api/board") return json(res, 200, await boardPayload());
+  if (path === "/api/tasks") return json(res, 200, await tasksPayload());
   if (path === "/api/roster") return json(res, 200, await rosterPayload());
-
-  if (path === "/api/publish/status") return json(res, 200, await runSync(false));
-
-  if (path === "/api/publish" && req.method === "POST") {
-    // The script decides whether this is allowed; every refusal it can raise
-    // comes back in the report rather than being pre-judged here.
-    return json(res, 200, await runSync(true));
-  }
 
   if (path === "/api/model" && req.method === "PATCH") {
     const body = await readJson(req);
@@ -382,10 +239,10 @@ async function handle(req, res) {
 
 async function startServer() {
   const server = createServer((req, res) => {
-    // The board is a network call now, so a handler CAN fail in ways the file
-    // never did. Say why in a body the renderer can read: a bare 500 leaves the
-    // canvas unable to tell "the board is empty" from "the board is unreachable",
-    // and those two look identical on screen while meaning opposite things.
+    // Every handler is a network call, so it CAN fail. Say why in a body the
+    // renderer can read: a bare 500 leaves the canvas unable to tell "there are
+    // no tasks" from "the database is unreachable", and those two look identical
+    // on screen while meaning opposite things.
     handle(req, res).catch((e) => {
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
@@ -401,9 +258,11 @@ async function startServer() {
 
 // ── Agent-facing actions ─────────────────────────────────────────────────────
 //
-// Deliberately narrow. The UI owns judgment calls (ratings, keep/cut); these
-// exist so the agent can read the board's current state and apply the one thing
-// it is better at than a slider — rewriting the wording of a task.
+// Deliberately narrow. The UI owns judgment calls (ratings, live/cut); these
+// exist so the agent can read the current task list and apply the one thing it
+// is better at than a slider — rewriting the wording of a task.
+//
+// Every one of them writes the live table. There is no draft to work in.
 
 const RATING_PROPS = Object.fromEntries(
   ["difficulty", "guts", "luck", "payoff", "risk"].map((k) => [k, { type: "integer", minimum: 1, maximum: 5 }])
@@ -412,23 +271,23 @@ const RATING_PROPS = Object.fromEntries(
 const listTasks = {
   name: "list_tasks",
   description:
-    "Read the current task board: every task with its wording, assigned and suggested point tier, ratings, status and notes. Filter to the subset you need.",
+    "Read the live task list: every task with its wording, assigned and suggested point tier, ratings, notes, and whether players can see it. Filter to the subset you need.",
   inputSchema: {
     type: "object",
     properties: {
       round: { type: "integer", enum: [0, 1, 2], description: "0 = secret challenges, 1 = Round 1, 2 = Round 2" },
-      status: { type: "string", enum: ["keep", "maybe", "cut"] },
+      active: { type: "boolean", description: "true for tasks players can see, false for cut ones" },
       flaggedForRewrite: { type: "boolean", description: "Only tasks the user marked as needing better wording" },
       mismatchedOnly: { type: "boolean", description: "Only tasks whose assigned tier disagrees with the ratings" },
     },
     additionalProperties: false,
   },
   handler: async (ctx) => {
-    const { round, status, flaggedForRewrite, mismatchedOnly } = ctx.input ?? {};
-    const payload = await boardPayload();
+    const { round, active, flaggedForRewrite, mismatchedOnly } = ctx.input ?? {};
+    const payload = await tasksPayload();
     const tasks = payload.tasks.filter((t) => {
       if (round !== undefined && t.round !== round) return false;
-      if (status && t.status !== status) return false;
+      if (active !== undefined && t.active !== active) return false;
       if (flaggedForRewrite && !t.rewrite) return false;
       if (mismatchedOnly && t.points === t.suggestedPoints) return false;
       return true;
@@ -440,28 +299,28 @@ const listTasks = {
 const updateTaskAction = {
   name: "update_task",
   description:
-    "Change one task. Use this to apply a wording rewrite (and clear its rewrite flag), or to record a rating, tier or keep/cut decision the user asked for in chat.",
+    "Change one task, live — players see it on their next poll. Use this to apply a wording rewrite (and clear its rewrite flag), or to record a rating, tier or cut decision the user asked for in chat. Setting active:false hides a task from players; it is never deleted and points already scored stand.",
   inputSchema: {
     type: "object",
     properties: {
-      taskId: { type: "string", description: "Task id, e.g. r1-04 — from list_tasks" },
+      slug: { type: "string", description: "Task slug, e.g. r1-04 — from list_tasks" },
       title: { type: "string" },
       note: { type: "string" },
       prop: { type: "string" },
       points: { type: "integer", enum: [1, 3, 5, 7, 10] },
-      status: { type: "string", enum: ["keep", "maybe", "cut"] },
-      needsClip: { type: "boolean" },
+      active: { type: "boolean" },
+      requiresVideo: { type: "boolean" },
       rewrite: { type: "boolean", description: "Set false after applying a rewrite so it leaves the flagged list" },
       ...RATING_PROPS,
     },
-    required: ["taskId"],
+    required: ["slug"],
     additionalProperties: false,
   },
   handler: async (ctx) => {
-    const { taskId, ...patch } = ctx.input ?? {};
-    const task = await updateTask(taskId, patch);
-    if (!task) throw new CanvasError("task_not_found", `No task with id "${taskId}".`);
-    const { model } = await loadBoard();
+    const { slug, ...patch } = ctx.input ?? {};
+    const task = await updateTask(slug, patch);
+    if (!task) throw new CanvasError("task_not_found", `No task with slug "${slug}".`);
+    const { model } = await loadTasks();
     await broadcast();
     return { ...task, suggestedPoints: suggestedPoints(task, model) };
   },
@@ -469,7 +328,8 @@ const updateTaskAction = {
 
 const addTaskAction = {
   name: "add_task",
-  description: "Add a new task to the board. It lands as 'maybe' so it has to be reviewed before it counts.",
+  description:
+    "Add a task. It goes live immediately, so players in that round will see it on their next poll. A secret (round 0) is offered in both halves of the event.",
   inputSchema: {
     type: "object",
     properties: {
@@ -492,8 +352,8 @@ const addTaskAction = {
 const summaryAction = {
   name: "summary",
   description:
-    "Board rollup: counts by status, and per round the tier spread, total points available, tier disagreements, average payoff, and how many tasks are high-risk, high-luck or need a prop.",
-  handler: async () => summarize(await loadBoard()),
+    "Task list rollup: how many are live and how many are cut, and per round the tier spread, total points available, tier disagreements, average payoff, and how many tasks are high-risk, high-luck or need a prop.",
+  handler: async () => summarize(await loadTasks()),
 };
 
 const listRosterAction = {
@@ -686,7 +546,7 @@ await joinSession({
       id: "scavenger-tasks",
       displayName: "Scavenger hunt planner",
       description:
-        "Plan tasks and edit the live scavenger hunt roster: people, paired team names, and Round 1/2 assignments.",
+        "Edit the live scavenger hunt: the task list, and the people, paired team names and Round 1/2 assignments.",
       actions: [
         listTasks,
         updateTaskAction,
@@ -704,19 +564,19 @@ await joinSession({
       ],
       open: async (ctx) => {
         // Idempotent: re-opens and provider reconnects both land here, and the
-        // board is read from the database rather than kept per instance.
+        // tasks are read from the database rather than kept per instance.
         let entry = servers.get(ctx.instanceId);
         if (!entry) {
           entry = await startServer();
           servers.set(ctx.instanceId, entry);
         }
-        // A board that cannot be read must still open the panel: the renderer
+        // A list that cannot be read must still open the panel: the renderer
         // says what went wrong, and a canvas that refuses to open says nothing
         // at all. The status line is a summary, never the thing that gates it.
-        let status = "board unavailable — open to see why";
+        let status = "task list unavailable — open to see why";
         try {
-          const { keep, maybe, cut } = summarize(await loadBoard());
-          status = `${keep} keep · ${maybe} maybe · ${cut} cut`;
+          const { live, cut } = summarize(await loadTasks());
+          status = `${live} live · ${cut} cut`;
         } catch {
           // Reported in the panel, which is where it can actually be read.
         }

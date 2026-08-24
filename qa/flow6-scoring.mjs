@@ -25,7 +25,7 @@ try {
     { playerId: alice.id, teamId: red1.id }, { playerId: bob.id, teamId: red1.id },
   ] }) });
   // Cut tasks are deactivated rather than deleted, and the API refuses a
-  // submission to one -- so an unfiltered pick lands on a board cut and the
+  // submission to one -- so an unfiltered pick lands on a cut task and the
   // driver dies before it asserts anything.
   const { data: tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).eq("points", 5).eq("active", true).limit(2);
   const task = tasks[0];

@@ -69,7 +69,7 @@ export async function GET() {
     checks.push({
       name: "Seed data loaded",
       ok: Boolean(taskCount && teamCount),
-      detail: taskCount ? "yes" : "run npm run sync:tasks -- --apply",
+      detail: taskCount ? "yes" : "no tasks yet — add them in the planner canvas",
     });
     checks.push({
       name: "Players added",

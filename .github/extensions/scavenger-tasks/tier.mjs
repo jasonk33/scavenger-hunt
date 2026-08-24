@@ -9,15 +9,14 @@
  *
  * You can also disagree with the suggestion, and that decision has to stick --
  * otherwise a task you have deliberately priced keeps nagging forever. But a
- * blanket "never show this again" would be a false negative of exactly the kind
- * the publish banner is built to avoid: re-rating a task so it lands in a
- * *different* tier is new information, and must resurface.
+ * blanket "never show this again" would be a false negative: re-rating a task so
+ * it lands in a *different* tier is new information, and must resurface.
  *
  * So a dismissal records WHICH suggestion was rejected (`tierOk`), not merely
  * that one was. It silences that suggestion and nothing else.
  */
 
-/** Point tiers, mirroring TIERS in store.mjs and the 1/3/5/7/10 tiers in the app. */
+/** Point tiers, mirroring TIERS in scripts/task-store.mjs. */
 const SECRET_TIER = 7;
 
 export function scoreOf(task, weights) {

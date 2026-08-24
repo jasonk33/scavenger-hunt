@@ -6,7 +6,7 @@
  * down. `restoreSettings` runs from a `finally` in every driver.
  */
 import { readFileSync } from "node:fs";
-import { createAdminClient, loadEnv } from "../scripts/board-store.mjs";
+import { createAdminClient, loadEnv } from "../scripts/task-store.mjs";
 
 export const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 
@@ -218,22 +218,21 @@ export async function teardownTasks() {
 
 /** Snapshot of everything the event depends on, for a before/after integrity diff. */
 export async function snapshot() {
-  const [players, teams, roster, tasks, subs, settings, board] = await Promise.all([
+  const [players, teams, roster, tasks, subs, settings] = await Promise.all([
     admin.from("players").select("id,name"),
     admin.from("teams").select("id,name,round,color"),
     admin.from("roster").select("round,player_id,team_id"),
-    // Full task state, not just a count: a stray click on a Reveal button changes
-    // nothing countable but spoils a secret challenge, and deactivating a task
-    // silently removes it from every player's list.
-    admin.from("tasks").select("id,title,points,round,is_secret,requires_video,revealed_at,active").order("id"),
+    // Full task state, not just a count: a stray click on a Reveal button
+    // changes nothing countable but spoils a secret challenge, and deactivating
+    // a task silently removes it from every player's list. The planning columns
+    // are in here too -- the canvas writes this same table, and losing one of
+    // Jason's task edits is exactly as bad as losing a submission.
+    admin
+      .from("tasks")
+      .select("id,slug,title,points,round,is_secret,requires_video,revealed_at,active,note,prop,rewrite,difficulty,guts,luck,payoff,risk,tier_ok")
+      .order("id"),
     admin.from("submissions").select("id,status,team_id,player_id,points_awarded").order("id"),
     admin.from("settings").select("key,value"),
-    // The planning board. It used to be a file in the checkout, which is why
-    // this never watched it -- a driver simply could not reach it. It is a table
-    // now, and Admin mirrors task edits onto it, so a driver editing a real task
-    // can move the board. That is Jason's curated task list, and losing an edit
-    // to it is exactly as bad as losing a submission.
-    admin.from("task_board").select("board_id,title,points,needs_clip,status").order("board_id"),
   ]);
   const realPlayers = (players.data ?? []).filter((p) => !isQa(p.name));
   const realTeams = (teams.data ?? []).filter((t) => !isQa(t.name));
@@ -251,24 +250,21 @@ export async function snapshot() {
     tasks: realTasks.length,
     secretsRevealed: realTasks.filter((t) => t.revealed_at).map((t) => t.title),
     tasksInactive: realTasks.filter((t) => t.active === false).map((t) => t.title),
+    // Wide on purpose: this one table is now both what players see and what the
+    // planner canvas edits, so a driver that moved a rating has damaged Jason's
+    // work just as surely as one that moved a point value.
     taskFingerprint: realTasks
-      .map((t) => `${t.id}:${t.points}:${t.requires_video}:${t.is_secret}`)
+      .map(
+        (t) =>
+          `${t.id}:${t.slug}:${t.title}:${t.points}:${t.requires_video}:${t.is_secret}:` +
+          `${t.note}:${t.prop}:${t.rewrite}:${t.difficulty}:${t.guts}:${t.luck}:${t.payoff}:${t.risk}:${t.tier_ok}`
+      )
       .join("|"),
     submissions: realSubs.length,
     submissionFingerprint: realSubs
       .map((s) => `${s.id}:${s.status}:${s.team_id}:${s.points_awarded}`)
       .join("|"),
     settings: Object.fromEntries((settings.data ?? []).map((s) => [s.key, s.value])),
-    // `board.error` means the table is not there, which is a real answer on a
-    // project that has not run supabase/migrate-task-board.sql. It compares
-    // equal to itself across a run, so it does not produce a false failure --
-    // but it must not silently read as "the board is empty" either.
-    board: board.error
-      ? `unavailable: ${board.error.message}`
-      : (board.data ?? [])
-          .filter((t) => !isQa(t.board_id) && !isQa(t.title))
-          .map((t) => `${t.board_id}:${t.title}:${t.points}:${t.needs_clip}:${t.status}`)
-          .join("|"),
   };
 }
 

@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * Loads the real event data: the guest list, the team split, and the task list
- * from the planning board.
+ * Loads the real event data: the guest list and the team split.
  *
- *   npm run seed         load guests + teams, reconcile tasks, clear scoring
+ *   npm run seed         load guests + teams, clear scoring
  *   npm run seed:reset   remove the guests, every submission and every file
  *
  * Re-runnable. The guest list and the team split below are the source of truth,
@@ -12,12 +11,12 @@
  * makes a re-run safe -- a roster change would otherwise leave Round 1 scores
  * credited to teams that no longer exist.
  *
- * Tasks are NOT defined here. To change a task without touching anyone's
- * submissions, edit the board and run `npm run sync:tasks` instead.
+ * It deliberately does NOT touch `tasks`. The task list is edited live in the
+ * planner canvas, so seeding must not be able to undo a task decision -- and a
+ * task edit must never require running something that deletes every submission.
  */
 
-import { createAdminClient, loadEnv } from "./board-store.mjs";
-import { buildPlan, applyPlan } from "./task-sync.mjs";
+import { createAdminClient, loadEnv } from "./task-store.mjs";
 
 const env = loadEnv();
 
@@ -74,9 +73,8 @@ function remix(round1) {
 const ROUND_2 = remix(ROUND_1);
 
 /*
- * The task list is not defined here. It lives on the planning board in the
- * `task_board` table and is published by `scripts/task-sync.mjs`, which this
- * calls so a seed and a sync can never leave the app in different states.
+ * The task list is not defined here and is not written here. It lives in the
+ * `tasks` table, edited live through the planner canvas.
  */
 
 const GUESTS = ROUND_1.flat();
@@ -181,22 +179,6 @@ async function wipe() {
   );
 }
 
-/**
- * Brings the task list in line with the planning board. Keyed on `board_id`, so
- * rewording a task does not lose track of it, and a task the board cuts is
- * deactivated rather than deleted -- this must not take submissions with it.
- */
-async function reconcileTasks() {
-  const { plan, migrated } = await buildPlan(db);
-  await applyPlan(db, plan, { migrated });
-  for (const w of plan.warnings) console.log(`  ! ${w}`);
-  return {
-    inserted: plan.insert.length,
-    updated: plan.update.length + plan.reactivate.length,
-    hidden: plan.deactivate.length,
-  };
-}
-
 async function seed() {
   // Anyone in the app who is not on the current guest list is a leftover -- the
   // demo names, or someone who has since dropped out.
@@ -204,7 +186,6 @@ async function seed() {
   const staleIds = (existing ?? []).filter((p) => !GUESTS.includes(p.name)).map((p) => p.id);
 
   const cleared = await clearScoring();
-  const cut = await reconcileTasks();
 
   if (staleIds.length) {
     await db.from("roster").delete().in("player_id", staleIds);
@@ -252,7 +233,6 @@ async function seed() {
   console.log(
     `\n${GUESTS.length} players across ${ROUND_1.length} teams, remixed at the break.` +
       (staleIds.length ? `\nRemoved ${staleIds.length} player(s) no longer on the guest list.` : "") +
-      `\nTasks: ${cut.inserted} added, ${cut.updated} updated, ${cut.hidden} hidden from the board.` +
       `\nCleared ${cleared.submissions} submission(s) and ${cleared.objects} media file(s).` +
       `\n${taskCount} tasks live. Secrets hidden, submissions open, Round 1.` +
       `\n\nStart over with:  npm run seed:reset`

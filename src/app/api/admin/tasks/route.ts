@@ -1,13 +1,17 @@
 import { db } from "@/lib/db";
 import { isOrganizer } from "@/lib/settings";
 import { json, fail } from "@/lib/http";
-import { boardMirrorPatch } from "@/lib/board-mirror.mjs";
 import type { Database } from "@/lib/database.types";
 
 type TaskUpdate = Database["public"]["Tables"]["tasks"]["Update"];
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Admin and the planner canvas write the same rows. There is nothing to keep in
+ * step and nothing to publish: an edit made here is what the canvas shows, and
+ * an edit made there is what players see.
+ */
 export async function POST(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
   const b = await req.json().catch(() => ({}));
@@ -19,11 +23,13 @@ export async function POST(req: Request) {
   if (!title) return fail("title required.");
   if (!Number.isFinite(points) || points <= 0) return fail("points must be a positive number.");
 
+  // sort_order is generated from (is_secret, points, doc_order), so position is
+  // set by choosing where in the planning order this lands -- last, here.
   const { data: last } = await db()
     .from("tasks")
-    .select("sort_order")
+    .select("doc_order")
     .eq("round", round)
-    .order("sort_order", { ascending: false })
+    .order("doc_order", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -35,7 +41,7 @@ export async function POST(req: Request) {
       points,
       requires_video: Boolean(b?.requiresVideo),
       is_secret: Boolean(b?.isSecret),
-      sort_order: Number(last?.sort_order ?? 0) + 10,
+      doc_order: Number(last?.doc_order ?? 0) + 1,
     })
     .select("id")
     .single();
@@ -49,6 +55,12 @@ export async function POST(req: Request) {
  * organizer-triggered rather than clock-triggered, because the event will run
  * late and a task that unlocks itself at 2:00pm sharp while everyone is still
  * mid-round is worse than no automation at all.
+ *
+ * A secret challenge is two rows sharing a slug, so this splits the patch:
+ * `revealed_at` is per-round and lands on the one row it was given, everything
+ * else lands on every row of the task. A content edit that moved only Round 1
+ * would leave the two halves of the event reading different wording for the same
+ * challenge, with nothing to notice it -- the canvas shows the Round 1 row.
  */
 export async function PATCH(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
@@ -56,90 +68,95 @@ export async function PATCH(req: Request) {
   const id = String(b?.id ?? "");
   if (!id) return fail("id required.");
 
-  const patch: TaskUpdate = {};
-  if (typeof b.title === "string" && b.title.trim()) patch.title = b.title.trim();
-  if (Number.isFinite(Number(b.points)) && Number(b.points) > 0) patch.points = Number(b.points);
-  if (typeof b.requiresVideo === "boolean") patch.requires_video = b.requiresVideo;
-  if (typeof b.isSecret === "boolean") patch.is_secret = b.isSecret;
-  if (typeof b.active === "boolean") patch.active = b.active;
+  const task: TaskUpdate = {};
+  if (typeof b.title === "string" && b.title.trim()) task.title = b.title.trim();
+  if (Number.isFinite(Number(b.points)) && Number(b.points) > 0) task.points = Number(b.points);
+  if (typeof b.requiresVideo === "boolean") task.requires_video = b.requiresVideo;
+  if (typeof b.isSecret === "boolean") task.is_secret = b.isSecret;
+  if (typeof b.active === "boolean") task.active = b.active;
+
+  const row: TaskUpdate = {};
   if (typeof b.revealed === "boolean") {
-    patch.revealed_at = b.revealed ? new Date().toISOString() : null;
+    row.revealed_at = b.revealed ? new Date().toISOString() : null;
   }
-  if (!Object.keys(patch).length) return fail("Nothing to update.");
 
-  const { error } = await db().from("tasks").update(patch).eq("id", id);
-  if (error) return fail(error.message, 500);
-  return json({ ok: true, board: await mirrorToBoard(id, b) });
-}
+  if (!Object.keys(task).length && !Object.keys(row).length) return fail("Nothing to update.");
 
-/**
- * Carries an Admin edit back onto the planning board.
- *
- * Runs only after the `tasks` write has succeeded, and can never fail the
- * request: the edit is already live and in front of players by this point, so
- * reporting it as an error would be a lie about the thing that matters. A
- * failure here leaves the board and the live task list disagreeing, which is
- * exactly what `npm run ready` and the canvas's publish banner already detect
- * and report as pending drift -- so it surfaces, rather than being swallowed.
- *
- * Deliberately not done on create: a task added from Admin has no board entry,
- * and inventing one would put it under the planner's control and into the
- * canvas, which is a different decision from fixing a typo mid-event.
- *
- * @returns a short account of what was and was not carried, for the response.
- */
-async function mirrorToBoard(taskId: string, body: Record<string, unknown>) {
-  const { row, skipped } = boardMirrorPatch(body);
-  const notes = skipped.map((s) => `${s.field}: ${s.why}`);
-  if (!Object.keys(row).length) return { mirrored: false, reason: "nothing to carry", notes };
+  // Resolved before either branch, so a reveal on an id that does not exist is a
+  // 404 rather than an `ok: true` that changed nothing. Admin renders the
+  // response, so a silent success there is a Live badge for a reveal that never
+  // happened -- the "screen claims a result it does not have" class.
+  const { data: found } = await db().from("tasks").select("slug,is_secret").eq("id", id).maybeSingle();
+  if (!found) return fail("No such task.", 404);
 
-  try {
-    const { data: task, error: readError } = await db()
+  if (Object.keys(task).length) {
+    // Turning a secret into a normal task would leave two rows sharing a slug
+    // with nothing marking them as one task, which `tasks_slug_solo_idx` refuses
+    // outright. Say why here rather than surfacing a constraint name.
+    if (found.is_secret && task.is_secret === false) {
+      const { count } = await db()
+        .from("tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("slug", found.slug);
+      if ((count ?? 0) > 1) {
+        return fail(
+          "This secret challenge is offered in both rounds, so it cannot become a normal task here. " +
+            "Cut it and add a replacement in the planner instead."
+        );
+      }
+    }
+
+    const { error } = await db()
       .from("tasks")
-      .select("board_id")
-      .eq("id", taskId)
-      .maybeSingle();
-    if (readError) return { mirrored: false, reason: readError.message, notes };
-    // A task added from Admin was never on the board, so there is nothing to
-    // diverge from and nothing to write.
-    if (!task?.board_id) return { mirrored: false, reason: "this task is not on the board", notes };
-
-    const { data, error } = await db()
-      .from("task_board")
-      .update({ ...row, updated_at: new Date().toISOString() })
-      .eq("board_id", task.board_id)
-      .select("board_id");
-    if (error) return { mirrored: false, reason: error.message, notes };
-    if (!data?.length) return { mirrored: false, reason: `no board entry ${task.board_id}`, notes };
-    return { mirrored: true, boardId: task.board_id, notes };
-  } catch (e) {
-    // A missing task_board table on a project that has not run the migration
-    // must not take Admin down with it.
-    return { mirrored: false, reason: e instanceof Error ? e.message : String(e), notes };
+      .update({ ...task, updated_at: new Date().toISOString() })
+      .eq("slug", found.slug);
+    if (error) return fail(error.message, 500);
   }
+
+  // Last, so a failure here cannot land on top of a content write that already
+  // succeeded and then report the whole thing as having done nothing.
+  if (Object.keys(row).length) {
+    const { error } = await db().from("tasks").update(row).eq("id", id);
+    if (error) return fail(error.message, 500);
+  }
+
+  return json({ ok: true });
 }
 
 /**
  * Tasks with submissions are deactivated rather than deleted -- a hard delete
  * would cascade and silently destroy scored evidence.
+ *
+ * Scoped by slug, so a secret challenge goes from both rounds at once. Removing
+ * it from one would leave the other half of the event still offering it, and the
+ * planner would still show it as offered in both.
  */
 export async function DELETE(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return fail("id required.");
 
+  const { data: found } = await db().from("tasks").select("slug").eq("id", id).maybeSingle();
+  if (!found) return fail("No such task.", 404);
+
+  const { data: rows, error: readError } = await db().from("tasks").select("id").eq("slug", found.slug);
+  if (readError) return fail(readError.message, 500);
+  // Never an empty list: `in("id", [])` matches nothing, so a failed read would
+  // delete nothing and still report a deletion.
+  const ids = rows?.length ? rows.map((r) => r.id) : [id];
+
   const { count } = await db()
     .from("submissions")
     .select("id", { count: "exact", head: true })
-    .eq("task_id", id);
+    .in("task_id", ids);
 
   if (count) {
-    const { error } = await db().from("tasks").update({ active: false }).eq("id", id);
+    const { error } = await db().from("tasks").update({ active: false }).in("id", ids);
     if (error) return fail(error.message, 500);
     return json({ ok: true, deactivated: true, submissions: count });
   }
 
-  const { error } = await db().from("tasks").delete().eq("id", id);
+  const { error } = await db().from("tasks").delete().in("id", ids);
   if (error) return fail(error.message, 500);
   return json({ ok: true, deleted: true });
 }

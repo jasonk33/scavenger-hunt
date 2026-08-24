@@ -28,7 +28,11 @@ try {
   await call("/api/admin/roster", { method: "POST", body: JSON.stringify({ round: 1, entries:
     fx.players.map((p, i) => ({ playerId: p.id, teamId: i % 2 === 0 ? red1.id : blue1.id })) }) });
 
-  const { data: tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).order("sort_order").limit(3);
+  // Cut tasks keep their row and now keep a position in the ordering too --
+  // sort_order is generated for every row, live or not -- so an unfiltered pick
+  // can land on one, and /api/submissions rightly refuses it as "no longer
+  // exists". Filter here, as flow6 already does.
+  const { data: tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).eq("active", true).order("sort_order").limit(3);
 
   /* ---- 1. object path collisions ---- */
   console.log(`\n1. ${N} people on the same team reserve the SAME task simultaneously`);

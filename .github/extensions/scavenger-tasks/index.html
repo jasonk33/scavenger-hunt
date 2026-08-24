@@ -31,11 +31,10 @@
             <button data-round="0">Secret</button>
           </div>
 
-          <div class="seg" id="status-filter" role="group" aria-label="Status">
-            <button class="on" data-status="all">In</button>
-            <button data-status="keep">Keep</button>
-            <button data-status="maybe">Maybe</button>
-            <button data-status="cut">Cut</button>
+          <div class="seg" id="shown-filter" role="group" aria-label="Live or cut">
+            <button class="on" data-shown="live">Live</button>
+            <button data-shown="cut">Cut</button>
+            <button data-shown="all">All</button>
           </div>
 
           <select id="sort" aria-label="Sort by">
@@ -53,30 +52,12 @@
           <button id="toggle-balance" class="ghost">Balance</button>
         </div>
 
-        <section id="publish" class="publish" data-kind="unknown">
-          <div class="publish-line">
-            <span class="publish-dot" aria-hidden="true"></span>
-            <div class="publish-text">
-              <b id="publish-headline">Checking what's live&hellip;</b>
-              <span id="publish-detail"></span>
-            </div>
-            <button id="publish-recheck" class="ghost" title="Check again now">Recheck</button>
-            <button id="publish-review" class="ghost primary" hidden>Review &amp; publish</button>
-          </div>
-          <div id="publish-preview" class="publish-preview" hidden>
-            <p class="publish-warn">
-              This writes to the live task list players are looking at right now. Submissions,
-              media, scores and the roster are never touched.
-            </p>
-            <ul id="publish-changes"></ul>
-            <div id="publish-warnings" class="publish-warnings" hidden></div>
-            <div class="publish-actions">
-              <button id="publish-confirm" class="ghost danger">Publish</button>
-              <button id="publish-cancel" class="ghost">Cancel</button>
-            </div>
-          </div>
+        <p class="live-note">
+          Everything on this tab is live. Wording, points, video-only and cut all reach players
+          on their next refresh — there is nothing to publish.
+        </p>
 
-          <section id="balance" class="balance" hidden></section>
+        <section id="balance" class="balance" hidden></section>
       </div>
     </header>
 
@@ -144,10 +125,9 @@
           <button class="tier-dismiss ghost" hidden aria-label="Keep this tier">&times;</button>
           <span class="title" role="textbox" contenteditable="plaintext-only" spellcheck="true"></span>
           <span class="chips"></span>
-          <div class="seg status" role="group" aria-label="Status">
-            <button data-status="keep">K</button>
-            <button data-status="maybe">?</button>
-            <button data-status="cut">X</button>
+          <div class="seg shown" role="group" aria-label="Live or cut">
+            <button data-active="true" title="Players can see this task">In</button>
+            <button data-active="false" title="Hide from players. Never deleted; points already scored stand.">X</button>
           </div>
         </div>
         <div class="body" hidden>

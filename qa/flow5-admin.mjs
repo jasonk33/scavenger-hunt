@@ -58,6 +58,56 @@ try {
   const { data: edited } = await admin.from("tasks").select("title,points").eq("id", newTaskId).single();
   check("edited title and points are stored", edited.title === "__qa edited task" && edited.points === 5, JSON.stringify(edited));
 
+  /*
+   * A secret challenge is two rows sharing a slug, so Admin writes content by
+   * slug and `revealed_at` by row id. Getting that split wrong is invisible on
+   * screen -- the planner renders the Round 1 row -- and would leave the two
+   * halves of the event offering different wording for the same challenge.
+   *
+   * Built here rather than through the API, because Admin deliberately cannot
+   * create a two-round secret; only the planner can.
+   */
+  const secretSlug = "__qa-secret-1";
+  await admin.from("tasks").delete().eq("slug", secretSlug);
+  const { data: secretRows } = await admin
+    .from("tasks")
+    .insert([1, 2].map((round) => ({
+      round, slug: secretSlug, title: "__qa secret challenge", points: 7, is_secret: true, doc_order: 998,
+    })))
+    .select("id,round");
+  const r1Row = (secretRows ?? []).find((r) => r.round === 1);
+
+  const secretPatch = await call("/api/admin/tasks", {
+    method: "PATCH",
+    body: JSON.stringify({ id: r1Row.id, title: "__qa secret reworded", points: 10 }),
+  });
+  check("editing a secret from Admin is accepted", secretPatch.status === 200, JSON.stringify(secretPatch.body));
+  const { data: bothRounds } = await admin.from("tasks").select("round,title,points,revealed_at").eq("slug", secretSlug).order("round");
+  check("a secret edited in Admin moves BOTH rounds, not just the one on screen",
+    bothRounds.length === 2 && bothRounds.every((t) => t.title === "__qa secret reworded" && t.points === 10),
+    JSON.stringify(bothRounds));
+
+  await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({ id: r1Row.id, revealed: true }) });
+  const { data: afterReveal } = await admin.from("tasks").select("round,revealed_at").eq("slug", secretSlug).order("round");
+  check("revealing a secret unlocks ONLY the round it was revealed in",
+    afterReveal[0].revealed_at !== null && afterReveal[1].revealed_at === null, JSON.stringify(afterReveal));
+
+  const unsecret = await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({ id: r1Row.id, isSecret: false }) });
+  check("Admin refuses to turn a two-round secret into a normal task", unsecret.status >= 400, JSON.stringify(unsecret.body));
+
+  const ghost = await call("/api/admin/tasks", {
+    method: "PATCH",
+    body: JSON.stringify({ id: "00000000-0000-0000-0000-000000000000", revealed: true }),
+  });
+  check("a reveal on a task that does not exist is refused, never a silent ok",
+    ghost.status >= 400, JSON.stringify(ghost.body));
+
+  const secretDelete = await call(`/api/admin/tasks?id=${r1Row.id}`, { method: "DELETE" });
+  const { count: secretLeft } = await admin.from("tasks").select("id", { count: "exact", head: true }).eq("slug", secretSlug);
+  check("deleting a secret removes it from both rounds, never half the event",
+    secretDelete.status === 200 && secretLeft === 0, `${secretDelete.status}, ${secretLeft} row(s) left`);
+  await admin.from("tasks").delete().eq("slug", secretSlug);
+
   const validation = await Promise.all([
     call("/api/admin/tasks", { method: "POST", body: JSON.stringify({ round: 1, title: "", points: 1 }) }),
     call("/api/admin/tasks", { method: "POST", body: JSON.stringify({ round: 1, title: "x", points: 0 }) }),
@@ -158,6 +208,7 @@ try {
 
   await admin.from("submissions").delete().eq("task_id", newTaskId);
   await admin.from("tasks").delete().eq("id", newTaskId);
+  await admin.from("tasks").delete().eq("slug", secretSlug);
 
   check("no uncaught page errors on admin", errors.length === 0, errors.join(" | "));
 } finally {

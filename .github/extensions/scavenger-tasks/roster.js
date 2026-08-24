@@ -3,9 +3,9 @@
  * GET /api/roster, player/team CRUD endpoints, assignment updates and
  * copy-roster-across-rounds.
  *
- * Roster edits are live event data, unlike task-board edits which wait for
- * Publish. The panel therefore keeps the selected round visible and calls out
- * errors instead of treating an empty response as a real roster.
+ * Every edit is live, as on the Tasks tab. The panel therefore keeps the
+ * selected round visible and calls out errors instead of treating an empty
+ * response as a real roster.
  */
 
 const el = {

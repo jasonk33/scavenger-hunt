@@ -1,16 +1,16 @@
 /**
  * The canvas's roster query layer.
  *
- * Players, teams and assignments are live event data rather than planning-board
- * data, so this module keeps their writes separate from task publishing. It uses
- * the same package-free PostgREST client as the task board, which lets the canvas
- * work from a checkout without node_modules.
+ * Kept apart from the task queries because it is a different set of tables, not
+ * because it is a different kind of write -- both tabs write what the app reads,
+ * live. It uses the same package-free PostgREST client, which is what lets the
+ * canvas work from a checkout with no node_modules.
  */
 
-import { createBoardClient, rest } from "../../../scripts/board-store.mjs";
+import { createTaskClient, rest } from "../../../scripts/task-store.mjs";
 
 let db = null;
-const client = () => (db ??= createBoardClient());
+const client = () => (db ??= createTaskClient());
 export const getRosterClient = () => client();
 
 const eq = (value) => `eq.${encodeURIComponent(value)}`;

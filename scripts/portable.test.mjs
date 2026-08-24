@@ -2,15 +2,15 @@
  * The canvas must load in a checkout that has no `node_modules` and no
  * `.env.local`.
  *
- *   node --test scripts/board-portable.test.mjs
+ *   node --test scripts/portable.test.mjs
  *
- * This exists because it broke. Moving the board into the database put a
+ * This exists because it broke. Reading the tasks from the database put a
  * top-level `import ... from "@supabase/supabase-js"` in the canvas's load path.
  * `node_modules` is gitignored, so a worktree does not have one, and the import
  * threw at load time -- which does not fail the canvas, it fails the whole
  * EXTENSION. The panel did not error; it vanished. There was nothing to click.
  *
- * That is the precise opposite of the point of moving the board into a table,
+ * That is the precise opposite of the point of keeping the tasks in a table,
  * which was "open any session -- worktree, branch, any git branch -- and edit".
  *
  * So the rule is: **nothing in the canvas's import graph may require a package.**
@@ -36,13 +36,13 @@ const HERE = new URL(".", import.meta.url);
  * the real one and the test would pass while the bug was still there.
  */
 function bareCheckout() {
-  const root = mkdtempSync(join(tmpdir(), "board-portable-"));
+  const root = mkdtempSync(join(tmpdir(), "canvas-portable-"));
   mkdirSync(join(root, "scripts"), { recursive: true });
   mkdirSync(join(root, ".github", "extensions", "scavenger-tasks"), { recursive: true });
-  for (const file of ["board-store.mjs"]) {
+  for (const file of ["task-store.mjs"]) {
     cpSync(new URL(file, HERE), join(root, "scripts", file));
   }
-  for (const file of ["store.mjs", "roster-store.mjs", "tier.mjs", "publish-state.mjs"]) {
+  for (const file of ["store.mjs", "roster-store.mjs", "tier.mjs"]) {
     cpSync(new URL(`../.github/extensions/scavenger-tasks/${file}`, HERE), join(root, ".github", "extensions", "scavenger-tasks", file));
   }
   return root;
@@ -56,7 +56,7 @@ test("the canvas store imports with no node_modules and no .env.local", async ()
     const store = await load(root, ".github/extensions/scavenger-tasks/store.mjs");
     // Importing is the whole assertion -- a throw here is an extension that
     // never registers, and a canvas the user cannot open at all.
-    assert.equal(typeof store.loadBoard, "function");
+    assert.equal(typeof store.loadTasks, "function");
     assert.equal(typeof store.summarize, "function");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -74,11 +74,11 @@ test("the roster store imports with no node_modules and no .env.local", async ()
   }
 });
 
-test("the board's query layer imports with no node_modules", async () => {
+test("the query layer imports with no node_modules", async () => {
   const root = bareCheckout();
   try {
-    const mod = await load(root, "scripts/board-store.mjs");
-    for (const name of ["readBoard", "updateTask", "addTask", "updateModel", "createBoardClient"]) {
+    const mod = await load(root, "scripts/task-store.mjs");
+    for (const name of ["readTasks", "updateTask", "addTask", "updateModel", "createTaskClient"]) {
       assert.equal(typeof mod[name], "function", `${name} must be importable`);
     }
   } finally {
@@ -101,7 +101,7 @@ test("summarize works in a bare checkout, so the panel can render without creden
 test("a missing .env.local is a readable error, never a crash at import", async () => {
   const root = bareCheckout();
   try {
-    const { loadEnv } = await load(root, "scripts/board-store.mjs");
+    const { loadEnv } = await load(root, "scripts/task-store.mjs");
     // No .env.local anywhere above a temp directory, and no vars exported.
     const env = loadEnv({ cwd: root, env: {} });
     assert.deepEqual(env, {}, "absence is an empty result, not a throw");
@@ -112,14 +112,14 @@ test("a missing .env.local is a readable error, never a crash at import", async 
 
 test("credentials are found in the main checkout when this one has none", async () => {
   // A worktree has no `.env.local` -- it is gitignored, so it exists only where
-  // someone actually set the app up. The board is one table shared by every
+  // someone actually set the app up. The tasks are one table shared by every
   // checkout, so the only question a worktree has to answer is "where are the
   // credentials", and the main checkout is the answer.
   const root = bareCheckout();
-  const main = mkdtempSync(join(tmpdir(), "board-main-"));
+  const main = mkdtempSync(join(tmpdir(), "canvas-main-"));
   try {
     writeFileSync(join(main, ".env.local"), "SUPABASE_URL=https://example.test\nSUPABASE_SERVICE_ROLE_KEY=secret\n");
-    const { loadEnv } = await load(root, "scripts/board-store.mjs");
+    const { loadEnv } = await load(root, "scripts/task-store.mjs");
     const env = loadEnv({ cwd: root, mainCheckout: main, env: {} });
     assert.equal(env.SUPABASE_URL, "https://example.test");
     assert.equal(env.SUPABASE_SERVICE_ROLE_KEY, "secret");
@@ -132,7 +132,7 @@ test("credentials are found in the main checkout when this one has none", async 
 test("an exported variable wins over a file, so a session can be configured without one", async () => {
   const root = bareCheckout();
   try {
-    const { loadEnv } = await load(root, "scripts/board-store.mjs");
+    const { loadEnv } = await load(root, "scripts/task-store.mjs");
     const env = loadEnv({ cwd: root, env: { SUPABASE_URL: "https://from-env.test", SUPABASE_SERVICE_ROLE_KEY: "k" } });
     assert.equal(env.SUPABASE_URL, "https://from-env.test");
   } finally {

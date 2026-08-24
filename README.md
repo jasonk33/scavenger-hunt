@@ -17,22 +17,24 @@ Open the SQL editor in your Supabase project, paste in the whole of
 scoring view, turns on RLS, makes the `hunt` bucket with a 500 MB limit and the
 right upload policies, and seeds 5 teams per round.
 
-It does **not** seed tasks. The task list lives on the planning board in the
-`task_board` table and is published by `npm run sync:tasks` (see below), so
-there is only ever one copy of it. Every statement in `setup.sql` is idempotent,
-but after a change that touches the schema you only need the matching file in
-`supabase/` — each is a small, re-runnable set of `ALTER`s carrying no seed data:
+It does **not** seed tasks. Tasks are written and edited through the Copilot
+canvas (see below), which reads and writes the `tasks` table directly. Every
+statement in `setup.sql` is idempotent, but after a change that touches the
+schema you only need the matching file in `supabase/` — each is a small,
+re-runnable set of `ALTER`s carrying no seed data:
 
 - `supabase/migrate-groups-and-notes.sql` — several files per submission, and
   player-written notes.
-- `supabase/migrate-task-board-id.sql` — links each task row back to its entry on
-  the planning board. Run this once before the first `npm run sync:tasks`.
-- `supabase/migrate-task-board.sql` — the planning board itself. Run this once
-  before opening the canvas.
 - `supabase/migrate-drop-bonus-star.sql` — removes the creativity bonus and the
   award star, and makes the judge's most recent approval the one that scores.
   Deploy the app first, then run this: the old code writes those columns on
   every approval.
+- `supabase/migrate-tasks-one-table.sql` — folds the old `task_board` planning
+  table into `tasks`, so editing a task is live and there is nothing to publish.
+  It keeps the old table as `task_board_archive` to roll back to. **Run this
+  before deploying the matching code**, and expect Admin's task editor to be the
+  only thing broken in between — no player-facing query reads a column that
+  changes. It is one transaction, so a failure leaves nothing half-applied.
 
 Then get your keys from **Settings → API Keys → the "Legacy anon, service_role
 API keys" tab**.
@@ -55,7 +57,7 @@ npm run dev
 ### 3. Load the event data
 
 ```bash
-npm run seed          # guest list, teams for both rounds, tasks from the board
+npm run seed          # guest list and teams for both rounds
 npm run seed:reset    # remove them again
 ```
 
@@ -66,43 +68,32 @@ Both commands delete **every submission and every media file** in the project,
 so they refuse to run once anyone outside that guest list has submitted
 something. Use `seed:reset` to clear your own testing before the day.
 
-### 4. Publish the task list
+### 4. Edit the tasks and the roster
 
-```bash
-npm run sync:tasks            # show what would change, write nothing
-npm run sync:tasks -- --apply # publish it
-npm run sync:tasks -- --json  # the same run as one JSON object, for the canvas
-```
+Both live in the Copilot canvas in `.github/extensions/scavenger-tasks/`. The
+Tasks tab edits titles, point tiers, which need a clip, the ratings, and which
+tasks are cut; the Roster tab edits people, paired team names and Round 1/2
+assignments.
 
-Tasks are edited on the planning board — titles, point tiers, which need a clip,
-and which are cut — through the Tasks tab of the Copilot canvas in
-`.github/extensions/scavenger-tasks/`. The same canvas's Roster tab edits people,
-paired team names and Round 1/2 assignments live. The board is the `task_board`
-table, and `sync:tasks` is the only thing that carries task edits to players.
-Roster assignments apply on selection; person names and team names/colours auto-save
-to the live tables.
+**Everything in it is live.** There is no publish step and nothing staged: the
+canvas writes the same `tasks` and `roster` rows the app reads, so a change is in
+front of players on their next poll. Editing a task's rating or its note is
+invisible to players either way — those columns are planning-only — but wording,
+points, video-only and cut are not, and they land immediately.
 
-The canvas has a banner showing how many board edits are not yet live and a
-button that publishes them, which just runs the command above — so it refuses
-for exactly the same reasons, and says why. If it cannot work out the count, it
-says so; it never reports zero for a check that failed.
+That is safe during the event, which is the point. Nothing here touches
+submissions, media or any revealed secret. Cutting a task hides it
+(`active = false`) and never deletes it, so points already awarded against it
+still stand and anything already in the judge's queue can still be decided.
+Admin's task editor writes the same rows, so the two can never disagree.
 
-Because the board is a table rather than a file in a checkout, it does not
-matter which session you edit it from: a worktree, a branch, any git branch. The
-canvas polls, so a change made in one session shows up in another, and Publish
-is the whole job — there is nothing to commit afterwards.
+Because the tasks are a table rather than a file in a checkout, it does not
+matter which session you edit them from: a worktree, a branch, any git branch.
+The canvas polls, so a change made in one session shows up in another.
 
 Because the extension lives in `.github/extensions/`, it is **only available in
 a session opened on this repo** — it will not appear in a general chat session.
-That is deliberate: publishing needs this repo's `.env.local` anyway.
-
-Unlike `seed`, task publishing is safe during the event: it writes to the `tasks`
-table and nothing else, so submissions, media, the roster and any revealed secrets
-are untouched. A task cut on the board is hidden (`active = false`), never deleted,
-so points already awarded against it still stand and anything already in the
-judge's queue can still be decided.
-
-`npm run ready` tells you if the board and the live app have drifted apart.
+That is deliberate: it needs this repo's `.env.local` anyway.
 
 ### 5. Verify it actually works
 

@@ -10,8 +10,7 @@
  * nothing about the app looks broken in that state -- every player just sees
  * "Submissions are closed right now" and assumes it's them.
  */
-import { createAdminClient, createBoardClient, loadEnv, readBoard } from "./board-store.mjs";
-import { planTaskSync, fetchTaskRows, isReorderOnly } from "./task-sync.mjs";
+import { createAdminClient, loadEnv } from "./task-store.mjs";
 
 const env = loadEnv();
 const admin = await createAdminClient(env);
@@ -22,15 +21,14 @@ const ok = [];
 const check = (cond, good, bad, hard = true) =>
   cond ? ok.push(good) : (hard ? problems : warnings).push(bad);
 
-const [{ data: settings }, { data: players }, { data: teams }, { data: roster }, tasks, { data: subs }, board] =
+const [{ data: settings }, { data: players }, { data: teams }, { data: roster }, { data: tasks }, { data: subs }] =
   await Promise.all([
     admin.from("settings").select("key,value"),
     admin.from("players").select("id,name"),
     admin.from("teams").select("id,name,round"),
     admin.from("roster").select("round,player_id,team_id"),
-    fetchTaskRows(admin, ",revealed_at"),
+    admin.from("tasks").select("id,round,slug,title,points,requires_video,is_secret,revealed_at,active"),
     admin.from("submissions").select("id,status"),
-    readBoard(createBoardClient(env)),
   ]);
 
 const s = Object.fromEntries((settings ?? []).map((r) => [r.key, r.value]));
@@ -81,35 +79,41 @@ const stuck = (subs ?? []).filter((x) => x.status === "uploading");
 check(stuck.length === 0, "no half-finished uploads",
   `${stuck.length} submission(s) stuck mid-upload — Admin → health lists them`, false);
 
-// The board is where tasks are actually decided, so "ready" has to mean the app
-// is showing what the board says, not just that it is showing something.
-//
-// Reordering is excluded for the same reason the publish banner excludes it:
-// sort_order is dense, so one cut or re-tier renumbers every task below it, and
-// counting those turns "1 edit pending" into "14 changes" a minute before the
-// event. They are still published; they are just not decisions.
-const drift = planTaskSync(board, tasks ?? []);
-const edited = drift.update.filter((u) => !isReorderOnly(u));
-const reordered = drift.update.length - edited.length;
-const pending = drift.insert.length + edited.length + drift.deactivate.length + drift.reactivate.length;
-check(pending === 0, "task list matches the planning board",
-  `${pending} task change(s) on the board are not live yet ` +
-    `(${drift.insert.length} new, ${edited.length} edited, ${drift.deactivate.length} cut` +
-    `${reordered ? `, plus ${reordered} reordering(s)` : ""}) — ` +
-    `run npm run sync:tasks to see them`, false);
-
-// A collision cannot be published at all, so it is a hard stop rather than drift.
-check(drift.collisions.length === 0, "no task would collide on title",
-  `${drift.collisions.length} task title collision(s) — the board cannot be published until one side ` +
-    `changes. Run npm run sync:tasks for the details.`);
+// A secret challenge is offered in both halves of the event, so it is two rows
+// sharing a slug. Nothing in the app can normally pull them apart -- the canvas
+// and Admin both write by slug -- but a hand-edit in the Supabase table editor
+// can, and the result is invisible: the canvas shows the Round 1 row, so Round 2
+// would quietly be offering different wording, a different point value, or a
+// task the other half cannot see at all.
+const bySlug = new Map();
+for (const t of tasks ?? []) {
+  if (!bySlug.has(t.slug)) bySlug.set(t.slug, []);
+  bySlug.get(t.slug).push(t);
+}
+const shape = (t) => `${t.title}|${t.points}|${t.requires_video}|${t.is_secret}|${t.active}`;
+const split = [];
+const lonely = [];
+for (const [slug, rows] of bySlug) {
+  // A task marked secret but present in only one round. The planner shows it at
+  // round 0 -- "offered in both halves" -- so this is invisible there, and it is
+  // reachable from Admin's Secret toggle and from a hand-edit.
+  if (rows[0].is_secret && rows.length === 1) {
+    lonely.push(`${rows[0].slug} ("${rows[0].title}", Round ${rows[0].round} only)`);
+    continue;
+  }
+  if (rows.length < 2) continue;
+  if (rows.some((t) => shape(t) !== shape(rows[0]))) split.push(`${slug} ("${rows[0].title}")`);
+}
+const paired = [...bySlug.values()].filter((r) => r.length > 1).length;
+check(split.length === 0, `all ${paired} secret challenges match across both rounds`,
+  `these are offered in both rounds but the two rows disagree: ${split.join(", ")} — ` +
+    `open the planner and re-type the field to write both rounds at once`);
+check(lonely.length === 0, `every secret challenge exists in both rounds`,
+  `marked secret but only in one round, so half the event will never see it: ${lonely.join(", ")}`);
 
 check(env.SUPABASE_ANON_KEY?.startsWith("ey"), "upload key is the legacy anon JWT",
   "SUPABASE_ANON_KEY is not a JWT — uploads will fail. It must be the legacy anon key.");
 check(Boolean(env.ORGANIZER_PIN), "organizer PIN is set", "no ORGANIZER_PIN — the judge screen is wide open", false);
-
-// The board is a table, so there is no branch for a publish to land on and
-// nothing to check here. This used to warn that publishing from a feature branch
-// stranded the record of what players were looking at.
 
 console.log(`\nRound ${round} · ${players?.length ?? 0} players · ${(teams ?? []).filter((t) => t.round === round).length} teams · ${activeTasks.length} tasks · ${(subs ?? []).filter((x) => x.status === "pending").length} waiting on the judge\n`);
 for (const line of ok) console.log(`  \x1b[32mok\x1b[0m   ${line}`);

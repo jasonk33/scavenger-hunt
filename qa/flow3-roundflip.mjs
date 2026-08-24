@@ -35,8 +35,12 @@ try {
     { playerId: alice.id, teamId: red1.id }, { playerId: bob.id, teamId: red1.id },
   ] }) });
 
-  const { data: r1tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).order("sort_order").limit(6);
-  const { data: r2tasks } = await admin.from("tasks").select("id,title,points").eq("round", 2).order("sort_order").limit(3);
+  // Cut tasks keep their row and now keep a position in the ordering too --
+  // sort_order is generated for every row, live or not -- so an unfiltered pick
+  // can land on one, and /api/submissions rightly refuses it as "no longer
+  // exists". Filter here, as flow6 already does.
+  const { data: r1tasks } = await admin.from("tasks").select("id,title,points").eq("round", 1).eq("active", true).order("sort_order").limit(6);
+  const { data: r2tasks } = await admin.from("tasks").select("id,title,points").eq("round", 2).eq("active", true).order("sort_order").limit(3);
   check("round 2 has its own tasks", r2tasks.length > 0, `${r2tasks.length}`);
 
   browser = await chromium.launch();

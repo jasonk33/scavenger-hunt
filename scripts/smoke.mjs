@@ -13,7 +13,7 @@
  */
 
 import * as tus from "tus-js-client";
-import { createAdminClient, loadEnv } from "./board-store.mjs";
+import { createAdminClient, loadEnv } from "./task-store.mjs";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 
@@ -31,7 +31,7 @@ if (!isLocal && !process.argv.includes("--allow-prod")) {
   process.exit(1);
 }
 
-// Resolve the same environment sources as the board and task-sync commands.
+// Resolve the same environment sources as the canvas and `npm run ready`.
 const env = loadEnv();
 
 const PIN = env.ORGANIZER_PIN ?? "";
@@ -132,7 +132,7 @@ async function main() {
   check("round 1 teams seeded", seeded.teams.filter((t) => t.round === 1).length >= 2);
   check("round 2 teams seeded", seeded.teams.filter((t) => t.round === 2).length >= 1);
   check("tasks seeded", seeded.tasks.length > 0, `${seeded.tasks.length} tasks`);
-  if (!seeded.tasks.length) throw new Error("Tasks missing — run npm run sync:tasks -- --apply");
+  if (!seeded.tasks.length) throw new Error("Tasks missing — add them in the planner canvas");
 
   /*
    * The test scores against its OWN throwaway teams, never the real ones.
