@@ -19,9 +19,13 @@ right upload policies, and seeds 5 teams per round.
 
 It does **not** seed tasks. Tasks are written and edited through the Copilot
 canvas (see below), which reads and writes the `tasks` table directly. Every
-statement in `setup.sql` is idempotent, but after a change that touches the
-schema you only need the matching file in `supabase/` — each is a small,
-re-runnable set of `ALTER`s carrying no seed data:
+statement in `setup.sql` is idempotent and remains the complete fresh-project
+schema. For an existing project, new schema changes go in a timestamped file
+under `supabase/migrations/` and are applied automatically when that file
+reaches `main`:
+
+The following files are historical migration sources for older deployments;
+they are not the location for new changes.
 
 - `supabase/migrate-groups-and-notes.sql` — several files per submission, and
   player-written notes.

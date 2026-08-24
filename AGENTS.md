@@ -53,9 +53,15 @@ fail on the day**, and that outranks code cleanliness, tidiness and elegance eve
 
 ## Domain model
 
-Schema and the `team_scores` view live in `supabase/setup.sql`; incremental changes go in
-`supabase/migrate-*.sql`, and are folded back into `setup.sql` as
-`alter table ... add column if not exists` so it stays the whole picture.
+Schema and the `team_scores` view live in `supabase/setup.sql`; every schema change also gets
+a timestamped migration in `supabase/migrations/`. The GitHub Action applies pending migration
+files to Supabase when they reach `main`. Fold the change back into `setup.sql` as
+`alter table ... add column if not exists` so it stays the whole picture. The older
+`supabase/migrate-*.sql` files are historical and are not the location for new migrations.
+
+- **Schema changes are code.** Add a timestamped SQL file under `supabase/migrations/`, validate it,
+ and push it to `main`; do not ask the user to paste routine schema SQL into the Supabase editor.
+ Use the editor only for an explicitly approved emergency or migration-history repair.
 
 - **`tasks` is one table and is edited live.** It is both what players see and where tasks
   are planned. The Copilot canvas in `.github/extensions/scavenger-tasks/` writes these rows
