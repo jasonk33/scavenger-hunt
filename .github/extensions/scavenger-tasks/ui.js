@@ -39,6 +39,11 @@ const el = {
   search: document.getElementById("search"),
   sort: document.getElementById("sort"),
   onlyFlagged: document.getElementById("only-flagged"),
+  newTask: document.getElementById("new-task"),
+  newTaskRound: document.getElementById("new-task-round"),
+  newTaskPoints: document.getElementById("new-task-points"),
+  addTaskButton: document.getElementById("add-task-button"),
+  taskError: document.getElementById("task-error"),
 };
 
 const filters = { round: "all", shown: "live", q: "", sort: "doc", flagged: false };
@@ -472,6 +477,85 @@ document.getElementById("toggle-balance").addEventListener("click", (e) => {
   e.currentTarget.classList.toggle("on", !el.balance.hidden);
   if (!el.balance.hidden) renderBalance();
 });
+
+// ── Adding a task ────────────────────────────────────────────────────────────
+//
+// It is live the moment it lands, so it goes in at 3 points and whatever wording
+// was typed, and everything else is edited on the row afterwards. A ratings form
+// up here would be a second, worse copy of the row that already exists.
+
+let adding = false;
+
+function syncAddButton() {
+  el.addTaskButton.disabled = adding || !el.newTask.value.trim();
+  el.addTaskButton.textContent = adding ? "Adding\u2026" : "Add";
+}
+
+/**
+ * Puts the filters where the new task is actually visible.
+ *
+ * Adding a Round 2 task while filtered to Round 1 would otherwise look like it
+ * did nothing -- a control whose result is hidden by state the user forgot is
+ * set. Adding is rare and deliberate, so overriding the filters is the lesser
+ * surprise, and the controls are moved to match rather than silently ignored.
+ */
+function revealTask(task) {
+  filters.round = String(task.round);
+  filters.shown = "live";
+  filters.flagged = false;
+  filters.q = "";
+  el.onlyFlagged.checked = false;
+  el.search.value = "";
+  for (const [id, key] of [["round-filter", "round"], ["shown-filter", "shown"]]) {
+    for (const b of document.getElementById(id).children) {
+      b.classList.toggle("on", b.dataset[key] === filters[key]);
+    }
+  }
+  renderList();
+  rows.get(task.slug)?.scrollIntoView({ block: "center" });
+}
+
+async function addTask() {
+  const title = el.newTask.value.trim();
+  if (!title || adding) return;
+  adding = true;
+  el.taskError.hidden = true;
+  syncAddButton();
+  try {
+    const res = await fetch("/api/task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        round: Number(el.newTaskRound.value),
+        points: Number(el.newTaskPoints.value),
+      }),
+    });
+    const task = await res.json().catch(() => null);
+    // A body that is not a task is a failure however it arrived. Clearing the
+    // box on one would throw away what was typed for a task that does not exist.
+    if (!res.ok || !task?.slug) throw new Error(task?.error || `the task was not added (HTTP ${res.status})`);
+    el.newTask.value = "";
+    // Re-read rather than splicing the response in: the poll is the thing that
+    // decides what is on screen, and a task added in another session has to
+    // arrive the same way this one does.
+    await refreshTasks();
+    revealTask(task);
+  } catch (e) {
+    el.taskError.textContent = String(e?.message ?? e);
+    el.taskError.hidden = false;
+  } finally {
+    adding = false;
+    syncAddButton();
+  }
+}
+
+el.newTask.addEventListener("input", syncAddButton);
+el.newTask.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); addTask(); }
+});
+el.addTaskButton.addEventListener("click", addTask);
+syncAddButton();
 
 /** Pushes and poll results both arrive here. Rebuild only if the task set changed. */
 function applyTasks(next) {

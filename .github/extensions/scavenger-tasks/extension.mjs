@@ -164,6 +164,15 @@ async function handle(req, res) {
     return json(res, 200, task);
   }
 
+  if (path === "/api/task" && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    if (!String(body.title ?? "").trim()) return json(res, 400, { error: "a task needs some wording" });
+    const task = await addTask(body);
+    await broadcast();
+    return json(res, 200, task);
+  }
+
   if (path === "/api/roster/players" && req.method === "POST") {
     const body = await readJson(req);
     if (!body) return json(res, 400, { error: "invalid JSON" });

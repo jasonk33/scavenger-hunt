@@ -57,6 +57,34 @@
           on their next refresh — there is nothing to publish.
         </p>
 
+        <div class="add-box">
+          <label class="field grow">
+            <span>Add a task</span>
+            <input id="new-task" type="text" placeholder="What they have to do" />
+          </label>
+          <label class="field">
+            <span>Round</span>
+            <select id="new-task-round">
+              <option value="1">R1</option>
+              <option value="2">R2</option>
+              <option value="0">Secret</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Points</span>
+            <select id="new-task-points">
+              <option value="1">1</option>
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+              <option value="7">7</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+          <button id="add-task-button" class="ghost primary">Add</button>
+        </div>
+
+        <div id="task-error" class="roster-error" hidden></div>
+
         <section id="balance" class="balance" hidden></section>
       </div>
     </header>
