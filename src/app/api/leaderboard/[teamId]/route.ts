@@ -3,6 +3,7 @@ import { getSettings } from "@/lib/settings";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
+import { scoreApproved } from "@/lib/scoring.mjs";
 
 type SubmissionRow = Database["public"]["Tables"]["submissions"]["Row"];
 
@@ -36,6 +37,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
     .from("submissions")
     .select(
       "id,round,task_id,player_id,team_id,object_name,media_type,points_awarded,group_id,note,created_at,judged_at,status"
+      + ",measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot"
     )
     .eq("round", round)
     .eq("team_id", teamId)
@@ -46,15 +48,34 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
 
   if (submissionsError) return fail("Couldn't load that team's entries right now. Try again.", 503);
 
-  const groups = winningGroups((submissions ?? []) as SubmissionRow[]) as SubmissionRow[][];
-  const taskIds = [...new Set(groups.map((files) => files[0].task_id))];
+  const teamSubmissions = (submissions ?? []) as unknown as SubmissionRow[];
+  const taskIds = [...new Set(teamSubmissions.map((submission) => submission.task_id))];
+  let taskRows: Array<Record<string, unknown>> = [];
+  let allApproved: Array<Record<string, unknown>> = [];
+  if (taskIds.length > 0) {
+    const result = await Promise.all([
+      sb.from("tasks").select("id,title,points,scoring_mode,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,sort_order").in("id", taskIds),
+      sb
+        .from("submissions")
+        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot,created_at,judged_at")
+        .eq("round", round)
+        .in("task_id", taskIds)
+        .eq("status", "approved"),
+    ]);
+    taskRows = result[0].data ?? [];
+    allApproved = result[1].data ?? [];
+  }
+  const scored = scoreApproved(allApproved ?? [], taskRows ?? []);
+  const pointsById = new Map(scored.map(({ row, points }) => [row.id, points]));
+  const groups = winningGroups(teamSubmissions) as SubmissionRow[][];
+  const groupTaskIds = [...new Set(groups.map((files) => files[0].task_id))];
   const playerIds = [...new Set(groups.flatMap((files) => files.map((file) => file.player_id)))];
 
   let tasks: Array<{ id: string; title: string; sort_order: number }> = [];
   let players: Array<{ id: string; name: string }> = [];
   if (groups.length > 0) {
     const [{ data: taskRows, error: tasksError }, { data: playerRows, error: playersError }] = await Promise.all([
-      sb.from("tasks").select("id,title,sort_order").in("id", taskIds),
+      sb.from("tasks").select("id,title,sort_order").in("id", groupTaskIds),
       sb.from("players").select("id,name").in("id", playerIds),
     ]);
     if (tasksError || playersError) return fail("Couldn't load that team's entries right now. Try again.", 503);
@@ -73,7 +94,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
         entry: {
           id: first.id,
           taskTitle: task?.title ?? "(deleted task)",
-          points: first.points_awarded ?? 0,
+          points: pointsById.get(first.id) ?? first.points_awarded ?? 0,
           media: files.map((file) => ({
             id: file.id,
             url: mediaUrl(file.object_name),

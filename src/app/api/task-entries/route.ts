@@ -3,6 +3,7 @@ import { getSettings } from "@/lib/settings";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
+import { scoreApproved } from "@/lib/scoring.mjs";
 
 type SubmissionRow = Database["public"]["Tables"]["submissions"]["Row"];
 
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
     sb.from("players").select("id").eq("id", playerId).maybeSingle(),
     sb
       .from("tasks")
-      .select("id,round,title,active,is_secret,revealed_at")
+      .select("id,round,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,active,is_secret,revealed_at")
       .eq("id", taskId)
       .eq("round", round)
       .maybeSingle(),
@@ -50,7 +51,7 @@ export async function GET(req: Request) {
   const { data: submissions, error: submissionsError } = await sb
     .from("submissions")
     .select(
-      "id,round,task_id,player_id,team_id,object_name,media_type,points_awarded,group_id,note,created_at,judged_at,status"
+      "id,round,task_id,player_id,team_id,object_name,media_type,points_awarded,measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot,group_id,note,created_at,judged_at,status"
     )
     .eq("round", round)
     .eq("task_id", taskId)
@@ -61,7 +62,8 @@ export async function GET(req: Request) {
 
   if (submissionsError) return fail("Couldn't load task entries right now. Try again.", 503);
 
-  const groups = (winningGroups((submissions ?? []) as SubmissionRow[]) as SubmissionRow[][]).filter(
+  const scored = scoreApproved(submissions ?? [], [task]).map(({ row, points }) => ({ ...row, effectivePoints: points }));
+  const groups = (winningGroups(scored as SubmissionRow[]) as SubmissionRow[][]).filter(
     (files) => files[0]?.team_id !== roster.team_id
   );
   if (groups.length === 0) return json({ entries: [] });
@@ -89,7 +91,7 @@ export async function GET(req: Request) {
         entry: {
           id: first.id,
           taskTitle: task.title,
-          points: first.points_awarded ?? 0,
+          points: scored.find((row) => row.id === first.id)?.effectivePoints ?? first.points_awarded ?? 0,
           media: files.map((file) => ({
             id: file.id,
             url: mediaUrl(file.object_name),

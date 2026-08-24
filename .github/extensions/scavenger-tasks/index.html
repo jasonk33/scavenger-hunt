@@ -171,6 +171,34 @@
                 <option value="10">10</option>
               </select>
             </label>
+            <label class="field">
+              <span>Scoring</span>
+              <select class="scoring-mode">
+                <option value="fixed">Fixed</option>
+                <option value="quantity">Per measure</option>
+                <option value="competition">Competition</option>
+              </select>
+            </label>
+            <label class="field grow">
+              <span>Measure (shown to judge)</span>
+              <input class="measurement-label" type="text" placeholder="e.g. shirts or signatures" />
+            </label>
+            <label class="field">
+              <span>Baseline at</span>
+              <input class="measurement-threshold" type="number" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Points / measure</span>
+              <input class="points-per-unit" type="number" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Measure cap</span>
+              <input class="measurement-cap" type="number" min="0" step="1" placeholder="none" />
+            </label>
+            <label class="field">
+              <span>Leader bonus</span>
+              <input class="competition-bonus" type="number" min="0" step="1" />
+            </label>
             <label class="field grow">
               <span>Prop needed</span>
               <input class="prop" type="text" placeholder="none" />

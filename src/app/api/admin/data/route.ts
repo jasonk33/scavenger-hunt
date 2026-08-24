@@ -18,7 +18,7 @@ export async function GET() {
       sb.from("roster").select("round,player_id,team_id"),
       sb
         .from("tasks")
-        .select("id,round,title,points,requires_video,is_secret,revealed_at,sort_order,active")
+        .select("id,round,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,requires_video,is_secret,revealed_at,sort_order,active")
         .order("round")
         .order("sort_order")
         .order("id"),

@@ -2,6 +2,7 @@ import { db, mediaUrl } from "@/lib/db";
 import { isOrganizer } from "@/lib/settings";
 import { groupKey } from "@/lib/groups";
 import { fail, slug } from "@/lib/http";
+import { scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,9 @@ export async function GET(req: Request) {
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
   const teamById = new Map((teams ?? []).map((t) => [t.id, t]));
   const playerById = new Map((players ?? []).map((p) => [p.id, p]));
+  const effectiveById = new Map(
+    scoreApproved(subs ?? [], tasks ?? []).map(({ row, points }) => [row.id, points])
+  );
 
   const rows = (subs ?? []).map((s) => ({
     id: s.id,
@@ -39,8 +43,8 @@ export async function GET(req: Request) {
     task: taskById.get(s.task_id)?.title ?? "",
     taskPoints: s.task_points,
     status: s.status,
-    pointsAwarded: s.points_awarded,
-    total: s.status === "approved" ? (s.points_awarded ?? 0) : 0,
+    pointsAwarded: effectiveById.get(s.id) ?? s.points_awarded,
+    total: s.status === "approved" ? (effectiveById.get(s.id) ?? s.points_awarded ?? 0) : 0,
     rejectReason: s.reject_reason,
     note: s.note,
     // Files sharing this are one piece of evidence, judged as a unit.

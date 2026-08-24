@@ -35,6 +35,9 @@ re-runnable set of `ALTER`s carrying no seed data:
   before deploying the matching code**, and expect Admin's task editor to be the
   only thing broken in between — no player-facing query reads a column that
   changes. It is one transaction, so a failure leaves nothing half-applied.
+- `supabase/migrate-competitive-scoring.sql` — adds fixed, measurable, and
+  competition scoring modes. Existing tasks stay fixed-value tasks. Run it before
+  configuring a task with a measurement or live leader bonus.
 
 Then get your keys from **Settings → API Keys → the "Legacy anon, service_role
 API keys" tab**.
@@ -67,6 +70,13 @@ Edit them there and re-run as people RSVP, rather than clicking through Admin.
 Both commands delete **every submission and every media file** in the project,
 so they refuse to run once anyone outside that guest list has submitted
 something. Use `seed:reset` to clear your own testing before the day.
+
+Task scoring starts at the normal point tier. In Admin or the planner, choose
+`Points per measure` for values such as shirts or signatures, or `Leader bonus`
+for a task where the current highest measured result gets the bonus. Judges enter
+the measured result, never arbitrary points. Quantity scores are capped when a
+cap is configured; tied competition leaders each receive the bonus, and the
+leaderboard recalculates live as teams improve.
 
 ### 4. Edit the tasks and the roster
 

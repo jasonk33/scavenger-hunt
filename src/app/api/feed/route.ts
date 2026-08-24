@@ -2,6 +2,7 @@ import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { groupBy, groupKey } from "@/lib/groups";
 import { json, isVideoObject } from "@/lib/http";
+import { scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,7 @@ export async function GET(req: Request) {
       .in("status", ["approved", "rejected"])
       .order("judged_at", { ascending: false })
       .limit(limit),
-    sb.from("tasks").select("id,title").eq("round", round),
+    sb.from("tasks").select("id,title,points,scoring_mode,measurement_threshold,points_per_unit,measurement_cap,competition_bonus").eq("round", round),
     sb.from("teams").select("id,name,color").eq("round", round),
     sb.from("players").select("id,name"),
   ]);
@@ -48,6 +49,18 @@ export async function GET(req: Request) {
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
   const teamById = new Map((teams ?? []).map((t) => [t.id, t]));
   const playerById = new Map((players ?? []).map((p) => [p.id, p]));
+  const taskIds = [...new Set((subs ?? []).map((submission) => submission.task_id))];
+  const { data: approved } = taskIds.length
+    ? await sb
+        .from("submissions")
+        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot,created_at,judged_at")
+        .eq("round", round)
+        .in("task_id", taskIds)
+        .eq("status", "approved")
+    : { data: [] };
+  const pointsById = new Map(
+    scoreApproved(approved ?? [], tasks ?? []).map(({ row, points }) => [row.id, points])
+  );
 
   return json({
     round,
@@ -70,7 +83,7 @@ export async function GET(req: Request) {
         })),
         note: files.find((f) => f.note)?.note ?? null,
         taskTitle: taskById.get(s.task_id)?.title ?? "",
-        points: s.points_awarded ?? 0,
+        points: pointsById.get(s.id) ?? s.points_awarded ?? 0,
         rejectReason: s.reject_reason,
         teamName: teamById.get(s.team_id)?.name ?? "",
         teamColor: teamById.get(s.team_id)?.color ?? "#666",

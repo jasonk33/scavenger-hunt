@@ -3,6 +3,7 @@ import { isOrganizer } from "@/lib/settings";
 import { cleanReason } from "@/lib/groups";
 import { json, fail } from "@/lib/http";
 import type { Database } from "@/lib/database.types";
+import { effectivePoints } from "@/lib/scoring.mjs";
 
 type SubmissionUpdate = Database["public"]["Tables"]["submissions"]["Update"];
 
@@ -41,7 +42,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const { data: existing } = await sb
     .from("submissions")
-    .select("id,group_id,task_points,status,round,team_id,judged_at")
+    .select("id,group_id,task_id,task_points,status,round,team_id,judged_at,measurement_value,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot")
     .eq("id", id)
     .maybeSingle();
   if (!existing) return fail("Submission not found.", 404);
@@ -62,6 +63,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!memberIds) {
     return fail("Couldn't read the rest of this submission just now. Try again.", 503);
   }
+
+  const { data: task } = await sb
+    .from("tasks")
+    .select("id,points,scoring_mode,measurement_threshold,points_per_unit,measurement_cap,competition_bonus")
+    .eq("id", existing.task_id)
+    .maybeSingle();
+  if (!task) return fail("Task not found.", 404);
 
   /*
    * Reassign bumps judged_at so the compare-and-swap below can tell two
@@ -98,9 +106,34 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   if (action === "approve") {
     if (guardConflict) return guardConflict;
+    const rawMeasurement = body.measurementValue;
+    const hasMeasurement =
+      rawMeasurement !== null &&
+      rawMeasurement !== undefined &&
+      rawMeasurement !== "" &&
+      !(typeof rawMeasurement === "string" && !rawMeasurement.trim());
+    const measurementValue =
+      task.scoring_mode === "fixed"
+        ? null
+        : hasMeasurement && Number.isInteger(Number(rawMeasurement)) && Number(rawMeasurement) >= 0
+          ? Number(rawMeasurement)
+          : null;
+    const scoringRule = {
+      ...task,
+      points: existing.task_points,
+      scoring_mode: existing.scoring_mode_snapshot ?? task.scoring_mode,
+      measurement_threshold: existing.measurement_threshold_snapshot ?? task.measurement_threshold,
+      points_per_unit: existing.points_per_unit_snapshot ?? task.points_per_unit,
+      measurement_cap: existing.measurement_cap_snapshot ?? task.measurement_cap,
+      competition_bonus: existing.competition_bonus_snapshot ?? task.competition_bonus,
+    };
+    if (scoringRule.scoring_mode !== "fixed" && measurementValue === null) {
+      return fail(`Enter the ${scoringRule.scoring_mode === "competition" ? "current result" : "measured amount"} before approving.`);
+    }
     patch = {
       status: "approved",
-      points_awarded: existing.task_points,
+      points_awarded: effectivePoints(scoringRule, measurementValue),
+      measurement_value: measurementValue,
       reject_reason: null,
       judged_at: new Date().toISOString(),
     };
@@ -109,6 +142,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     patch = {
       status: "rejected",
       points_awarded: null,
+      measurement_value: null,
       // Free text: the judge types what actually went wrong. A fixed menu could
       // only ever cover the reasons we thought of in advance, and the team is
       // reading this to decide whether it is worth redoing the task.
@@ -121,6 +155,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     patch = {
       status: "pending",
       points_awarded: null,
+      measurement_value: null,
       reject_reason: null,
       judged_at: null,
     };

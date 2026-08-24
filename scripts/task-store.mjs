@@ -60,6 +60,12 @@ export const COLUMNS = {
   doc_title: "docTitle",
   title: "title",
   points: "points",
+  scoring_mode: "scoringMode",
+  measurement_label: "measurementLabel",
+  measurement_threshold: "measurementThreshold",
+  points_per_unit: "pointsPerUnit",
+  measurement_cap: "measurementCap",
+  competition_bonus: "competitionBonus",
   doc_order: "docOrder",
   difficulty: "difficulty",
   guts: "guts",
@@ -96,7 +102,17 @@ export function rowsToTask(rows) {
   const [first] = rows ?? [];
   if (!first) return null;
   const task = {};
-  for (const [column, key] of Object.entries(COLUMNS)) task[key] = first[column] ?? null;
+  for (const [column, key] of Object.entries(COLUMNS)) {
+    const defaults = {
+      scoring_mode: "fixed",
+      measurement_label: "",
+      measurement_threshold: 0,
+      points_per_unit: 0,
+      measurement_cap: null,
+      competition_bonus: 0,
+    };
+    task[key] = first[column] ?? defaults[column] ?? null;
+  }
   task.round = first.is_secret ? 0 : first.round;
   // Which rows this task actually is. Nothing in the UI reads it; it is here so
   // a caller can tell a secret from a normal task without re-querying.
@@ -121,6 +137,11 @@ const rating = (v) => {
   const n = int(v);
   return Number.isInteger(n) && n >= 1 && n <= 5 ? n : undefined;
 };
+const nonNegativeInt = (v) => {
+  const n = int(v);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+};
+const scoringMode = (v) => (["fixed", "quantity", "competition"].includes(v) ? v : undefined);
 
 /**
  * The fields a caller may change, with a validator each. Anything not listed is
@@ -144,6 +165,12 @@ export const EDITABLE = {
   note: (v) => (typeof v === "string" ? v : undefined),
   prop: (v) => (typeof v === "string" ? v : undefined),
   points: (v) => (TIERS.includes(int(v)) ? int(v) : undefined),
+  scoringMode,
+  measurementLabel: (v) => (typeof v === "string" ? v.trim() : undefined),
+  measurementThreshold: nonNegativeInt,
+  pointsPerUnit: nonNegativeInt,
+  measurementCap: (v) => (v === null ? null : nonNegativeInt(v)),
+  competitionBonus: nonNegativeInt,
   // Cut. Never a delete, which would cascade to submissions: a cut task is
   // hidden from players and its scores stand.
   active: (v) => (typeof v === "boolean" ? v : undefined),
@@ -406,7 +433,17 @@ export async function addTask(client, input) {
     is_secret: round === 0,
     active: true,
     note: typeof input?.note === "string" ? input.note : "",
-    ...taskPatchToRow(Object.fromEntries(RATINGS.map((k) => [k, input?.[k]]))),
+    ...taskPatchToRow(
+      Object.fromEntries([
+        ...RATINGS.map((k) => [k, input?.[k]]),
+        ["scoringMode", input?.scoringMode],
+        ["measurementLabel", input?.measurementLabel],
+        ["measurementThreshold", input?.measurementThreshold],
+        ["pointsPerUnit", input?.pointsPerUnit],
+        ["measurementCap", input?.measurementCap],
+        ["competitionBonus", input?.competitionBonus],
+      ])
+    ),
   };
 
   const created = await rest(client, {

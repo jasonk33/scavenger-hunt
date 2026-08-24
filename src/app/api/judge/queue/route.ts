@@ -47,7 +47,7 @@ export async function GET(req: Request) {
         .in("status", ["approved", "rejected"])
         .order("judged_at", { ascending: false })
         .limit(300),
-      sb.from("tasks").select("id,title,points,requires_video,is_secret").eq("round", round),
+      sb.from("tasks").select("id,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,requires_video,is_secret").eq("round", round),
       sb.from("teams").select("id,name,color").eq("round", round),
       sb.from("players").select("id,name"),
     ]);
@@ -77,6 +77,7 @@ export async function GET(req: Request) {
     const s = files[0];
     const task = taskById.get(s.task_id);
     const team = teamById.get(s.team_id);
+    const scoringMode = s.scoring_mode_snapshot ?? task?.scoring_mode ?? "fixed";
     const media = files.map((f) => ({
       id: f.id,
       url: mediaUrl(f.object_name),
@@ -98,6 +99,13 @@ export async function GET(req: Request) {
       note: files.find((f) => f.note)?.note ?? null,
       taskTitle: task?.title ?? "(deleted task)",
       taskPoints: s.task_points,
+      scoringMode,
+      measurementLabel: task?.measurement_label ?? "",
+      measurementValue: s.measurement_value,
+      measurementThreshold: s.measurement_threshold_snapshot ?? task?.measurement_threshold ?? 0,
+      pointsPerUnit: s.points_per_unit_snapshot ?? task?.points_per_unit ?? 0,
+      measurementCap: s.measurement_cap_snapshot ?? task?.measurement_cap ?? null,
+      competitionBonus: s.competition_bonus_snapshot ?? task?.competition_bonus ?? 0,
       requiresVideo: Boolean(task?.requires_video),
       isSecret: Boolean(task?.is_secret),
       teamId: s.team_id,

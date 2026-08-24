@@ -19,9 +19,37 @@ export async function POST(req: Request) {
   const round = Number(b?.round);
   const title = String(b?.title ?? "").trim();
   const points = Number(b?.points);
+  if (b?.scoringMode !== undefined && !["fixed", "quantity", "competition"].includes(b.scoringMode)) {
+    return fail("scoringMode must be fixed, quantity, or competition.");
+  }
+  const scoringMode = ["fixed", "quantity", "competition"].includes(b?.scoringMode)
+    ? b.scoringMode
+    : "fixed";
+  const measurementThreshold = Number.isInteger(Number(b?.measurementThreshold))
+    ? Number(b.measurementThreshold)
+    : 0;
+  const pointsPerUnit = Number.isInteger(Number(b?.pointsPerUnit)) ? Number(b.pointsPerUnit) : 0;
+  const measurementCap =
+    b?.measurementCap === null || b?.measurementCap === "" || b?.measurementCap === undefined
+      ? null
+      : Number(b.measurementCap);
+  const competitionBonus = Number.isInteger(Number(b?.competitionBonus))
+    ? Number(b.competitionBonus)
+    : 0;
   if (round !== 1 && round !== 2) return fail("round must be 1 or 2.");
   if (!title) return fail("title required.");
   if (!Number.isFinite(points) || points <= 0) return fail("points must be a positive number.");
+  if (
+    !Number.isInteger(measurementThreshold) ||
+    measurementThreshold < 0 ||
+    !Number.isInteger(pointsPerUnit) ||
+    pointsPerUnit < 0 ||
+    (measurementCap !== null && (!Number.isInteger(measurementCap) || measurementCap < 0)) ||
+    !Number.isInteger(competitionBonus) ||
+    competitionBonus < 0
+  ) {
+    return fail("Scoring measurements must be non-negative whole numbers.");
+  }
 
   // sort_order is generated from (is_secret, points, doc_order), so position is
   // set by choosing where in the planning order this lands -- last, here.
@@ -39,6 +67,12 @@ export async function POST(req: Request) {
       round,
       title,
       points,
+      scoring_mode: scoringMode,
+      measurement_label: String(b?.measurementLabel ?? "").trim(),
+      measurement_threshold: measurementThreshold,
+      points_per_unit: pointsPerUnit,
+      measurement_cap: measurementCap,
+      competition_bonus: competitionBonus,
       requires_video: Boolean(b?.requiresVideo),
       is_secret: Boolean(b?.isSecret),
       doc_order: Number(last?.doc_order ?? 0) + 1,
@@ -71,6 +105,21 @@ export async function PATCH(req: Request) {
   const task: TaskUpdate = {};
   if (typeof b.title === "string" && b.title.trim()) task.title = b.title.trim();
   if (Number.isFinite(Number(b.points)) && Number(b.points) > 0) task.points = Number(b.points);
+  if (["fixed", "quantity", "competition"].includes(b.scoringMode)) task.scoring_mode = b.scoringMode;
+  if (typeof b.measurementLabel === "string") task.measurement_label = b.measurementLabel.trim();
+  for (const [input, key] of [
+    ["measurementThreshold", "measurement_threshold"],
+    ["pointsPerUnit", "points_per_unit"],
+    ["competitionBonus", "competition_bonus"],
+  ]) {
+    if (Number.isInteger(Number(b[input])) && Number(b[input]) >= 0) {
+      Object.assign(task, { [key]: Number(b[input]) });
+    }
+  }
+  if (b.measurementCap === null || b.measurementCap === "") task.measurement_cap = null;
+  else if (Number.isInteger(Number(b.measurementCap)) && Number(b.measurementCap) >= 0) {
+    task.measurement_cap = Number(b.measurementCap);
+  }
   if (typeof b.requiresVideo === "boolean") task.requires_video = b.requiresVideo;
   if (typeof b.isSecret === "boolean") task.is_secret = b.isSecret;
   if (typeof b.active === "boolean") task.active = b.active;

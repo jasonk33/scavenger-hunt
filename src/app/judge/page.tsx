@@ -13,6 +13,13 @@ type Item = {
   note: string | null;
   taskTitle: string;
   taskPoints: number;
+  scoringMode: "fixed" | "quantity" | "competition";
+  measurementLabel: string;
+  measurementValue: number | null;
+  measurementThreshold: number;
+  pointsPerUnit: number;
+  measurementCap: number | null;
+  competitionBonus: number;
   requiresVideo: boolean;
   isSecret: boolean;
   teamId: string;
@@ -118,6 +125,7 @@ function JudgeQueue() {
   );
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [measurement, setMeasurement] = useState("");
   const [reassigning, setReassigning] = useState(false);
   // When set, the review card shows this specific submission instead of the head
   // of the queue -- either a queued one the judge scrolled to, or an
@@ -176,6 +184,7 @@ function JudgeQueue() {
     // organizer judges it out from under this screen, and without it the box
     // would still hold the previous ruling's text.
     setReason(current?.status === "rejected" ? (current.rejectReason ?? "") : "");
+    setMeasurement(current?.measurementValue === null || current?.measurementValue === undefined ? "" : String(current.measurementValue));
     setRejecting(false);
     setReassigning(false);
     setErr("");
@@ -397,6 +406,33 @@ function JudgeQueue() {
             <span className="pill muted">{fmtBytes(current.sizeBytes)}</span>
           </div>
 
+          {current.scoringMode !== "fixed" && (
+            <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
+              <div className="stat-label" style={{ marginBottom: 4 }}>
+                {current.scoringMode === "competition" ? "Competition result" : "Measured result"}
+              </div>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <input
+                  className="field"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  placeholder={current.measurementLabel || "Enter a whole number"}
+                  value={measurement}
+                  onChange={(e) => setMeasurement(e.target.value)}
+                  style={{ flex: "1 1 140px" }}
+                />
+                <span className="muted tiny">
+                  {current.measurementLabel || "units"}
+                  {current.scoringMode === "quantity"
+                    ? ` · ${current.taskPoints} baseline${current.pointsPerUnit ? ` · +${current.pointsPerUnit} each above ${current.measurementThreshold}` : ""}`
+                    : ` · +${current.competitionBonus} for the current leader`}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* What the team says the judge is looking at. Sits ABOVE the media,
               because a photo whose point isn't obvious is exactly the case this
               exists for -- read first, then look. */}
@@ -450,10 +486,15 @@ function JudgeQueue() {
                 className="btn btn-lg btn-good"
                 style={{ flex: 2 }}
                 disabled={busy}
-                onClick={() => decide({ action: "approve" })}
+                onClick={() => decide({
+                  action: "approve",
+                  measurementValue: measurement === "" ? null : Number(measurement),
+                })}
               >
                 {reviewing?.status === "approved" ? "Re-approve for" : "Approve"}{" "}
-                <span className="num">{current.taskPoints}</span>
+                <span className="num">
+                  {current.scoringMode === "fixed" ? current.taskPoints : "score"}
+                </span>
               </button>
               <button
                 className="btn btn-lg btn-bad"

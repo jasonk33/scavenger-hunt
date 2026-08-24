@@ -154,6 +154,8 @@ function visibleTasks() {
 
 function chipsFor(task) {
   const chips = [];
+  if (task.scoringMode === "quantity") chips.push(["per measure", ""]);
+  if (task.scoringMode === "competition") chips.push(["competition", "warn"]);
   if (task.requiresVideo) chips.push(["clip", ""]);
   if (task.prop) chips.push(["prop", ""]);
   if (task.luck >= 4) chips.push(["luck", "warn"]);
@@ -216,6 +218,20 @@ function paint(row, task) {
 
   const points = row.querySelector(".points");
   if (document.activeElement !== points) points.value = String(task.points);
+
+  const mode = row.querySelector(".scoring-mode");
+  if (document.activeElement !== mode) mode.value = task.scoringMode || "fixed";
+  for (const [selector, key] of [
+    [".measurement-label", "measurementLabel"],
+    [".measurement-threshold", "measurementThreshold"],
+    [".points-per-unit", "pointsPerUnit"],
+    [".measurement-cap", "measurementCap"],
+    [".competition-bonus", "competitionBonus"],
+  ]) {
+    const input = row.querySelector(selector);
+    if (!input || document.activeElement === input) continue;
+    input.value = task[key] === null || task[key] === undefined ? "" : String(task[key]);
+  }
 
   const prop = row.querySelector(".prop");
   if (document.activeElement !== prop) prop.value = task.prop;
@@ -313,6 +329,31 @@ function buildRow(task) {
     paint(row, task);
     renderSummary();
   });
+
+  const mode = row.querySelector(".scoring-mode");
+  mode.addEventListener("change", () => {
+    save(task, { scoringMode: mode.value });
+    paint(row, task);
+    renderSummary();
+  });
+
+  for (const [selector, key, read] of [
+    [".measurement-label", "measurementLabel", (node) => node.value.trim()],
+    [".measurement-threshold", "measurementThreshold", (node) => Number(node.value)],
+    [".points-per-unit", "pointsPerUnit", (node) => Number(node.value)],
+    [".measurement-cap", "measurementCap", (node) => node.value === "" ? null : Number(node.value)],
+    [".competition-bonus", "competitionBonus", (node) => Number(node.value)],
+  ]) {
+    const input = row.querySelector(selector);
+    input.addEventListener("change", () => {
+      const value = read(input);
+      if (value === null || Number.isInteger(value) && value >= 0 || typeof value === "string") {
+        save(task, { [key]: value });
+        paint(row, task);
+        renderSummary();
+      }
+    });
+  }
 
   for (const [sel, key, read] of [
     [".prop", "prop", (n) => n.value],

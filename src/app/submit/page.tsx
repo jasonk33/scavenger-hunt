@@ -11,6 +11,13 @@ type Task = {
   id: string;
   title: string;
   points: number;
+  scoring_mode: "fixed" | "quantity" | "competition";
+  measurement_label: string;
+  measurement_threshold: number;
+  points_per_unit: number;
+  measurement_cap: number | null;
+  competition_bonus: number;
+  competition: { value: number; teams: string[]; bonus: number } | null;
   requires_video: boolean;
   is_secret: boolean;
 };
@@ -21,8 +28,10 @@ type Sub = {
   player_id: string;
   status: "uploading" | "pending" | "approved" | "rejected";
   points_awarded: number | null;
+  measurement_value: number | null;
   reject_reason: string | null;
   created_at: string;
+  judged_at: string | null;
   /** Files sharing this are one piece of evidence, judged as a unit. */
   groupId: string;
   note: string | null;
@@ -573,7 +582,13 @@ function TaskRow({
       : null,
     8000
   );
-  const approved = subs.find((s) => s.status === "approved");
+  const approved = subs
+    .filter((s) => s.status === "approved")
+    .sort((a, b) =>
+      `${b.judged_at ?? ""}|${b.created_at}|${b.id}`.localeCompare(
+        `${a.judged_at ?? ""}|${a.created_at}|${a.id}`
+      )
+    )[0];
   const pending = subs.find((s) => s.status === "pending" || s.status === "uploading");
   const rejected = subs.find((s) => s.status === "rejected");
 
@@ -602,8 +617,24 @@ function TaskRow({
           <div style={{ fontWeight: 600, lineHeight: 1.35 }}>{task.title}</div>
           <div className="row" style={{ gap: 6, marginTop: 7, flexWrap: "wrap" }}>
             {task.requires_video && <span className="pill">video only</span>}
+            {task.scoring_mode === "quantity" && (
+              <span className="pill pill-accent">
+                +{task.points_per_unit} / {task.measurement_label || "unit"}
+              </span>
+            )}
+            {task.scoring_mode === "competition" && (
+              <span className="pill pill-warn">
+                leader +{task.competition_bonus}
+              </span>
+            )}
             {task.is_secret && (
               <span className="pill pill-warn">secret · {task.points} pts</span>
+            )}
+            {task.competition && (
+              <span className="pill pill-wrap">
+                {task.competition.teams.join(" / ")} lead with {task.competition.value}{" "}
+                {task.measurement_label || "units"}
+              </span>
             )}
             {approved && (
               <span className="pill pill-good">✓ {approved.points_awarded ?? 0} pts</span>

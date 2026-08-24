@@ -65,6 +65,13 @@ create table if not exists tasks (
   doc_title      text not null default '',
 
   points         int  not null check (points > 0),
+  scoring_mode   text not null default 'fixed'
+                 check (scoring_mode in ('fixed', 'quantity', 'competition')),
+  measurement_label     text not null default '',
+  measurement_threshold int not null default 0 check (measurement_threshold >= 0),
+  points_per_unit       int not null default 0 check (points_per_unit >= 0),
+  measurement_cap       int check (measurement_cap is null or measurement_cap >= 0),
+  competition_bonus     int not null default 0 check (competition_bonus >= 0),
   requires_video boolean not null default false,
   is_secret      boolean not null default false,
   revealed_at    timestamptz,
@@ -113,6 +120,13 @@ create table if not exists submissions (
   player_id      uuid not null references players(id) on delete cascade,
   team_id        uuid not null references teams(id)   on delete cascade,
   task_points    int  not null,
+  scoring_mode_snapshot text not null default 'fixed'
+                         check (scoring_mode_snapshot in ('fixed', 'quantity', 'competition')),
+  measurement_threshold_snapshot int not null default 0 check (measurement_threshold_snapshot >= 0),
+  points_per_unit_snapshot int not null default 0 check (points_per_unit_snapshot >= 0),
+  measurement_cap_snapshot int check (measurement_cap_snapshot is null or measurement_cap_snapshot >= 0),
+  competition_bonus_snapshot int not null default 0 check (competition_bonus_snapshot >= 0),
+  measurement_value int,
   object_name    text not null,
   media_type     text,
   size_bytes     bigint,
@@ -171,6 +185,18 @@ alter table tasks add column if not exists note       text not null default '';
 alter table tasks add column if not exists rewrite    boolean not null default false;
 alter table tasks add column if not exists tier_ok    int check (tier_ok in (1, 3, 5, 7, 10));
 alter table tasks add column if not exists updated_at timestamptz not null default now();
+alter table tasks add column if not exists scoring_mode text not null default 'fixed';
+alter table tasks add column if not exists measurement_label text not null default '';
+alter table tasks add column if not exists measurement_threshold int not null default 0;
+alter table tasks add column if not exists points_per_unit int not null default 0;
+alter table tasks add column if not exists measurement_cap int;
+alter table tasks add column if not exists competition_bonus int not null default 0;
+alter table submissions add column if not exists measurement_value int;
+alter table submissions add column if not exists scoring_mode_snapshot text not null default 'fixed';
+alter table submissions add column if not exists measurement_threshold_snapshot int not null default 0;
+alter table submissions add column if not exists points_per_unit_snapshot int not null default 0;
+alter table submissions add column if not exists measurement_cap_snapshot int;
+alter table submissions add column if not exists competition_bonus_snapshot int not null default 0;
 
 -- unique (round, title) existed only so the old publish step could match tasks
 -- by their prose. Found by its columns rather than by its name, because a
@@ -265,14 +291,48 @@ with best as (
          s.round,
          s.team_id,
          s.task_id,
-         s.points_awarded as pts
+         s.task_points,
+         s.measurement_value,
+         s.points_awarded,
+         coalesce(s.scoring_mode_snapshot, t.scoring_mode) as scoring_mode,
+         coalesce(s.measurement_threshold_snapshot, t.measurement_threshold) as measurement_threshold,
+         coalesce(s.points_per_unit_snapshot, t.points_per_unit) as points_per_unit,
+         coalesce(s.measurement_cap_snapshot, t.measurement_cap) as measurement_cap,
+         coalesce(s.competition_bonus_snapshot, t.competition_bonus) as competition_bonus
   from submissions s
+  join tasks t on t.id = s.task_id
   where s.status = 'approved'
     and s.points_awarded is not null
-  -- created_at and id only break ties: judged_at is identical across the files
-  -- of one group, and could in principle collide across two separate decisions.
   order by s.round, s.team_id, s.task_id,
            s.judged_at desc nulls last, s.created_at desc, s.id desc
+),
+with_leaders as (
+  select b.*,
+         max(case when b.measurement_value is not null then b.measurement_value end)
+           over (partition by b.round, b.task_id) as leading_value
+  from best b
+),
+scored as (
+  select *,
+    (case
+      when scoring_mode = 'quantity' then
+        task_points + least(
+          greatest(0, coalesce(measurement_value, 0) - measurement_threshold),
+          case
+            when measurement_cap is null then greatest(0, coalesce(measurement_value, 0) - measurement_threshold)
+            else greatest(0, measurement_cap - measurement_threshold)
+          end
+        ) * points_per_unit
+      else task_points
+    end
+    + case
+        when scoring_mode = 'competition'
+          and measurement_value is not null
+          and measurement_value = leading_value
+        then competition_bonus
+        else 0
+      end)::int as pts
+  from with_leaders
 )
 select t.id                                 as team_id,
        t.round,
@@ -282,7 +342,7 @@ select t.id                                 as team_id,
        coalesce(sum(b.pts), 0)::int         as points,
        count(b.task_id)::int                as tasks_scored
 from teams t
-left join best b on b.team_id = t.id and b.round = t.round
+left join scored b on b.team_id = t.id and b.round = t.round
 group by t.id, t.round, t.name, t.color, t.sort_order;
 
 -- A discretionary 0-2 "creativity" bonus and an award-candidate star used to

@@ -34,6 +34,12 @@ type TaskRow = {
   /** The planning doc's original wording, kept for provenance. Empty if there was none. */
   doc_title: string;
   points: number;
+  scoring_mode: "fixed" | "quantity" | "competition";
+  measurement_label: string;
+  measurement_threshold: number;
+  points_per_unit: number;
+  measurement_cap: number | null;
+  competition_bonus: number;
   requires_video: boolean;
   is_secret: boolean;
   revealed_at: Timestamp | null;
@@ -64,6 +70,12 @@ type SubmissionRow = {
   player_id: string;
   team_id: string;
   task_points: number;
+  scoring_mode_snapshot: "fixed" | "quantity" | "competition";
+  measurement_threshold_snapshot: number;
+  points_per_unit_snapshot: number;
+  measurement_cap_snapshot: number | null;
+  competition_bonus_snapshot: number;
+  measurement_value: number | null;
   object_name: string;
   media_type: string | null;
   size_bytes: number | null;
@@ -114,6 +126,12 @@ export type Database = {
         | "id"
         | "slug"
         | "doc_title"
+        | "scoring_mode"
+        | "measurement_label"
+        | "measurement_threshold"
+        | "points_per_unit"
+        | "measurement_cap"
+        | "competition_bonus"
         | "requires_video"
         | "is_secret"
         | "revealed_at"
@@ -137,6 +155,12 @@ export type Database = {
         | "id"
         | "media_type"
         | "size_bytes"
+        | "measurement_value"
+        | "scoring_mode_snapshot"
+        | "measurement_threshold_snapshot"
+        | "points_per_unit_snapshot"
+        | "measurement_cap_snapshot"
+        | "competition_bonus_snapshot"
         | "status"
         | "points_awarded"
         | "reject_reason"

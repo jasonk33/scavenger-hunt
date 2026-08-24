@@ -2,6 +2,7 @@ import { db, mediaUrl, uploadConfig } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { groupKey } from "@/lib/groups";
 import { json, isVideoObject } from "@/lib/http";
+import { competitionLeaders, scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export async function GET(req: Request) {
   // rather than in the client means an unrevealed task never reaches the browser.
   const tasksQ = sb
     .from("tasks")
-    .select("id,round,title,points,requires_video,is_secret,revealed_at,sort_order")
+    .select("id,round,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,requires_video,is_secret,revealed_at,sort_order")
     .eq("round", round)
     .eq("active", true)
     // id only breaks ties. sort_order is derived from (is_secret, points,
@@ -41,6 +42,23 @@ export async function GET(req: Request) {
   ]);
 
   const tasks = (tasksRaw ?? []).filter((t) => !t.is_secret || t.revealed_at);
+  const competitionTaskIds = tasks
+    .filter((task) => task.scoring_mode === "competition")
+    .map((task) => task.id);
+  let competitionRows: Array<Record<string, unknown>> = [];
+  if (competitionTaskIds.length > 0) {
+    const { data } = await sb
+      .from("submissions")
+      .select("id,round,team_id,task_id,status,points_awarded,measurement_value,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot,created_at,judged_at")
+      .eq("round", round)
+      .in("task_id", competitionTaskIds)
+      .eq("status", "approved");
+    competitionRows = data ?? [];
+  }
+  const leaders = competitionLeaders(competitionRows, tasks, teams ?? []) as Record<
+    string,
+    { value: number; teams: string[]; bonus: number }
+  >;
 
   let me: { id: string; name: string } | null = null;
   let team: { id: string; round: number; name: string; color: string; sort_order: number } | null =
@@ -58,6 +76,7 @@ export async function GET(req: Request) {
     group_id: string | null;
     note: string | null;
     judged_at: string | null;
+    measurement_value: number | null;
   }> = [];
   // Names of whoever on the team actually sent each submission. Progress is
   // team-wide, so "you already submitted this" is often really a teammate --
@@ -85,7 +104,7 @@ export async function GET(req: Request) {
         const { data: subs } = await sb
           .from("submissions")
           .select(
-            "id,task_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note"
+            "id,task_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot"
           )
           .eq("round", round)
           .eq("team_id", team.id)
@@ -117,12 +136,10 @@ export async function GET(req: Request) {
    * If these two ever disagree, a team sees one score on their own task list and
    * a different one on the leaderboard.
    */
-  const bestByTask = new Map<string, { pts: number; at: string }>();
-  for (const s of scored) {
-    const at = `${s.judged_at ?? ""}|${s.created_at}|${s.id}`;
-    const prev = bestByTask.get(s.task_id);
-    if (!prev || at > prev.at) bestByTask.set(s.task_id, { pts: s.points_awarded ?? 0, at });
-  }
+  const bestByTask = new Map(
+    scoreApproved(mine, tasks).map(({ row: s, points }) => [s.task_id, { pts: points }])
+  );
+  const effectiveById = new Map(scoreApproved(mine, tasks).map(({ row: s, points }) => [s.id, points]));
 
   /**
    * Rejections the team still needs to act on: rejected, and no approved
@@ -157,13 +174,15 @@ export async function GET(req: Request) {
     },
     me,
     team,
-    tasks,
+    tasks: tasks.map((task) => ({ ...task, competition: leaders[task.id] ?? null })),
+    competitionLeaders: leaders,
     // Media URLs are just strings, so sending them costs nothing; the Submit
     // screen only fetches the bytes for a submission the player opens. The
     // object path itself is dropped -- the URL already contains it, and this
     // endpoint is polled by every phone every 5 seconds.
     submissions: mine.map(({ object_name, media_type, group_id, ...s }) => ({
       ...s,
+      points_awarded: effectiveById.get(s.id) ?? s.points_awarded,
       // What ties several files into one piece of evidence.
       groupId: groupKey({ id: s.id, group_id }),
       mediaUrl: mediaUrl(object_name),

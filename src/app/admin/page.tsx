@@ -18,6 +18,12 @@ type AdminData = {
     round: number;
     title: string;
     points: number;
+    scoring_mode: "fixed" | "quantity" | "competition";
+    measurement_label: string;
+    measurement_threshold: number;
+    points_per_unit: number;
+    measurement_cap: number | null;
+    competition_bonus: number;
     requires_video: boolean;
     is_secret: boolean;
     revealed_at: string | null;
@@ -478,6 +484,12 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   const [round, setRound] = useState(data.settings.active_round);
   const [title, setTitle] = useState("");
   const [points, setPoints] = useState(3);
+  const [scoringMode, setScoringMode] = useState<"fixed" | "quantity" | "competition">("fixed");
+  const [measurementLabel, setMeasurementLabel] = useState("");
+  const [measurementThreshold, setMeasurementThreshold] = useState(0);
+  const [pointsPerUnit, setPointsPerUnit] = useState(0);
+  const [measurementCap, setMeasurementCap] = useState("");
+  const [competitionBonus, setCompetitionBonus] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
 
   const tasks = useMemo(() => data.tasks.filter((t) => t.round === round), [data.tasks, round]);
@@ -542,6 +554,28 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
             </button>
           ))}
         </div>
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <select className="field" value={scoringMode} onChange={(e) => setScoringMode(e.target.value as typeof scoringMode)}>
+            <option value="fixed">Fixed score</option>
+            <option value="quantity">Points per measure</option>
+            <option value="competition">Leader bonus</option>
+          </select>
+          {scoringMode !== "fixed" && (
+            <>
+              <input className="field" placeholder="Measure name" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
+              <input className="field" type="number" min={0} placeholder="Baseline at" value={measurementThreshold} onChange={(e) => setMeasurementThreshold(Number(e.target.value))} />
+            </>
+          )}
+          {scoringMode === "quantity" && (
+            <>
+              <input className="field" type="number" min={0} placeholder="Points / measure" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
+              <input className="field" type="number" min={0} placeholder="Cap (optional)" value={measurementCap} onChange={(e) => setMeasurementCap(e.target.value)} />
+            </>
+          )}
+          {scoringMode === "competition" && (
+            <input className="field" type="number" min={0} placeholder="Leader bonus" value={competitionBonus} onChange={(e) => setCompetitionBonus(Number(e.target.value))} />
+          )}
+        </div>
         <button
           className="btn btn-sm btn-primary"
           disabled={!title.trim()}
@@ -549,7 +583,18 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
             run(async () => {
               await api("/api/admin/tasks", {
                 method: "POST",
-                body: JSON.stringify({ round, title, points, isSecret: points === 7 }),
+                body: JSON.stringify({
+                  round,
+                  title,
+                  points,
+                  isSecret: points === 7,
+                  scoringMode,
+                  measurementLabel,
+                  measurementThreshold,
+                  pointsPerUnit,
+                  measurementCap: measurementCap === "" ? null : Number(measurementCap),
+                  competitionBonus,
+                }),
               });
               setTitle("");
             })
@@ -562,7 +607,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
       <div className="card">
         <b>All tasks ({tasks.length})</b>
         <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-          Tap a task to change its wording or point value. Editing the value does NOT rescore
+          Tap a task to change its wording, baseline or scoring rule. Editing the value does NOT rescore
           anything already judged — each submission keeps the points it was worth at the time.
           This is the same task list the planner canvas edits, so there is nothing to publish.
           A secret challenge is offered in both rounds: everything except Reveal changes both,
@@ -633,6 +678,12 @@ function TaskEditor({
 }) {
   const [title, setTitle] = useState(task.title);
   const [points, setPoints] = useState(task.points);
+  const [scoringMode, setScoringMode] = useState(task.scoring_mode);
+  const [measurementLabel, setMeasurementLabel] = useState(task.measurement_label);
+  const [measurementThreshold, setMeasurementThreshold] = useState(task.measurement_threshold);
+  const [pointsPerUnit, setPointsPerUnit] = useState(task.points_per_unit);
+  const [measurementCap, setMeasurementCap] = useState(task.measurement_cap === null ? "" : String(task.measurement_cap));
+  const [competitionBonus, setCompetitionBonus] = useState(task.competition_bonus);
   const [clip, setClip] = useState(task.requires_video);
   const [secret, setSecret] = useState(task.is_secret);
 
@@ -672,6 +723,28 @@ function TaskEditor({
         </button>
         {!task.active && <span className="pill muted">removed</span>}
       </div>
+      <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        <select className="field" value={scoringMode} onChange={(e) => setScoringMode(e.target.value as typeof scoringMode)}>
+          <option value="fixed">Fixed score</option>
+          <option value="quantity">Points per measure</option>
+          <option value="competition">Leader bonus</option>
+        </select>
+        {scoringMode !== "fixed" && (
+          <>
+            <input className="field" placeholder="Measure name" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
+            <input className="field" type="number" min={0} value={measurementThreshold} onChange={(e) => setMeasurementThreshold(Number(e.target.value))} />
+          </>
+        )}
+        {scoringMode === "quantity" && (
+          <>
+            <input className="field" type="number" min={0} value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
+            <input className="field" type="number" min={0} placeholder="No cap" value={measurementCap} onChange={(e) => setMeasurementCap(e.target.value)} />
+          </>
+        )}
+        {scoringMode === "competition" && (
+          <input className="field" type="number" min={0} value={competitionBonus} onChange={(e) => setCompetitionBonus(Number(e.target.value))} />
+        )}
+      </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button
           className="btn btn-sm btn-primary"
@@ -682,7 +755,18 @@ function TaskEditor({
             // would silently un-remove a deactivated task just because someone
             // fixed its wording -- and would make the Restore button below dead
             // UI. Removed tasks stay removed until Restore is tapped.
-            onSave({ title, points, requiresVideo: clip, isSecret: secret })
+            onSave({
+              title,
+              points,
+              requiresVideo: clip,
+              isSecret: secret,
+              scoringMode,
+              measurementLabel,
+              measurementThreshold,
+              pointsPerUnit,
+              measurementCap: measurementCap === "" ? null : Number(measurementCap),
+              competitionBonus,
+            })
           }
         >
           Save
