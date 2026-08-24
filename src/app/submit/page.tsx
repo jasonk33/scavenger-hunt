@@ -619,7 +619,7 @@ function TaskRow({
             {task.requires_video && <span className="pill">video only</span>}
             {task.scoring_mode === "quantity" && (
               <span className="pill pill-accent">
-                +{task.points_per_unit} / {task.measurement_label || "unit"}
+                +{task.points_per_unit} per extra {task.measurement_label || "item"}
               </span>
             )}
             {task.scoring_mode === "competition" && (

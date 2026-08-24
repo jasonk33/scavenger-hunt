@@ -555,7 +555,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
         <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
           <select className="field" value={scoringMode} onChange={(e) => setScoringMode(e.target.value as typeof scoringMode)}>
             <option value="fixed">Fixed score</option>
-            <option value="quantity">Points per measure</option>
+            <option value="quantity">Extra per item</option>
             <option value="competition">Leader bonus</option>
           </select>
           {scoringMode !== "fixed" && (
@@ -718,7 +718,7 @@ function TaskEditor({
       <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
         <select className="field" value={scoringMode} onChange={(e) => setScoringMode(e.target.value as typeof scoringMode)}>
           <option value="fixed">Fixed score</option>
-          <option value="quantity">Points per measure</option>
+          <option value="quantity">Extra per item</option>
           <option value="competition">Leader bonus</option>
         </select>
         {scoringMode !== "fixed" && (

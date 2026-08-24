@@ -75,9 +75,9 @@ so they refuse to run once anyone outside that guest list has submitted
 something. Use `seed:reset` to clear your own testing before the day.
 
 Task scoring starts at the normal point tier. In Admin or the planner, choose
-`Points per measure` for values such as shirts or signatures, or `Leader bonus`
+`Extra per item` for values such as shirts or signatures, or `Leader bonus`
 for a task where the current highest measured result gets the bonus. Judges enter
-the measured result, never arbitrary points. Tied competition leaders each
+the number of extra items or the result to compare, never arbitrary points. Tied competition leaders each
 receive the bonus, and the leaderboard recalculates live as teams improve.
 
 ### 4. Edit the tasks and the roster

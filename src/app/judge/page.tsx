@@ -333,7 +333,6 @@ function JudgeQueue() {
               >
                 {current.teamName}
               </button>
-              <span className="pill pill-solid push">{current.taskPoints} pts</span>
             </div>
             <div className="byline name muted tiny">{current.playerName}</div>
           </div>
@@ -407,7 +406,7 @@ function JudgeQueue() {
           {current.scoringMode !== "fixed" && (
             <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
               <div className="stat-label" style={{ marginBottom: 4 }}>
-                {current.scoringMode === "competition" ? "Competition result" : "Measured result"}
+                {current.scoringMode === "competition" ? "Result to compare" : "Additional items"}
               </div>
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <input
@@ -416,16 +415,15 @@ function JudgeQueue() {
                   min={0}
                   step={1}
                   inputMode="numeric"
-                  placeholder={current.measurementLabel || "Enter a whole number"}
+                  placeholder={current.scoringMode === "competition" ? current.measurementLabel || "Enter a whole number" : "0"}
                   value={measurement}
                   onChange={(e) => setMeasurement(e.target.value)}
                   style={{ flex: "1 1 140px" }}
                 />
                 <span className="muted tiny">
-                  {current.measurementLabel || "units"}
                   {current.scoringMode === "quantity"
-                    ? ` · ${current.taskPoints} baseline · +${current.pointsPerUnit} each`
-                    : ` · +${current.competitionBonus} for the current leader`}
+                    ? `+${current.pointsPerUnit} per extra ${current.measurementLabel || "item"}`
+                    : `highest gets +${current.competitionBonus}`}
                 </span>
               </div>
             </div>
@@ -489,10 +487,7 @@ function JudgeQueue() {
                   measurementValue: measurement === "" ? null : Number(measurement),
                 })}
               >
-                {reviewing?.status === "approved" ? "Re-approve for" : "Approve"}{" "}
-                <span className="num">
-                  {current.scoringMode === "fixed" ? current.taskPoints : "score"}
-                </span>
+                {reviewing?.status === "approved" ? "Re-approve" : "Approve"}
               </button>
               <button
                 className="btn btn-lg btn-bad"
