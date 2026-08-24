@@ -486,9 +486,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   const [points, setPoints] = useState(3);
   const [scoringMode, setScoringMode] = useState<"fixed" | "quantity" | "competition">("fixed");
   const [measurementLabel, setMeasurementLabel] = useState("");
-  const [measurementThreshold, setMeasurementThreshold] = useState(0);
   const [pointsPerUnit, setPointsPerUnit] = useState(0);
-  const [measurementCap, setMeasurementCap] = useState("");
   const [competitionBonus, setCompetitionBonus] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -562,14 +560,12 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
           </select>
           {scoringMode !== "fixed" && (
             <>
-              <input className="field" placeholder="Measure name" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
-              <input className="field" type="number" min={0} placeholder="Baseline at" value={measurementThreshold} onChange={(e) => setMeasurementThreshold(Number(e.target.value))} />
+              <input className="field" placeholder="What are you counting?" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
             </>
           )}
           {scoringMode === "quantity" && (
             <>
-              <input className="field" type="number" min={0} placeholder="Points / measure" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
-              <input className="field" type="number" min={0} placeholder="Cap (optional)" value={measurementCap} onChange={(e) => setMeasurementCap(e.target.value)} />
+              <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
             </>
           )}
           {scoringMode === "competition" && (
@@ -590,9 +586,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
                   isSecret: points === 7,
                   scoringMode,
                   measurementLabel,
-                  measurementThreshold,
                   pointsPerUnit,
-                  measurementCap: measurementCap === "" ? null : Number(measurementCap),
                   competitionBonus,
                 }),
               });
@@ -680,9 +674,7 @@ function TaskEditor({
   const [points, setPoints] = useState(task.points);
   const [scoringMode, setScoringMode] = useState(task.scoring_mode);
   const [measurementLabel, setMeasurementLabel] = useState(task.measurement_label);
-  const [measurementThreshold, setMeasurementThreshold] = useState(task.measurement_threshold);
   const [pointsPerUnit, setPointsPerUnit] = useState(task.points_per_unit);
-  const [measurementCap, setMeasurementCap] = useState(task.measurement_cap === null ? "" : String(task.measurement_cap));
   const [competitionBonus, setCompetitionBonus] = useState(task.competition_bonus);
   const [clip, setClip] = useState(task.requires_video);
   const [secret, setSecret] = useState(task.is_secret);
@@ -731,18 +723,16 @@ function TaskEditor({
         </select>
         {scoringMode !== "fixed" && (
           <>
-            <input className="field" placeholder="Measure name" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
-            <input className="field" type="number" min={0} value={measurementThreshold} onChange={(e) => setMeasurementThreshold(Number(e.target.value))} />
+            <input className="field" placeholder="What are you counting?" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
           </>
         )}
         {scoringMode === "quantity" && (
           <>
-            <input className="field" type="number" min={0} value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
-            <input className="field" type="number" min={0} placeholder="No cap" value={measurementCap} onChange={(e) => setMeasurementCap(e.target.value)} />
+            <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
           </>
         )}
         {scoringMode === "competition" && (
-          <input className="field" type="number" min={0} value={competitionBonus} onChange={(e) => setCompetitionBonus(Number(e.target.value))} />
+          <input className="field" type="number" min={0} placeholder="Leader bonus" value={competitionBonus} onChange={(e) => setCompetitionBonus(Number(e.target.value))} />
         )}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -762,9 +752,7 @@ function TaskEditor({
               isSecret: secret,
               scoringMode,
               measurementLabel,
-              measurementThreshold,
               pointsPerUnit,
-              measurementCap: measurementCap === "" ? null : Number(measurementCap),
               competitionBonus,
             })
           }

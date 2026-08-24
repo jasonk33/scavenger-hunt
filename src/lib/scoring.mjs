@@ -33,13 +33,7 @@ export function effectivePoints(task, measurementValue, comparisonValues = []) {
     measurementValue === null || measurementValue === undefined ? null : integer(measurementValue);
 
   if (mode === "quantity") {
-    const threshold = integer(task.measurement_threshold);
-    const cap = task.measurement_cap === null || task.measurement_cap === undefined
-      ? null
-      : integer(task.measurement_cap);
-    const counted = Math.max(0, (measurement ?? 0) - threshold);
-    const capped = cap === null ? counted : Math.min(counted, Math.max(0, cap - threshold));
-    return baseline + capped * integer(task.points_per_unit);
+    return baseline + (measurement ?? 0) * integer(task.points_per_unit);
   }
 
   if (mode === "competition" && measurement !== null && comparisonValues.length > 0) {

@@ -31,17 +31,15 @@ const row = (overrides = {}) => ({
   ...overrides,
 });
 
-test("quantity tasks add points above the baseline and respect a cap", () => {
+test("quantity tasks add the configured points for every measured item", () => {
   const quantity = task({
     scoring_mode: "quantity",
-    measurement_threshold: 3,
     points_per_unit: 2,
-    measurement_cap: 6,
   });
 
-  assert.equal(effectivePoints(quantity, 2), 5);
-  assert.equal(effectivePoints(quantity, 5), 9);
-  assert.equal(effectivePoints(quantity, 99), 11);
+  assert.equal(effectivePoints(quantity, 0), 5);
+  assert.equal(effectivePoints(quantity, 3), 11);
+  assert.equal(effectivePoints(quantity, 99), 203);
 });
 
 test("competition tasks award the bonus to every tied leader", () => {

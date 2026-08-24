@@ -223,9 +223,7 @@ function paint(row, task) {
   if (document.activeElement !== mode) mode.value = task.scoringMode || "fixed";
   for (const [selector, key] of [
     [".measurement-label", "measurementLabel"],
-    [".measurement-threshold", "measurementThreshold"],
     [".points-per-unit", "pointsPerUnit"],
-    [".measurement-cap", "measurementCap"],
     [".competition-bonus", "competitionBonus"],
   ]) {
     const input = row.querySelector(selector);
@@ -339,9 +337,7 @@ function buildRow(task) {
 
   for (const [selector, key, read] of [
     [".measurement-label", "measurementLabel", (node) => node.value.trim()],
-    [".measurement-threshold", "measurementThreshold", (node) => Number(node.value)],
     [".points-per-unit", "pointsPerUnit", (node) => Number(node.value)],
-    [".measurement-cap", "measurementCap", (node) => node.value === "" ? null : Number(node.value)],
     [".competition-bonus", "competitionBonus", (node) => Number(node.value)],
   ]) {
     const input = row.querySelector(selector);

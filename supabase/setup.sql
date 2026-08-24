@@ -316,13 +316,7 @@ scored as (
   select *,
     (case
       when scoring_mode = 'quantity' then
-        task_points + least(
-          greatest(0, coalesce(measurement_value, 0) - measurement_threshold),
-          case
-            when measurement_cap is null then greatest(0, coalesce(measurement_value, 0) - measurement_threshold)
-            else greatest(0, measurement_cap - measurement_threshold)
-          end
-        ) * points_per_unit
+        task_points + coalesce(measurement_value, 0) * points_per_unit
       else task_points
     end
     + case

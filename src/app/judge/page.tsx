@@ -16,9 +16,7 @@ type Item = {
   scoringMode: "fixed" | "quantity" | "competition";
   measurementLabel: string;
   measurementValue: number | null;
-  measurementThreshold: number;
   pointsPerUnit: number;
-  measurementCap: number | null;
   competitionBonus: number;
   requiresVideo: boolean;
   isSecret: boolean;
@@ -426,7 +424,7 @@ function JudgeQueue() {
                 <span className="muted tiny">
                   {current.measurementLabel || "units"}
                   {current.scoringMode === "quantity"
-                    ? ` · ${current.taskPoints} baseline${current.pointsPerUnit ? ` · +${current.pointsPerUnit} each above ${current.measurementThreshold}` : ""}`
+                    ? ` · ${current.taskPoints} baseline · +${current.pointsPerUnit} each`
                     : ` · +${current.competitionBonus} for the current leader`}
                 </span>
               </div>

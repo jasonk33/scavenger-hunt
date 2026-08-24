@@ -38,6 +38,9 @@ re-runnable set of `ALTER`s carrying no seed data:
 - `supabase/migrate-competitive-scoring.sql` — adds fixed, measurable, and
   competition scoring modes. Existing tasks stay fixed-value tasks. Run it before
   configuring a task with a measurement or live leader bonus.
+- `supabase/migrate-simple-scoring.sql` — simplifies measurable scoring to
+  baseline plus points for every counted item. Run this after the earlier
+  competitive-scoring migration.
 
 Then get your keys from **Settings → API Keys → the "Legacy anon, service_role
 API keys" tab**.
@@ -74,9 +77,8 @@ something. Use `seed:reset` to clear your own testing before the day.
 Task scoring starts at the normal point tier. In Admin or the planner, choose
 `Points per measure` for values such as shirts or signatures, or `Leader bonus`
 for a task where the current highest measured result gets the bonus. Judges enter
-the measured result, never arbitrary points. Quantity scores are capped when a
-cap is configured; tied competition leaders each receive the bonus, and the
-leaderboard recalculates live as teams improve.
+the measured result, never arbitrary points. Tied competition leaders each
+receive the bonus, and the leaderboard recalculates live as teams improve.
 
 ### 4. Edit the tasks and the roster
 
