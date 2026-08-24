@@ -52,20 +52,17 @@ rejects them with `Invalid Compact JWS`. This was verified the hard way.
 Stay on the **Pro** plan through the event. Free projects pause after a week idle.
 
 Schema changes after the initial setup are deployed automatically from
-`supabase/migrations/` by Supabase's GitHub integration. In the Supabase
-dashboard, open **Project Settings → Integrations**, authorize GitHub, choose
-`jasonk33/scavenger-hunt`, set the working directory to `.`, and enable
-**Deploy to production** for the `main` branch.
+`supabase/migrations/` by the **Supabase migrations** GitHub Action. Create or
+open the repository's `PRODUCTION` environment and add these secrets:
+
+- `SUPABASE_ACCESS_TOKEN` — a Supabase personal access token used by the CLI.
+- `SUPABASE_DB_PASSWORD` — the project's database password.
+- `SUPABASE_PROJECT_REF` — the project ref from the Supabase dashboard URL.
 
 The first migration is an adoption marker for the existing live schema; do not
 edit it. Future schema changes belong in a new timestamped migration file and
 are applied when that file reaches `main`. The older `supabase/migrate-*.sql`
 files are historical migrations and are not picked up by the CLI.
-
-Vercel and GitHub Actions react to the same push independently, so new
-migrations must be backward-compatible with the currently deployed app. For a
-breaking change, use an expand-and-contract sequence or land a migration-only
-commit first.
 
 ### 2. Local config
 
