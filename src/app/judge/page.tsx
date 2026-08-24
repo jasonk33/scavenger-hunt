@@ -406,25 +406,22 @@ function JudgeQueue() {
           {current.scoringMode !== "fixed" && (
             <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
               <div className="stat-label" style={{ marginBottom: 4 }}>
-                {current.scoringMode === "competition" ? "Result to compare" : "Additional items"}
+                {current.measurementLabel ||
+                  (current.scoringMode === "competition" ? "Result to compare" : "Additional items")}
               </div>
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <div>
                 <input
                   className="field"
                   type="number"
                   min={0}
                   step={1}
                   inputMode="numeric"
-                  placeholder={current.scoringMode === "competition" ? current.measurementLabel || "Enter a whole number" : "0"}
+                  placeholder="0"
+                  aria-label={current.measurementLabel || "Additional items"}
                   value={measurement}
                   onChange={(e) => setMeasurement(e.target.value)}
-                  style={{ flex: "1 1 140px" }}
+                  style={{ width: "100%" }}
                 />
-                <span className="muted tiny">
-                  {current.scoringMode === "quantity"
-                    ? `+${current.pointsPerUnit} per extra ${current.measurementLabel || "item"}`
-                    : `highest gets +${current.competitionBonus}`}
-                </span>
               </div>
             </div>
           )}

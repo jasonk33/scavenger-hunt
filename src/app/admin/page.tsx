@@ -560,7 +560,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
           </select>
           {scoringMode !== "fixed" && (
             <>
-              <input className="field" placeholder="What are you counting?" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
+              <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
             </>
           )}
           {scoringMode === "quantity" && (
@@ -723,7 +723,7 @@ function TaskEditor({
         </select>
         {scoringMode !== "fixed" && (
           <>
-            <input className="field" placeholder="What are you counting?" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
+            <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
           </>
         )}
         {scoringMode === "quantity" && (
