@@ -52,12 +52,10 @@ rejects them with `Invalid Compact JWS`. This was verified the hard way.
 Stay on the **Pro** plan through the event. Free projects pause after a week idle.
 
 Schema changes after the initial setup are deployed automatically from
-`supabase/migrations/` by the **Supabase migrations** GitHub Action. Create a
-GitHub `production` environment and add these secrets to it:
-
-- `SUPABASE_ACCESS_TOKEN` — a Supabase personal access token used by the CLI.
-- `SUPABASE_DB_PASSWORD` — the database password for the project.
-- `SUPABASE_PROJECT_REF` — the project ref from the Supabase dashboard URL.
+`supabase/migrations/` by Supabase's GitHub integration. In the Supabase
+dashboard, open **Project Settings → Integrations**, authorize GitHub, choose
+`jasonk33/scavenger-hunt`, set the working directory to `.`, and enable
+**Deploy to production** for the `main` branch.
 
 The first migration is an adoption marker for the existing live schema; do not
 edit it. Future schema changes belong in a new timestamped migration file and
