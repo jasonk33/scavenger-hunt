@@ -238,6 +238,36 @@ test("an added task is live, with a slug that is not already taken", async () =>
   assert.equal(task.docTitle, "", "it did not come from the planning doc");
 });
 
+test("an added task keeps the details chosen in the planner", async () => {
+  const db = fakeDb({ rows: [] });
+  const task = await addTask(db, {
+    title: "Count the red hats",
+    round: 1,
+    points: 5,
+    scoringMode: "quantity",
+    measurementLabel: "Extra hats",
+    pointsPerUnit: 2,
+    prop: "red hat",
+    requiresVideo: true,
+    note: "Keep the count visible.",
+    difficulty: 4,
+    guts: 2,
+    luck: 3,
+    payoff: 5,
+    risk: 2,
+  });
+  const insert = taskCalls(db).find((c) => c.method === "POST");
+  assert.equal(insert.body[0].scoring_mode, "quantity");
+  assert.equal(insert.body[0].measurement_label, "Extra hats");
+  assert.equal(insert.body[0].points_per_unit, 2);
+  assert.equal(insert.body[0].prop, "red hat");
+  assert.equal(insert.body[0].requires_video, true);
+  assert.equal(insert.body[0].note, "Keep the count visible.");
+  assert.equal(task.scoringMode, "quantity");
+  assert.equal(task.prop, "red hat");
+  assert.equal(task.requiresVideo, true);
+});
+
 test("an added secret is inserted once per round, in one request", async () => {
   // Two requests could leave a challenge existing in half the event.
   const db = fakeDb({ rows: [] });
@@ -248,6 +278,14 @@ test("an added secret is inserted once per round, in one request", async () => {
   assert.ok(inserts[0].body.every((r) => r.slug === "s-x1" && r.is_secret === true));
   assert.equal(task.round, 0, "and reads back as one task");
   assert.equal(task.points, 7, "the flat secret tier");
+});
+
+test("an added secret always uses the secret tier", async () => {
+  const db = fakeDb({ rows: [] });
+  const task = await addTask(db, { title: "Secret", round: 0, points: 3 });
+  const insert = taskCalls(db).find((c) => c.method === "POST");
+  assert.deepEqual(insert.body.map((row) => row.points), [7, 7]);
+  assert.equal(task.points, 7);
 });
 
 test("an added normal task is exactly one row", async () => {

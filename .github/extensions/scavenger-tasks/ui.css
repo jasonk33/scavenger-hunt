@@ -461,6 +461,73 @@ textarea { width: 100%; resize: vertical; }
   border-top: 1px solid var(--border-color-default, #d1d9e0);
 }
 
+.task-add-box {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.task-add-main {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-add-details {
+  width: 100%;
+  border-top: 1px solid var(--border-color-default, #d1d9e0);
+  color: var(--text-color-muted, #59636e);
+  font-size: var(--text-body-small, 12px);
+}
+
+.task-add-details > summary {
+  width: fit-content;
+  margin-top: 8px;
+  cursor: pointer;
+}
+
+.task-add-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.task-add-ratings {
+  flex: 1 1 100%;
+}
+
+.task-add-ratings-title {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.task-add-rating-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 2px 14px;
+}
+
+.task-add-rating {
+  display: grid;
+  grid-template-columns: 62px 1fr 14px;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-add-rating input {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--true-color-blue, #0969da);
+}
+
+.task-add-rating output {
+  color: var(--text-color-default, #1f2328);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .add-box .grow {
   flex: 1;
   min-width: 0;

@@ -342,7 +342,7 @@ const updateTaskAction = {
 const addTaskAction = {
   name: "add_task",
   description:
-    "Add a task. It goes live immediately, so players in that round will see it on their next poll. A secret (round 0) is offered in both halves of the event.",
+    "Add a task with its scoring, media and planning details. It goes live immediately, so players in that round will see it on their next poll. A secret (round 0) is offered in both halves of the event and is always worth 7 points.",
   inputSchema: {
     type: "object",
     properties: {
@@ -353,6 +353,8 @@ const addTaskAction = {
       measurementLabel: { type: "string" },
       pointsPerUnit: { type: "integer", minimum: 0 },
       competitionBonus: { type: "integer", minimum: 0 },
+      prop: { type: "string" },
+      requiresVideo: { type: "boolean" },
       note: { type: "string" },
       ...RATING_PROPS,
     },

@@ -428,7 +428,7 @@ export async function addTask(client, input) {
     // Empty is what marks a task as not having come from the planning doc.
     doc_title: "",
     title: String(input?.title ?? "").trim() || "Untitled task",
-    points: TIERS.includes(Number(input?.points)) ? Number(input.points) : round === 0 ? 7 : 3,
+    points: round === 0 ? 7 : TIERS.includes(Number(input?.points)) ? Number(input.points) : 3,
     doc_order: lastOrder + 1,
     is_secret: round === 0,
     active: true,
@@ -442,6 +442,8 @@ export async function addTask(client, input) {
         ["pointsPerUnit", input?.pointsPerUnit],
         ["measurementCap", input?.measurementCap],
         ["competitionBonus", input?.competitionBonus],
+        ["prop", input?.prop],
+        ["requiresVideo", input?.requiresVideo],
       ])
     ),
   };

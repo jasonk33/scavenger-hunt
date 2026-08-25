@@ -42,10 +42,25 @@ const el = {
   newTask: document.getElementById("new-task"),
   newTaskRound: document.getElementById("new-task-round"),
   newTaskPoints: document.getElementById("new-task-points"),
+  newTaskScoringMode: document.getElementById("new-task-scoring-mode"),
+  newTaskDetails: document.getElementById("new-task-details"),
+  newTaskMeasurementLabel: document.getElementById("new-task-measurement-label"),
+  newTaskMeasurementLabelField: document.getElementById("new-task-measurement-label-field"),
+  newTaskPointsPerUnit: document.getElementById("new-task-points-per-unit"),
+  newTaskPointsPerUnitField: document.getElementById("new-task-points-per-unit-field"),
+  newTaskCompetitionBonus: document.getElementById("new-task-competition-bonus"),
+  newTaskCompetitionBonusField: document.getElementById("new-task-competition-bonus-field"),
+  newTaskProp: document.getElementById("new-task-prop"),
+  newTaskRequiresVideo: document.getElementById("new-task-requires-video"),
+  newTaskNote: document.getElementById("new-task-note"),
   addTaskButton: document.getElementById("add-task-button"),
   taskError: document.getElementById("task-error"),
 };
 
+const NEW_TASK_RATINGS = ["difficulty", "guts", "luck", "payoff", "risk"];
+const NEW_TASK_RATING_DEFAULTS = { difficulty: 3, guts: 3, luck: 3, payoff: 3, risk: 1 };
+const newTaskRating = (key) => document.getElementById(`new-task-${key}`);
+const newTaskRatingValue = (key) => document.getElementById(`new-task-${key}-value`);
 const filters = { round: "all", shown: "live", q: "", sort: "doc", flagged: false };
 
 function setView(view) {
@@ -517,11 +532,39 @@ document.getElementById("toggle-balance").addEventListener("click", (e) => {
 
 // ── Adding a task ────────────────────────────────────────────────────────────
 //
-// It is live the moment it lands, so it goes in at 3 points and whatever wording
-// was typed, and everything else is edited on the row afterwards. A ratings form
-// up here would be a second, worse copy of the row that already exists.
+// It is live the moment it lands. The optional fields mirror the row editor so a
+// task can be configured correctly before players see it, rather than briefly
+// appearing with the wrong scoring rule or missing video requirement.
 
 let adding = false;
+let lastRegularPoints = el.newTaskPoints.value;
+let wasSecret = false;
+
+function syncAddDetails() {
+  const mode = el.newTaskScoringMode.value;
+  const measured = mode !== "fixed";
+  el.newTaskMeasurementLabelField.hidden = !measured;
+  el.newTaskPointsPerUnitField.hidden = mode !== "quantity";
+  el.newTaskCompetitionBonusField.hidden = mode !== "competition";
+}
+
+function syncSecretPoints() {
+  const secret = Number(el.newTaskRound.value) === 0;
+  if (secret) {
+    if (!wasSecret) lastRegularPoints = el.newTaskPoints.value;
+    el.newTaskPoints.value = "7";
+    el.newTaskPoints.disabled = true;
+  } else {
+    if (wasSecret) el.newTaskPoints.value = lastRegularPoints;
+    el.newTaskPoints.disabled = false;
+  }
+  wasSecret = secret;
+}
+
+function syncNewTaskForm() {
+  syncSecretPoints();
+  syncAddDetails();
+}
 
 function syncAddButton() {
   el.addTaskButton.disabled = adding || !el.newTask.value.trim();
@@ -559,13 +602,25 @@ async function addTask() {
   el.taskError.hidden = true;
   syncAddButton();
   try {
+    const round = Number(el.newTaskRound.value);
+    const scoringMode = el.newTaskScoringMode.value;
     const res = await fetch("/api/task", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title,
-        round: Number(el.newTaskRound.value),
+        round,
         points: Number(el.newTaskPoints.value),
+        scoringMode,
+        measurementLabel: scoringMode === "fixed" ? "" : el.newTaskMeasurementLabel.value.trim(),
+        pointsPerUnit: scoringMode === "quantity" ? Number(el.newTaskPointsPerUnit.value) : 0,
+        competitionBonus: scoringMode === "competition" ? Number(el.newTaskCompetitionBonus.value) : 0,
+        prop: el.newTaskProp.value.trim(),
+        requiresVideo: el.newTaskRequiresVideo.checked,
+        note: el.newTaskNote.value,
+        ...Object.fromEntries(
+          NEW_TASK_RATINGS.map((key) => [key, Number(newTaskRating(key).value)])
+        ),
       }),
     });
     const task = await res.json().catch(() => null);
@@ -578,6 +633,18 @@ async function addTask() {
     // arrive the same way this one does.
     await refreshTasks();
     revealTask(task);
+    el.newTaskScoringMode.value = "fixed";
+    el.newTaskMeasurementLabel.value = "";
+    el.newTaskPointsPerUnit.value = "0";
+    el.newTaskCompetitionBonus.value = "0";
+    el.newTaskProp.value = "";
+    el.newTaskRequiresVideo.checked = false;
+    el.newTaskNote.value = "";
+    for (const key of NEW_TASK_RATINGS) {
+      newTaskRating(key).value = String(NEW_TASK_RATING_DEFAULTS[key]);
+      newTaskRatingValue(key).textContent = String(NEW_TASK_RATING_DEFAULTS[key]);
+    }
+    syncAddDetails();
   } catch (e) {
     el.taskError.textContent = String(e?.message ?? e);
     el.taskError.hidden = false;
@@ -588,10 +655,24 @@ async function addTask() {
 }
 
 el.newTask.addEventListener("input", syncAddButton);
+el.newTaskRound.addEventListener("change", syncNewTaskForm);
+el.newTaskPoints.addEventListener("change", () => {
+  if (!wasSecret) lastRegularPoints = el.newTaskPoints.value;
+});
+el.newTaskScoringMode.addEventListener("change", () => {
+  syncAddDetails();
+  if (el.newTaskScoringMode.value !== "fixed") el.newTaskDetails.open = true;
+});
+for (const key of NEW_TASK_RATINGS) {
+  newTaskRating(key).addEventListener("input", () => {
+    newTaskRatingValue(key).textContent = newTaskRating(key).value;
+  });
+}
 el.newTask.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); addTask(); }
 });
 el.addTaskButton.addEventListener("click", addTask);
+syncNewTaskForm();
 syncAddButton();
 
 /** Pushes and poll results both arrive here. Rebuild only if the task set changed. */
