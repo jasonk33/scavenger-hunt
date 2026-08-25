@@ -395,9 +395,9 @@ export async function updateTask(client, slug, patch) {
 /**
  * Adds a task, live.
  *
- * A secret (`round: 0`) is inserted once per round, sharing a slug -- the fan-out
- * the old publish step used to do. Both rows go in one request so a task can
- * never exist in half the event.
+ * A secret (`isSecret: true`, or the legacy `round: 0`) is inserted once per
+ * round, sharing a slug -- the fan-out the old publish step used to do. Both
+ * rows go in one request so a task can never exist in half the event.
  *
  * The slug is allocated by looking at what is already there, which is a read
  * followed by a write and therefore racy in principle. The insert is the
@@ -405,8 +405,10 @@ export async function updateTask(client, slug, patch) {
  * on the duplicate instead of overwriting the other one.
  */
 export async function addTask(client, input) {
-  const round = [0, 1, 2].includes(Number(input?.round)) ? Number(input.round) : 1;
-  const prefix = round === 0 ? "s" : `r${round}`;
+  const requestedRound = Number(input?.round);
+  const secret = input?.isSecret === true || requestedRound === 0;
+  const round = [1, 2].includes(requestedRound) ? requestedRound : 1;
+  const prefix = secret ? "s" : `r${round}`;
   const existing = await rest(client, { path: `${TASK_TABLE}?select=slug,round,doc_order` }).catch((e) => {
     throw new Error(`could not read the task list: ${e.message}`);
   });
@@ -418,7 +420,7 @@ export async function addTask(client, input) {
   // one -- because the two must not be able to pick the same number: doc_order
   // is the tie-break inside a tier, and two tasks sharing a sort_order would
   // swap places between polls in the player's list.
-  const rounds = round === 0 ? [1, 2] : [round];
+  const rounds = secret ? [1, 2] : [round];
   const lastOrder = existing
     .filter((r) => rounds.includes(Number(r.round)))
     .reduce((max, r) => Math.max(max, Number(r.doc_order) || 0), 0);
@@ -428,9 +430,9 @@ export async function addTask(client, input) {
     // Empty is what marks a task as not having come from the planning doc.
     doc_title: "",
     title: String(input?.title ?? "").trim() || "Untitled task",
-    points: round === 0 ? 7 : TIERS.includes(Number(input?.points)) ? Number(input.points) : 3,
+    points: secret ? 7 : TIERS.includes(Number(input?.points)) ? Number(input.points) : 3,
     doc_order: lastOrder + 1,
-    is_secret: round === 0,
+    is_secret: secret,
     active: true,
     note: typeof input?.note === "string" ? input.note : "",
     ...taskPatchToRow(

@@ -41,6 +41,7 @@ const el = {
   onlyFlagged: document.getElementById("only-flagged"),
   newTask: document.getElementById("new-task"),
   newTaskRound: document.getElementById("new-task-round"),
+  newTaskSecret: document.getElementById("new-task-secret"),
   newTaskPoints: document.getElementById("new-task-points"),
   newTaskScoringMode: document.getElementById("new-task-scoring-mode"),
   newTaskDetails: document.getElementById("new-task-details"),
@@ -549,14 +550,16 @@ function syncAddDetails() {
 }
 
 function syncSecretPoints() {
-  const secret = Number(el.newTaskRound.value) === 0;
+  const secret = el.newTaskSecret.checked;
   if (secret) {
     if (!wasSecret) lastRegularPoints = el.newTaskPoints.value;
     el.newTaskPoints.value = "7";
     el.newTaskPoints.disabled = true;
+    el.newTaskRound.disabled = true;
   } else {
     if (wasSecret) el.newTaskPoints.value = lastRegularPoints;
     el.newTaskPoints.disabled = false;
+    el.newTaskRound.disabled = false;
   }
   wasSecret = secret;
 }
@@ -602,6 +605,7 @@ async function addTask() {
   el.taskError.hidden = true;
   syncAddButton();
   try {
+    const secret = el.newTaskSecret.checked;
     const round = Number(el.newTaskRound.value);
     const scoringMode = el.newTaskScoringMode.value;
     const res = await fetch("/api/task", {
@@ -610,6 +614,7 @@ async function addTask() {
       body: JSON.stringify({
         title,
         round,
+        isSecret: secret,
         points: Number(el.newTaskPoints.value),
         scoringMode,
         measurementLabel: scoringMode === "fixed" ? "" : el.newTaskMeasurementLabel.value.trim(),
@@ -633,6 +638,7 @@ async function addTask() {
     // arrive the same way this one does.
     await refreshTasks();
     revealTask(task);
+    el.newTaskSecret.checked = false;
     el.newTaskScoringMode.value = "fixed";
     el.newTaskMeasurementLabel.value = "";
     el.newTaskPointsPerUnit.value = "0";
@@ -644,7 +650,7 @@ async function addTask() {
       newTaskRating(key).value = String(NEW_TASK_RATING_DEFAULTS[key]);
       newTaskRatingValue(key).textContent = String(NEW_TASK_RATING_DEFAULTS[key]);
     }
-    syncAddDetails();
+    syncNewTaskForm();
   } catch (e) {
     el.taskError.textContent = String(e?.message ?? e);
     el.taskError.hidden = false;

@@ -288,6 +288,15 @@ test("an added secret always uses the secret tier", async () => {
   assert.equal(task.points, 7);
 });
 
+test("an explicit secret choice fans out to both rounds", async () => {
+  const db = fakeDb({ rows: [] });
+  const task = await addTask(db, { title: "Secret", round: 1, isSecret: true, points: 3 });
+  const insert = taskCalls(db).find((c) => c.method === "POST");
+  assert.deepEqual(insert.body.map((row) => row.round), [1, 2]);
+  assert.ok(insert.body.every((row) => row.is_secret === true && row.points === 7));
+  assert.equal(task.round, 0);
+});
+
 test("an added normal task is exactly one row", async () => {
   const db = fakeDb({ rows: [] });
   await addTask(db, { title: "x", round: 2 });

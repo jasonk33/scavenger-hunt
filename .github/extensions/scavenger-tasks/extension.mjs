@@ -342,12 +342,13 @@ const updateTaskAction = {
 const addTaskAction = {
   name: "add_task",
   description:
-    "Add a task with its scoring, media and planning details. It goes live immediately, so players in that round will see it on their next poll. A secret (round 0) is offered in both halves of the event and is always worth 7 points.",
+    "Add a task with its scoring, media and planning details. It goes live immediately, so players in that round will see it on their next poll. Set isSecret:true for a challenge offered in both halves of the event; it is always worth 7 points.",
   inputSchema: {
     type: "object",
     properties: {
       title: { type: "string" },
       round: { type: "integer", enum: [0, 1, 2] },
+      isSecret: { type: "boolean" },
       points: { type: "integer", enum: [1, 3, 5, 7, 10] },
       scoringMode: { type: "string", enum: ["fixed", "quantity", "competition"] },
       measurementLabel: { type: "string" },
