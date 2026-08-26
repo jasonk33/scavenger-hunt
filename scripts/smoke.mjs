@@ -73,6 +73,9 @@ const NAME = `__smoke_${Date.now()}`;
 const TEAM_A = "__smoke Team A";
 const TEAM_B = "__smoke Team B";
 let playerId, teamA, teamB, teamAlt, taskId, submissionId, objectName;
+// The leader-bonus fixture: its own task and its own approved row, so the
+// assertions can move a winner around without touching a real task.
+let contestTaskId, contestSubmissionId;
 // Captured before the test mutates anything, so the restore in `finally` always
 // has something to put back even if main() throws on its first statement.
 let settingsBefore = null;
@@ -102,6 +105,10 @@ async function restoreSettings() {
 async function cleanup() {
   try {
     if (submissionId) await admin.from("submissions").delete().eq("id", submissionId);
+    if (contestSubmissionId) await admin.from("submissions").delete().eq("id", contestSubmissionId);
+    // After its submission, or the cascade would take the row with it and the
+    // delete above would report success for something already gone.
+    if (contestTaskId) await admin.from("tasks").delete().eq("id", contestTaskId);
     if (objectName) await admin.storage.from(BUCKET).remove([objectName]);
     if (playerId) {
       await admin.from("roster").delete().eq("player_id", playerId);
@@ -361,6 +368,102 @@ async function main() {
     method: "PATCH",
     body: JSON.stringify({ id: taskId, points: taskPoints }),
   });
+
+  // --- the leader bonus is an end-of-round decision -------------------------
+  // Nothing is awarded until an organizer names a winner, and naming one is
+  // what moves the score. This used to be a live race decided by whoever had
+  // the highest measured value, which meant an already-approved task lost
+  // points when somebody else was judged.
+  const contest = await call("/api/admin/tasks", {
+    method: "POST",
+    body: JSON.stringify({
+      round: 1,
+      title: `${NAME} leader bonus`,
+      points: 5,
+      scoringMode: "competition",
+      competitionBonus: 4,
+    }),
+  });
+  contestTaskId = contest.body?.id;
+  check("a leader-bonus task can be created", Boolean(contestTaskId), JSON.stringify(contest.body));
+
+  // Inserted directly rather than uploaded: the view reads approved rows, and a
+  // second trip through TUS would only re-prove the upload path.
+  const { data: contestRow } = await admin
+    .from("submissions")
+    .insert({
+      round: 1,
+      task_id: contestTaskId,
+      player_id: playerId,
+      team_id: teamA.id,
+      task_points: 5,
+      scoring_mode_snapshot: "competition",
+      competition_bonus_snapshot: 4,
+      object_name: `${NAME}-contest.jpg`,
+      status: "approved",
+      points_awarded: 5,
+      judged_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  contestSubmissionId = contestRow?.id;
+  check("leader-bonus evidence was approved", Boolean(contestSubmissionId));
+
+  const scoreFor = async (teamId) =>
+    (await call("/api/leaderboard?round=1")).body.rows.find((r) => r.teamId === teamId)?.points ?? 0;
+  const baseScore = await scoreFor(teamA.id);
+  check(
+    "an undecided leader bonus awards nothing",
+    baseScore === taskPoints + 5,
+    `expected ${taskPoints + 5}, got ${baseScore}`
+  );
+
+  const crossRoundWinner = await call("/api/admin/tasks", {
+    method: "PATCH",
+    body: JSON.stringify({ id: contestTaskId, winnerTeamId: teamB.id }),
+  });
+  check(
+    "a winner from the other round is refused",
+    crossRoundWinner.status === 409,
+    `HTTP ${crossRoundWinner.status}`
+  );
+
+  const award = await call("/api/admin/tasks", {
+    method: "PATCH",
+    body: JSON.stringify({ id: contestTaskId, winnerTeamId: teamA.id }),
+  });
+  check("a winner can be picked", award.status === 200, JSON.stringify(award.body));
+  const wonScore = await scoreFor(teamA.id);
+  check(
+    "picking the winner pays the bonus",
+    wonScore === baseScore + 4,
+    `expected ${baseScore + 4}, got ${wonScore}`
+  );
+
+  // The other team is the reason the bonus is worth having, and the reason it
+  // must not follow a measurement: it has no approved row here at all.
+  const loserScore = await scoreFor(teamAlt.id);
+  check("the bonus goes to one team only", loserScore === 0, `${loserScore}`);
+
+  const undo = await call("/api/admin/tasks", {
+    method: "PATCH",
+    body: JSON.stringify({ id: contestTaskId, winnerTeamId: null }),
+  });
+  check("a winner can be taken back", undo.status === 200, JSON.stringify(undo.body));
+  const undoneScore = await scoreFor(teamA.id);
+  check(
+    "taking the winner back removes the bonus",
+    undoneScore === baseScore,
+    `expected ${baseScore}, got ${undoneScore}`
+  );
+
+  // Torn down here rather than in `finally`: the assertions further down expect
+  // team A to hold exactly what the one real submission is worth, and a spare
+  // five points sitting on it reads as a scoring bug in whatever ran last.
+  await admin.from("submissions").delete().eq("id", contestSubmissionId);
+  await admin.from("tasks").delete().eq("id", contestTaskId);
+  contestSubmissionId = undefined;
+  contestTaskId = undefined;
 
   // --- re-review and rejection visibility ---------------------------------
   // Changing a call you got wrong must be possible at any point, and the team
