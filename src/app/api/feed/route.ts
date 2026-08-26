@@ -41,7 +41,7 @@ export async function GET(req: Request) {
       .in("status", ["approved", "rejected"])
       .order("judged_at", { ascending: false })
       .limit(limit),
-    sb.from("tasks").select("id,title,points,scoring_mode,measurement_threshold,points_per_unit,measurement_cap,competition_bonus").eq("round", round),
+    sb.from("tasks").select("id,title,points,scoring_mode,points_per_unit,competition_bonus,winner_team_id").eq("round", round),
     sb.from("teams").select("id,name,color").eq("round", round),
     sb.from("players").select("id,name"),
   ]);
@@ -53,7 +53,7 @@ export async function GET(req: Request) {
   const { data: approved } = taskIds.length
     ? await sb
         .from("submissions")
-        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot,created_at,judged_at")
+        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,created_at,judged_at")
         .eq("round", round)
         .in("task_id", taskIds)
         .eq("status", "approved")

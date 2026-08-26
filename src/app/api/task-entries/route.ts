@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     sb.from("players").select("id").eq("id", playerId).maybeSingle(),
     sb
       .from("tasks")
-      .select("id,round,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,active,is_secret,revealed_at")
+      .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,winner_team_id,active,is_secret,revealed_at")
       .eq("id", taskId)
       .eq("round", round)
       .maybeSingle(),
@@ -51,7 +51,7 @@ export async function GET(req: Request) {
   const { data: submissions, error: submissionsError } = await sb
     .from("submissions")
     .select(
-      "id,round,task_id,player_id,team_id,object_name,media_type,points_awarded,measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot,group_id,note,created_at,judged_at,status"
+      "id,round,task_id,player_id,team_id,object_name,media_type,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,group_id,note,created_at,judged_at,status"
     )
     .eq("round", round)
     .eq("task_id", taskId)

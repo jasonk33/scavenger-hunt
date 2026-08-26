@@ -42,7 +42,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const { data: existing } = await sb
     .from("submissions")
-    .select("id,group_id,task_id,task_points,status,round,team_id,judged_at,measurement_value,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot")
+    .select("id,group_id,task_id,task_points,status,round,team_id,judged_at,measurement_value,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot")
     .eq("id", id)
     .maybeSingle();
   if (!existing) return fail("Submission not found.", 404);
@@ -66,7 +66,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const { data: task } = await sb
     .from("tasks")
-    .select("id,points,scoring_mode,measurement_threshold,points_per_unit,measurement_cap,competition_bonus")
+    .select("id,points,scoring_mode,points_per_unit,competition_bonus")
     .eq("id", existing.task_id)
     .maybeSingle();
   if (!task) return fail("Task not found.", 404);
@@ -106,6 +106,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   if (action === "approve") {
     if (guardConflict) return guardConflict;
+    const scoringRule = {
+      ...task,
+      points: existing.task_points,
+      scoring_mode: existing.scoring_mode_snapshot ?? task.scoring_mode,
+      points_per_unit: existing.points_per_unit_snapshot ?? task.points_per_unit,
+      competition_bonus: existing.competition_bonus_snapshot ?? task.competition_bonus,
+    };
+    /*
+     * `quantity` is the only mode with something to measure. The judge counts
+     * what is in the photo and the count buys points at a fixed rate.
+     *
+     * `competition` used to ask for a number too, and hand the bonus to whoever
+     * had the highest one. That made the judge invent a score for things like
+     * "the worst photo of Jason", and it moved a team's points after the fact
+     * whenever somebody else was judged. The bonus is now an organizer's pick
+     * at the end of the round, so there is nothing to type here and an
+     * approval is worth the task's face value.
+     */
     const rawMeasurement = body.measurementValue;
     const hasMeasurement =
       rawMeasurement !== null &&
@@ -113,25 +131,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       rawMeasurement !== "" &&
       !(typeof rawMeasurement === "string" && !rawMeasurement.trim());
     const measurementValue =
-      task.scoring_mode === "fixed"
+      scoringRule.scoring_mode !== "quantity"
         ? null
         : hasMeasurement && Number.isInteger(Number(rawMeasurement)) && Number(rawMeasurement) >= 0
           ? Number(rawMeasurement)
           : null;
-    const scoringRule = {
-      ...task,
-      points: existing.task_points,
-      scoring_mode: existing.scoring_mode_snapshot ?? task.scoring_mode,
-      measurement_threshold: existing.measurement_threshold_snapshot ?? task.measurement_threshold,
-      points_per_unit: existing.points_per_unit_snapshot ?? task.points_per_unit,
-      measurement_cap: existing.measurement_cap_snapshot ?? task.measurement_cap,
-      competition_bonus: existing.competition_bonus_snapshot ?? task.competition_bonus,
-    };
-    if (scoringRule.scoring_mode !== "fixed" && measurementValue === null) {
-      return fail(`Enter the ${scoringRule.scoring_mode === "competition" ? "current result" : "measured amount"} before approving.`);
+    if (scoringRule.scoring_mode === "quantity" && measurementValue === null) {
+      return fail("Enter the measured amount before approving.");
     }
     patch = {
       status: "approved",
+      // The baseline the judge actually awarded. A competition bonus is added
+      // on read from tasks.winner_team_id, which does not exist yet.
       points_awarded: effectivePoints(scoringRule, measurementValue),
       measurement_value: measurementValue,
       reject_reason: null,

@@ -13,11 +13,10 @@ type Task = {
   points: number;
   scoring_mode: "fixed" | "quantity" | "competition";
   measurement_label: string;
-  measurement_threshold: number;
   points_per_unit: number;
-  measurement_cap: number | null;
   competition_bonus: number;
-  competition: { value: number; teams: string[]; bonus: number } | null;
+  /** Set once an organizer picks the leader-bonus winner at the end of a round. */
+  competition: { team: string; bonus: number } | null;
   requires_video: boolean;
   is_secret: boolean;
 };
@@ -623,8 +622,8 @@ function TaskRow({
               </span>
             )}
             {task.scoring_mode === "competition" && (
-              <span className="pill pill-warn">
-                leader +{task.competition_bonus}
+              <span className="pill pill-warn pill-wrap">
+                best one wins +{task.competition_bonus} at the end of the round
               </span>
             )}
             {task.is_secret && (
@@ -632,8 +631,7 @@ function TaskRow({
             )}
             {task.competition && (
               <span className="pill pill-wrap">
-                {task.competition.teams.join(" / ")} lead with {task.competition.value}{" "}
-                {task.measurement_label || "units"}
+                {task.competition.team} won +{task.competition.bonus}
               </span>
             )}
             {approved && (

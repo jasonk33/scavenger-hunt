@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  competitionWinners,
   effectivePoints,
   latestApproved,
   scoreApproved,
@@ -11,10 +12,9 @@ const task = (overrides = {}) => ({
   id: "task-1",
   points: 5,
   scoring_mode: "fixed",
-  measurement_threshold: 0,
   points_per_unit: 0,
-  measurement_cap: null,
   competition_bonus: 0,
+  winner_team_id: null,
   ...overrides,
 });
 
@@ -42,26 +42,47 @@ test("quantity tasks add the configured points for every measured item", () => {
   assert.equal(effectivePoints(quantity, 99), 203);
 });
 
-test("competition tasks award the bonus to every tied leader", () => {
-  const competition = task({ scoring_mode: "competition", competition_bonus: 3 });
-  assert.equal(effectivePoints(competition, 12, [10, 12, 12]), 8);
-  assert.equal(effectivePoints(competition, 10, [10, 12, 12]), 5);
-  assert.equal(effectivePoints(competition, null, [10, 12]), 5);
-  assert.equal(effectivePoints(competition, null, [null, null]), 5);
+test("competition tasks award the bonus only to the team the organizer picked", () => {
+  const undecided = task({ scoring_mode: "competition", competition_bonus: 3 });
+  assert.equal(effectivePoints(undecided, null, "team-a"), 5);
+
+  const decided = task({
+    scoring_mode: "competition",
+    competition_bonus: 3,
+    winner_team_id: "team-b",
+  });
+  assert.equal(effectivePoints(decided, null, "team-b"), 8);
+  assert.equal(effectivePoints(decided, null, "team-a"), 5);
 });
 
-test("approved scoring uses the latest approval and computes competition bonuses", () => {
-  const competition = task({ scoring_mode: "competition", competition_bonus: 3 });
+test("competition bonuses ignore measurements entirely", () => {
+  // The old rule handed the bonus to whoever posted the highest number, so a
+  // team's score moved when somebody else was judged. Nothing but the
+  // organizer's pick decides it now.
+  const decided = task({
+    scoring_mode: "competition",
+    competition_bonus: 3,
+    winner_team_id: "team-b",
+  });
+  assert.equal(effectivePoints(decided, 99, "team-a"), 5);
+  assert.equal(effectivePoints(decided, 0, "team-b"), 8);
+});
+
+test("approved scoring uses the latest approval and the picked competition winner", () => {
+  const competition = task({
+    scoring_mode: "competition",
+    competition_bonus: 3,
+    winner_team_id: "team-b",
+  });
   const scored = scoreApproved(
     [
-      row({ id: "old", team_id: "team-a", measurement_value: 10 }),
+      row({ id: "old", team_id: "team-a" }),
       row({
         id: "new",
         team_id: "team-a",
-        measurement_value: 12,
         judged_at: "2026-08-23T12:11:00.000Z",
       }),
-      row({ id: "other", team_id: "team-b", measurement_value: 12 }),
+      row({ id: "other", team_id: "team-b" }),
     ],
     [competition]
   );
@@ -69,9 +90,45 @@ test("approved scoring uses the latest approval and computes competition bonuses
   assert.deepEqual(
     scored.map(({ row: scoredRow, points }) => [scoredRow.id, points]),
     [
-      ["new", 8],
+      ["new", 5],
       ["other", 8],
     ]
+  );
+});
+
+test("approved scoring reads the winner from the task, never from a snapshot", () => {
+  // The winner is chosen after the round, so it cannot have been snapshotted
+  // onto the submission at judging time. The frozen bonus AMOUNT still wins.
+  const competition = task({
+    scoring_mode: "competition",
+    competition_bonus: 99,
+    winner_team_id: "team-a",
+  });
+  const scored = scoreApproved(
+    [row({ team_id: "team-a", competition_bonus_snapshot: 3 })],
+    [competition]
+  );
+  assert.equal(scored[0].points, 8);
+});
+
+test("competitionWinners reports the decided winner and nothing before that", () => {
+  const teams = [{ id: "team-b", name: "Blue" }];
+  assert.deepEqual(
+    competitionWinners([task({ scoring_mode: "competition", competition_bonus: 3 })], teams),
+    {}
+  );
+  assert.deepEqual(
+    competitionWinners(
+      [
+        task({
+          scoring_mode: "competition",
+          competition_bonus: 3,
+          winner_team_id: "team-b",
+        }),
+      ],
+      teams
+    ),
+    { "task-1": { team: "Blue", bonus: 3 } }
   );
 });
 
@@ -79,7 +136,6 @@ test("approved scoring keeps the submission baseline when the task is edited lat
   const quantity = task({
     points: 10,
     scoring_mode: "quantity",
-    measurement_threshold: 0,
     points_per_unit: 1,
   });
   const scored = scoreApproved(

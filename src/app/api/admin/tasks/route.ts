@@ -25,14 +25,7 @@ export async function POST(req: Request) {
   const scoringMode = ["fixed", "quantity", "competition"].includes(b?.scoringMode)
     ? b.scoringMode
     : "fixed";
-  const measurementThreshold = Number.isInteger(Number(b?.measurementThreshold))
-    ? Number(b.measurementThreshold)
-    : 0;
   const pointsPerUnit = Number.isInteger(Number(b?.pointsPerUnit)) ? Number(b.pointsPerUnit) : 0;
-  const measurementCap =
-    b?.measurementCap === null || b?.measurementCap === "" || b?.measurementCap === undefined
-      ? null
-      : Number(b.measurementCap);
   const competitionBonus = Number.isInteger(Number(b?.competitionBonus))
     ? Number(b.competitionBonus)
     : 0;
@@ -40,11 +33,8 @@ export async function POST(req: Request) {
   if (!title) return fail("title required.");
   if (!Number.isFinite(points) || points <= 0) return fail("points must be a positive number.");
   if (
-    !Number.isInteger(measurementThreshold) ||
-    measurementThreshold < 0 ||
     !Number.isInteger(pointsPerUnit) ||
     pointsPerUnit < 0 ||
-    (measurementCap !== null && (!Number.isInteger(measurementCap) || measurementCap < 0)) ||
     !Number.isInteger(competitionBonus) ||
     competitionBonus < 0
   ) {
@@ -69,9 +59,7 @@ export async function POST(req: Request) {
       points,
       scoring_mode: scoringMode,
       measurement_label: String(b?.measurementLabel ?? "").trim(),
-      measurement_threshold: measurementThreshold,
       points_per_unit: pointsPerUnit,
-      measurement_cap: measurementCap,
       competition_bonus: competitionBonus,
       requires_video: Boolean(b?.requiresVideo),
       is_secret: Boolean(b?.isSecret),
@@ -91,10 +79,12 @@ export async function POST(req: Request) {
  * mid-round is worse than no automation at all.
  *
  * A secret challenge is two rows sharing a slug, so this splits the patch:
- * `revealed_at` is per-round and lands on the one row it was given, everything
- * else lands on every row of the task. A content edit that moved only Round 1
- * would leave the two halves of the event reading different wording for the same
- * challenge, with nothing to notice it -- the canvas shows the Round 1 row.
+ * `revealed_at` and `winner_team_id` are per-round and land on the one row they
+ * were given, everything else lands on every row of the task. A content edit
+ * that moved only Round 1 would leave the two halves of the event reading
+ * different wording for the same challenge, with nothing to notice it -- the
+ * canvas shows the Round 1 row. A winner is the opposite: each half is its own
+ * competition between different teams, so it must never cross rounds.
  */
 export async function PATCH(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
@@ -106,19 +96,17 @@ export async function PATCH(req: Request) {
   if (typeof b.title === "string" && b.title.trim()) task.title = b.title.trim();
   if (Number.isFinite(Number(b.points)) && Number(b.points) > 0) task.points = Number(b.points);
   if (["fixed", "quantity", "competition"].includes(b.scoringMode)) task.scoring_mode = b.scoringMode;
+  // Moving a task off the leader bonus drops any winner with it, or the column
+  // would keep quietly paying a bonus the task no longer has.
+  if (task.scoring_mode && task.scoring_mode !== "competition") task.winner_team_id = null;
   if (typeof b.measurementLabel === "string") task.measurement_label = b.measurementLabel.trim();
   for (const [input, key] of [
-    ["measurementThreshold", "measurement_threshold"],
     ["pointsPerUnit", "points_per_unit"],
     ["competitionBonus", "competition_bonus"],
   ]) {
     if (Number.isInteger(Number(b[input])) && Number(b[input]) >= 0) {
       Object.assign(task, { [key]: Number(b[input]) });
     }
-  }
-  if (b.measurementCap === null || b.measurementCap === "") task.measurement_cap = null;
-  else if (Number.isInteger(Number(b.measurementCap)) && Number(b.measurementCap) >= 0) {
-    task.measurement_cap = Number(b.measurementCap);
   }
   if (typeof b.requiresVideo === "boolean") task.requires_video = b.requiresVideo;
   if (typeof b.isSecret === "boolean") task.is_secret = b.isSecret;
@@ -128,15 +116,47 @@ export async function PATCH(req: Request) {
   if (typeof b.revealed === "boolean") {
     row.revealed_at = b.revealed ? new Date().toISOString() : null;
   }
+  // Clearing is a first-class action, not an omission: an organizer who picked
+  // the wrong team has to be able to take it back, and `undefined` already means
+  // "this request isn't about the winner".
+  const clearsWinner = b.winnerTeamId === null || b.winnerTeamId === "";
+  const setsWinner = typeof b.winnerTeamId === "string" && b.winnerTeamId !== "";
+  if (clearsWinner) row.winner_team_id = null;
 
-  if (!Object.keys(task).length && !Object.keys(row).length) return fail("Nothing to update.");
+  if (!Object.keys(task).length && !Object.keys(row).length && !setsWinner) {
+    return fail("Nothing to update.");
+  }
 
   // Resolved before either branch, so a reveal on an id that does not exist is a
   // 404 rather than an `ok: true` that changed nothing. Admin renders the
   // response, so a silent success there is a Live badge for a reveal that never
   // happened -- the "screen claims a result it does not have" class.
-  const { data: found } = await db().from("tasks").select("slug,is_secret").eq("id", id).maybeSingle();
+  const { data: found } = await db()
+    .from("tasks")
+    .select("slug,is_secret,round,scoring_mode")
+    .eq("id", id)
+    .maybeSingle();
   if (!found) return fail("No such task.", 404);
+
+  if (setsWinner) {
+    // A foreign key can only say "some team". The bonus has to land on a team
+    // that exists in THIS round, or it would be awarded to a team that is not in
+    // the standings the task belongs to.
+    const { data: team } = await db()
+      .from("teams")
+      .select("id,round")
+      .eq("id", b.winnerTeamId)
+      .maybeSingle();
+    if (!team) return fail("Team not found.", 404);
+    if (team.round !== found.round) {
+      return fail(`That team is in Round ${team.round}, but this is a Round ${found.round} task.`, 409);
+    }
+    const mode = task.scoring_mode ?? found.scoring_mode;
+    if (mode !== "competition") {
+      return fail("Only a leader-bonus task has a winner to pick.");
+    }
+    row.winner_team_id = b.winnerTeamId;
+  }
 
   if (Object.keys(task).length) {
     // Turning a secret into a normal task would leave two rows sharing a slug

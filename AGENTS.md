@@ -100,12 +100,20 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
   canvas's In/X toggle writes exactly that column.
 - `teams(round, name, color)` — R1 and R2 teams are **separate rows**. `players(name)`.
 - `roster(round, player_id, team_id)` — the remix lives here and nowhere else.
-- `tasks(round, slug, title, points, is_secret, revealed_at, active)` plus planning-only
-  columns (`doc_title`, `doc_order`, the five ratings, `prop`, `note`, `rewrite`, `tier_ok`)
+- `tasks(round, slug, title, points, scoring_mode, is_secret, revealed_at, active)` plus
+  planning-only columns (`doc_title`, `doc_order`, the five ratings, `prop`, `note`,
+  `rewrite`, `tier_ok`)
   that no player-facing query selects. Point tiers **1/3/5/7/10**; 7-pointers are the secret
   challenges, revealed manually from Admin (never on a timer). **`sort_order` is a generated
   column** — `(is_secret, points, doc_order)` — so nothing maintains it and it cannot drift.
   It is the only thing ordering the player's task list.
+- **`scoring_mode` is `fixed` | `quantity` | `competition`**, and it decides what the judge is
+  asked for. `fixed` is the default and asks nothing. `quantity` adds
+  `points_per_unit` per counted item and is the **only** mode with a number field on the judge
+  screen — `measurement_label` names it, and the count lands in
+  `submissions.measurement_value`. `competition` adds `competition_bonus` to exactly one
+  team: `tasks.winner_team_id`, which an **organizer picks from Admin once the round is
+  over**. See the scoring invariants below — the end-of-round pick is load-bearing.
 - `submissions` — one row is **one file**. `status`: `uploading → pending → approved | rejected`.
   Carries `points_awarded`, `reject_reason` (free text the judge types, capped at
   `REASON_MAX`), `note`, `group_id`. There is deliberately no discretionary bonus
@@ -166,6 +174,21 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
   counting as "latest", so rejecting a duplicate cannot un-score a task. `/api/state` and the
   export CSV each carry their own copy of this rule and must be changed with the view, or a
   team sees one score on their task list and another on the leaderboard.
+- A **competition bonus is an end-of-round decision, never a live race.** It goes to
+  `tasks.winner_team_id` — one team, picked by an organizer from Admin — and to nobody until
+  that column is set. It used to go to whoever held the highest `measurement_value`,
+  recomputed on every read, which meant a team's *already approved* task silently lost points
+  when another team was judged, and gave them every reason to go redo it. It also demanded a
+  number for tasks like "the worst photo of Jason" that have none, so the judge invented one
+  under queue pressure — and every competition task in the event had `competition_bonus = 0`,
+  so the number bought nothing. **Do not reintroduce a live leader, and do not put a score
+  box back on a competition task.** `supabase/migrations/20260826170000_round_end_competition_winner.sql`
+  is the full argument.
+- `winner_team_id` is **per row, so per round** — like `revealed_at` and unlike every other
+  task field, which the Admin PATCH writes by slug. Each half of the event is a separate
+  competition between different teams. It is also **never snapshotted onto a submission**: it
+  is chosen long after those rows were judged, so `points_awarded` holds the baseline and the
+  bonus is added on read.
 
 ## Verifying work
 
@@ -221,8 +244,10 @@ real device.
   fleet delivers H.264/AAC and JPEG.
 - **No discretionary points and no award flag.** A 0–2 "creativity" bonus and a starred
   award-candidate shortlist both existed and were both removed as more complexity than the
-  afternoon can carry. A task is approved or rejected, and an approved one is worth exactly
-  what the task is worth. Do not add a way for a judge to type in a number.
+  afternoon can carry. A judge approves or rejects; they never choose *how much* something is
+  worth. The one number they type is the `quantity` count — an objective tally of what is in
+  the photo, at a rate the task fixed in advance — and the `competition` winner is a separate
+  decision made calmly after the round, not a score entered under queue pressure.
 - Jason and Anna organize and are **not** players.
 
 ## Sharp edges

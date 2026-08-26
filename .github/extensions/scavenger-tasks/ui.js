@@ -543,8 +543,10 @@ let wasSecret = false;
 
 function syncAddDetails() {
   const mode = el.newTaskScoringMode.value;
-  const measured = mode !== "fixed";
-  el.newTaskMeasurementLabelField.hidden = !measured;
+  // Only a quantity task has anything for the judge to measure. A competition
+  // task is judged at face value and its bonus is awarded from Admin after the
+  // round, so a field label would name a box that never appears.
+  el.newTaskMeasurementLabelField.hidden = mode !== "quantity";
   el.newTaskPointsPerUnitField.hidden = mode !== "quantity";
   el.newTaskCompetitionBonusField.hidden = mode !== "competition";
 }
@@ -617,7 +619,7 @@ async function addTask() {
         isSecret: secret,
         points: Number(el.newTaskPoints.value),
         scoringMode,
-        measurementLabel: scoringMode === "fixed" ? "" : el.newTaskMeasurementLabel.value.trim(),
+        measurementLabel: scoringMode === "quantity" ? el.newTaskMeasurementLabel.value.trim() : "",
         pointsPerUnit: scoringMode === "quantity" ? Number(el.newTaskPointsPerUnit.value) : 0,
         competitionBonus: scoringMode === "competition" ? Number(el.newTaskCompetitionBonus.value) : 0,
         prop: el.newTaskProp.value.trim(),

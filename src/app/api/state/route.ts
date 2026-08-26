@@ -2,7 +2,7 @@ import { db, mediaUrl, uploadConfig } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { groupKey } from "@/lib/groups";
 import { json, isVideoObject } from "@/lib/http";
-import { competitionLeaders, scoreApproved } from "@/lib/scoring.mjs";
+import { competitionWinners, scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
   // rather than in the client means an unrevealed task never reaches the browser.
   const tasksQ = sb
     .from("tasks")
-    .select("id,round,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,requires_video,is_secret,revealed_at,sort_order")
+    .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,winner_team_id,requires_video,is_secret,revealed_at,sort_order")
     .eq("round", round)
     .eq("active", true)
     // id only breaks ties. sort_order is derived from (is_secret, points,
@@ -42,22 +42,16 @@ export async function GET(req: Request) {
   ]);
 
   const tasks = (tasksRaw ?? []).filter((t) => !t.is_secret || t.revealed_at);
-  const competitionTaskIds = tasks
-    .filter((task) => task.scoring_mode === "competition")
-    .map((task) => task.id);
-  let competitionRows: Array<Record<string, unknown>> = [];
-  if (competitionTaskIds.length > 0) {
-    const { data } = await sb
-      .from("submissions")
-      .select("id,round,team_id,task_id,status,points_awarded,measurement_value,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot,created_at,judged_at")
-      .eq("round", round)
-      .in("task_id", competitionTaskIds)
-      .eq("status", "approved");
-    competitionRows = data ?? [];
-  }
-  const leaders = competitionLeaders(competitionRows, tasks, teams ?? []) as Record<
+  /*
+   * Who won each leader bonus, once an organizer has said so. This used to be a
+   * second query over every approved submission for every competition task, to
+   * work out who was ahead right now -- a live race that pushed teams to redo
+   * tasks and quietly moved scores that were already settled. It is a column on
+   * the task now, so the answer arrives with the tasks themselves.
+   */
+  const winners = competitionWinners(tasks, teams ?? []) as Record<
     string,
-    { value: number; teams: string[]; bonus: number }
+    { team: string; bonus: number }
   >;
 
   let me: { id: string; name: string } | null = null;
@@ -104,7 +98,7 @@ export async function GET(req: Request) {
         const { data: subs } = await sb
           .from("submissions")
           .select(
-            "id,task_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,measurement_threshold_snapshot,points_per_unit_snapshot,measurement_cap_snapshot,competition_bonus_snapshot"
+            "id,task_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot"
           )
           .eq("round", round)
           .eq("team_id", team.id)
@@ -174,8 +168,8 @@ export async function GET(req: Request) {
     },
     me,
     team,
-    tasks: tasks.map((task) => ({ ...task, competition: leaders[task.id] ?? null })),
-    competitionLeaders: leaders,
+    tasks: tasks.map((task) => ({ ...task, competition: winners[task.id] ?? null })),
+    competitionWinners: winners,
     // Media URLs are just strings, so sending them costs nothing; the Submit
     // screen only fetches the bytes for a submission the player opens. The
     // object path itself is dropped -- the URL already contains it, and this

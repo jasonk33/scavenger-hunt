@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     sb.from("players").select("id,name").eq("id", playerId).maybeSingle(),
     sb
       .from("tasks")
-      .select("id,round,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,active,is_secret,revealed_at")
+      .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,active,is_secret,revealed_at")
       .eq("id", taskId)
       .maybeSingle(),
   ]);
@@ -140,9 +140,7 @@ export async function POST(req: Request) {
       team_id: teamId,
       task_points: t.points,
       scoring_mode_snapshot: t.scoring_mode,
-      measurement_threshold_snapshot: t.measurement_threshold,
       points_per_unit_snapshot: t.points_per_unit,
-      measurement_cap_snapshot: t.measurement_cap,
       competition_bonus_snapshot: t.competition_bonus,
       object_name: objectName,
       media_type: contentType,

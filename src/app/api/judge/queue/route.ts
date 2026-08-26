@@ -47,7 +47,7 @@ export async function GET(req: Request) {
         .in("status", ["approved", "rejected"])
         .order("judged_at", { ascending: false })
         .limit(300),
-      sb.from("tasks").select("id,title,points,scoring_mode,measurement_label,measurement_threshold,points_per_unit,measurement_cap,competition_bonus,requires_video,is_secret").eq("round", round),
+      sb.from("tasks").select("id,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,requires_video,is_secret").eq("round", round),
       sb.from("teams").select("id,name,color").eq("round", round),
       sb.from("players").select("id,name"),
     ]);
@@ -102,9 +102,7 @@ export async function GET(req: Request) {
       scoringMode,
       measurementLabel: task?.measurement_label ?? "",
       measurementValue: s.measurement_value,
-      measurementThreshold: s.measurement_threshold_snapshot ?? task?.measurement_threshold ?? 0,
       pointsPerUnit: s.points_per_unit_snapshot ?? task?.points_per_unit ?? 0,
-      measurementCap: s.measurement_cap_snapshot ?? task?.measurement_cap ?? null,
       competitionBonus: s.competition_bonus_snapshot ?? task?.competition_bonus ?? 0,
       requiresVideo: Boolean(task?.requires_video),
       isSecret: Boolean(task?.is_secret),

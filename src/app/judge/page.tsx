@@ -403,11 +403,10 @@ function JudgeQueue() {
             <span className="pill muted">{fmtBytes(current.sizeBytes)}</span>
           </div>
 
-          {current.scoringMode !== "fixed" && (
+          {current.scoringMode === "quantity" && (
             <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
               <div className="stat-label" style={{ marginBottom: 4 }}>
-                {current.measurementLabel ||
-                  (current.scoringMode === "competition" ? "Result to compare" : "Additional items")}
+                {current.measurementLabel || "Additional items"}
               </div>
               <div>
                 <input
@@ -422,6 +421,23 @@ function JudgeQueue() {
                   onChange={(e) => setMeasurement(e.target.value)}
                   style={{ width: "100%" }}
                 />
+              </div>
+            </div>
+          )}
+
+          {/* A leader-bonus task has nothing for the judge to measure. It is
+              approved or not, at face value, and an organizer picks the winning
+              team from Admin once the round is over. Said out loud because the
+              obvious question on seeing "leader +5" here is "so where do I put
+              the score?". */}
+          {current.scoringMode === "competition" && (
+            <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
+              <div className="stat-label" style={{ marginBottom: 4 }}>
+                Leader bonus
+              </div>
+              <div style={{ lineHeight: 1.4 }}>
+                Just approve or reject this on its merits. The +{current.competitionBonus} goes to
+                whichever team you and Anna pick in Admin at the end of the round.
               </div>
             </div>
           )}

@@ -20,10 +20,9 @@ type AdminData = {
     points: number;
     scoring_mode: "fixed" | "quantity" | "competition";
     measurement_label: string;
-    measurement_threshold: number;
     points_per_unit: number;
-    measurement_cap: number | null;
     competition_bonus: number;
+    winner_team_id: string | null;
     requires_video: boolean;
     is_secret: boolean;
     revealed_at: string | null;
@@ -492,6 +491,15 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
 
   const tasks = useMemo(() => data.tasks.filter((t) => t.round === round), [data.tasks, round]);
   const secrets = tasks.filter((t) => t.is_secret);
+  // Leader bonuses are decided after the round, so this list is the checklist of
+  // what still owes a decision. Cut tasks are excluded: nobody could submit to
+  // them, so there is nothing to award.
+  const contests = tasks.filter((t) => t.scoring_mode === "competition" && t.active);
+  const undecided = contests.filter((t) => !t.winner_team_id).length;
+  const roundTeams = useMemo(
+    () => data.teams.filter((t) => t.round === round),
+    [data.teams, round]
+  );
 
   const patch = (body: Record<string, unknown>) =>
     run(() => api("/api/admin/tasks", { method: "PATCH", body: JSON.stringify(body) }));
@@ -532,6 +540,44 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
         </div>
       </div>
 
+      {contests.length > 0 && (
+        <div className="card">
+          <b>Leader bonuses</b>
+          <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
+            Pick the winner once Round {round} is over. Nothing is awarded until you do, and the
+            bonus lands on that team&apos;s score straight away — players never see a running leader,
+            so nobody wastes the round redoing a task to overtake someone.
+          </p>
+          {undecided > 0 && (
+            <div className="pill pill-warn pill-wrap" style={{ marginBottom: 8 }}>
+              {undecided} still to decide
+            </div>
+          )}
+          <div style={{ display: "grid", gap: 8 }}>
+            {contests.map((t) => (
+              <div key={t.id}>
+                <div style={{ marginBottom: 4, lineHeight: 1.35 }}>
+                  {t.title} <span className="muted tiny">+{t.competition_bonus}</span>
+                </div>
+                <select
+                  className="field"
+                  value={t.winner_team_id ?? ""}
+                  onChange={(e) => patch({ id: t.id, winnerTeamId: e.target.value || null })}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">Not decided yet</option>
+                  {roundTeams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <b>Add a task</b>
         <input
@@ -558,13 +604,9 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
             <option value="quantity">Extra per item</option>
             <option value="competition">Leader bonus</option>
           </select>
-          {scoringMode !== "fixed" && (
-            <>
-              <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
-            </>
-          )}
           {scoringMode === "quantity" && (
             <>
+              <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
               <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
             </>
           )}
@@ -721,13 +763,9 @@ function TaskEditor({
           <option value="quantity">Extra per item</option>
           <option value="competition">Leader bonus</option>
         </select>
-        {scoringMode !== "fixed" && (
-          <>
-            <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
-          </>
-        )}
         {scoringMode === "quantity" && (
           <>
+            <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
             <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
           </>
         )}

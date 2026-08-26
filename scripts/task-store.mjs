@@ -62,9 +62,7 @@ export const COLUMNS = {
   points: "points",
   scoring_mode: "scoringMode",
   measurement_label: "measurementLabel",
-  measurement_threshold: "measurementThreshold",
   points_per_unit: "pointsPerUnit",
-  measurement_cap: "measurementCap",
   competition_bonus: "competitionBonus",
   doc_order: "docOrder",
   difficulty: "difficulty",
@@ -106,9 +104,7 @@ export function rowsToTask(rows) {
     const defaults = {
       scoring_mode: "fixed",
       measurement_label: "",
-      measurement_threshold: 0,
       points_per_unit: 0,
-      measurement_cap: null,
       competition_bonus: 0,
     };
     task[key] = first[column] ?? defaults[column] ?? null;
@@ -167,9 +163,7 @@ export const EDITABLE = {
   points: (v) => (TIERS.includes(int(v)) ? int(v) : undefined),
   scoringMode,
   measurementLabel: (v) => (typeof v === "string" ? v.trim() : undefined),
-  measurementThreshold: nonNegativeInt,
   pointsPerUnit: nonNegativeInt,
-  measurementCap: (v) => (v === null ? null : nonNegativeInt(v)),
   competitionBonus: nonNegativeInt,
   // Cut. Never a delete, which would cascade to submissions: a cut task is
   // hidden from players and its scores stand.
@@ -440,9 +434,7 @@ export async function addTask(client, input) {
         ...RATINGS.map((k) => [k, input?.[k]]),
         ["scoringMode", input?.scoringMode],
         ["measurementLabel", input?.measurementLabel],
-        ["measurementThreshold", input?.measurementThreshold],
         ["pointsPerUnit", input?.pointsPerUnit],
-        ["measurementCap", input?.measurementCap],
         ["competitionBonus", input?.competitionBonus],
         ["prop", input?.prop],
         ["requiresVideo", input?.requiresVideo],
