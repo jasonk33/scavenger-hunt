@@ -440,6 +440,27 @@ async function main() {
     `expected ${baseScore + 4}, got ${wonScore}`
   );
 
+  /*
+   * The winning team's OWN screen, not just the leaderboard.
+   *
+   * /api/state carries its own copy of the scoring rule, so it can drop the
+   * bonus while team_scores pays it -- and then a team reads one total on their
+   * task list and a different one on the scoreboard. Asserting only the
+   * leaderboard above missed exactly that.
+   */
+  const wonState = (await call(`/api/state?playerId=${playerId}&_=${Date.now()}`)).body;
+  check(
+    "the winning team's own task list includes the bonus",
+    wonState.stats?.points === wonScore,
+    `state ${wonState.stats?.points} vs leaderboard ${wonScore}`
+  );
+  const wonTask = (wonState.tasks ?? []).find((t) => t.id === contestTaskId);
+  check(
+    "the task list names who won it",
+    wonTask?.competition?.bonus === 4 && typeof wonTask?.competition?.team === "string",
+    JSON.stringify(wonTask?.competition)
+  );
+
   // The other team is the reason the bonus is worth having, and the reason it
   // must not follow a measurement: it has no approved row here at all.
   const loserScore = await scoreFor(teamAlt.id);

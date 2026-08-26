@@ -365,6 +365,18 @@ export async function updateTask(client, slug, patch) {
   if (typeof slug !== "string" || !slug) return null;
   const row = taskPatchToRow(patch);
 
+  /*
+   * Moving a task off the leader bonus takes its winner with it.
+   *
+   * Not a canvas-editable field -- it is not in COLUMNS and the planner never
+   * shows it -- but the canvas CAN change scoring_mode, and team_scores reads
+   * `coalesce(scoring_mode_snapshot, tasks.scoring_mode)`. An already-judged row
+   * keeps its 'competition' snapshot, so a winner left behind here goes on
+   * paying a bonus for a task that is no longer a competition. The same guard
+   * lives in src/app/api/admin/tasks/route.ts; both editors write these rows.
+   */
+  if (row.scoring_mode && row.scoring_mode !== "competition") row.winner_team_id = null;
+
   // Nothing legal to write. Still a read, so the caller can tell "no such task"
   // from "nothing to do" -- returning the task unchanged is the honest answer,
   // and an empty UPDATE would move updated_at for an edit nobody made.

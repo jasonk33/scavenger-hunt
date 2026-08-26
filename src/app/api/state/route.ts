@@ -60,6 +60,8 @@ export async function GET(req: Request) {
   let mine: Array<{
     id: string;
     task_id: string;
+    // Read by scoreApproved to decide the competition bonus, not just carried.
+    team_id: string;
     status: string;
     points_awarded: number | null;
     created_at: string;
@@ -95,10 +97,15 @@ export async function GET(req: Request) {
       // counts for everyone, and people need to see what has already been done so
       // two people don't burn time on the same task.
       if (team) {
+        // team_id looks redundant next to `.eq("team_id", team.id)` and is not:
+        // scoreApproved matches it against tasks.winner_team_id to decide the
+        // competition bonus, so dropping it from the select silently pays the
+        // winning team nothing on their own task list while the leaderboard
+        // shows the higher total -- the exact split the comment below warns of.
         const { data: subs } = await sb
           .from("submissions")
           .select(
-            "id,task_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot"
+            "id,task_id,team_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot"
           )
           .eq("round", round)
           .eq("team_id", team.id)
@@ -169,7 +176,6 @@ export async function GET(req: Request) {
     me,
     team,
     tasks: tasks.map((task) => ({ ...task, competition: winners[task.id] ?? null })),
-    competitionWinners: winners,
     // Media URLs are just strings, so sending them costs nothing; the Submit
     // screen only fetches the bytes for a submission the player opens. The
     // object path itself is dropped -- the URL already contains it, and this

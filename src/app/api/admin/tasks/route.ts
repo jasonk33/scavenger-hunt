@@ -79,12 +79,16 @@ export async function POST(req: Request) {
  * mid-round is worse than no automation at all.
  *
  * A secret challenge is two rows sharing a slug, so this splits the patch:
- * `revealed_at` and `winner_team_id` are per-round and land on the one row they
+ * `revealed_at` and a winner PICK are per-round and land on the one row they
  * were given, everything else lands on every row of the task. A content edit
  * that moved only Round 1 would leave the two halves of the event reading
  * different wording for the same challenge, with nothing to notice it -- the
  * canvas shows the Round 1 row. A winner is the opposite: each half is its own
- * competition between different teams, so it must never cross rounds.
+ * competition between different teams, so picking one must never cross rounds.
+ *
+ * Clearing a winner because the task stopped being a competition is the one
+ * exception, and lands on every row: `scoring_mode` is itself per-slug, so both
+ * halves stop being a competition together and both winners have to go with it.
  */
 export async function PATCH(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
@@ -97,7 +101,9 @@ export async function PATCH(req: Request) {
   if (Number.isFinite(Number(b.points)) && Number(b.points) > 0) task.points = Number(b.points);
   if (["fixed", "quantity", "competition"].includes(b.scoringMode)) task.scoring_mode = b.scoringMode;
   // Moving a task off the leader bonus drops any winner with it, or the column
-  // would keep quietly paying a bonus the task no longer has.
+  // would keep quietly paying a bonus the task no longer has. Slug-scoped like
+  // the mode change that triggers it, so both halves of a secret clear together
+  // -- unlike picking a winner, which is per row. See the docblock above.
   if (task.scoring_mode && task.scoring_mode !== "competition") task.winner_team_id = null;
   if (typeof b.measurementLabel === "string") task.measurement_label = b.measurementLabel.trim();
   for (const [input, key] of [

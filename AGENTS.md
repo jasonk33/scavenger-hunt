@@ -184,9 +184,11 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
   so the number bought nothing. **Do not reintroduce a live leader, and do not put a score
   box back on a competition task.** `supabase/migrations/20260826170000_round_end_competition_winner.sql`
   is the full argument.
-- `winner_team_id` is **per row, so per round** — like `revealed_at` and unlike every other
-  task field, which the Admin PATCH writes by slug. Each half of the event is a separate
-  competition between different teams. It is also **never snapshotted onto a submission**: it
+- `winner_team_id` is **per row, so per round** when it is picked — like `revealed_at` and
+  unlike every other task field, which the Admin PATCH writes by slug. Each half of the event
+  is a separate competition between different teams. Clearing it because the task stopped
+  being a competition is the exception and writes by slug, following the `scoring_mode` change
+  that triggers it. It is also **never snapshotted onto a submission**: it
   is chosen long after those rows were judged, so `points_awarded` holds the baseline and the
   bonus is added on read.
 

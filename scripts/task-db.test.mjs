@@ -176,6 +176,27 @@ test("an update carries no field the caller did not name", async () => {
   }
 });
 
+test("moving a task off the leader bonus clears its winner", async () => {
+  // team_scores reads coalesce(scoring_mode_snapshot, tasks.scoring_mode), so an
+  // already-judged row keeps its 'competition' snapshot -- a winner left behind
+  // here goes on paying a bonus for a task that is no longer a competition.
+  for (const mode of ["fixed", "quantity"]) {
+    const db = fakeDb();
+    await updateTask(db, "r1-01", { scoringMode: mode });
+    assert.equal(writeOf(db).body.winner_team_id, null, `${mode} must clear the winner`);
+  }
+});
+
+test("staying on the leader bonus leaves the winner alone", async () => {
+  const db = fakeDb();
+  await updateTask(db, "r1-01", { scoringMode: "competition" });
+  assert.ok(!("winner_team_id" in writeOf(db).body), "an unrelated edit must not clear a winner");
+
+  const other = fakeDb();
+  await updateTask(other, "r1-01", { points: 5 });
+  assert.ok(!("winner_team_id" in writeOf(other).body), "a points edit must not clear a winner");
+});
+
 test("updating a secret writes both rounds in ONE statement", async () => {
   // Two statements would leave a window where Round 1 and Round 2 players are
   // looking at different wording for the same challenge, and a crash between

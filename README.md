@@ -41,7 +41,7 @@ they are not the location for new changes.
   changes. It is one transaction, so a failure leaves nothing half-applied.
 - `supabase/migrate-competitive-scoring.sql` — adds fixed, measurable, and
   competition scoring modes. Existing tasks stay fixed-value tasks. Run it before
-  configuring a task with a measurement or live leader bonus.
+  configuring a task with a measurement or a leader bonus.
 - `supabase/migrate-simple-scoring.sql` — simplifies measurable scoring to
   baseline plus points for every counted item. Run this after the earlier
   competitive-scoring migration.
@@ -93,9 +93,12 @@ something. Use `seed:reset` to clear your own testing before the day.
 
 Task scoring starts at the normal point tier. In Admin or the planner, choose
 `Extra per item` for values such as shirts or signatures, or `Leader bonus`
-for a task where the current highest measured result gets the bonus. Judges enter
-the number of extra items or the result to compare, never arbitrary points. Tied competition leaders each
-receive the bonus, and the leaderboard recalculates live as teams improve.
+for a task where the best entry earns extra. Judges only ever enter the number of
+extra items, never arbitrary points — a leader-bonus task is approved or rejected
+at face value. Once a round is over, pick the winning team for each leader bonus
+in Admin; nothing is awarded until you do, and Admin counts how many are still
+undecided. Players never see a running leader, so nobody spends the round redoing
+a task to overtake someone.
 
 ### 4. Edit the tasks and the roster
 
