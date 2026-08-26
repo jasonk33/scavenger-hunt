@@ -333,6 +333,12 @@ function JudgeQueue() {
               >
                 {current.teamName}
               </button>
+              {/* What this decision is worth. Removed once as redundant, which
+                  left the judge approving and rejecting with no idea whether a
+                  task was worth 1 or 10 -- it appears nowhere else on the
+                  screen. For a quantity task it is the baseline, and the rate
+                  that sits beside the count box below completes it. */}
+              <span className="pill pill-solid push">{current.taskPoints} pts</span>
             </div>
             <div className="byline name muted tiny">{current.playerName}</div>
           </div>
@@ -421,6 +427,12 @@ function JudgeQueue() {
                   onChange={(e) => setMeasurement(e.target.value)}
                   style={{ width: "100%" }}
                 />
+              </div>
+              {/* Without the rate the count is a number with no meaning: the
+                  judge types 3 and cannot tell whether that bought 3 points or
+                  30. */}
+              <div className="muted tiny" style={{ marginTop: 6 }}>
+                +{current.pointsPerUnit} each, on top of the {current.taskPoints} above
               </div>
             </div>
           )}

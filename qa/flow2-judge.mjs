@@ -80,12 +80,20 @@ try {
   });
   check("submitted photo actually renders in the judge card", decoded, JSON.stringify(mediaOk));
 
-  const approveLabel = await page.getByRole("button", { name: /^Approve/ }).innerText();
-  note(`approve button reads: ${approveLabel.replace(/\s+/g, " ")}`);
+  /*
+   * What the decision is worth has to be on screen somewhere before the judge
+   * commits to it. It used to be on the Approve button, then moved to a pill in
+   * the card header -- so this asserts the judge card carries the value rather
+   * than naming the control that happens to hold it today. It went missing from
+   * both for three commits without anything noticing.
+   */
+  const cardText = await page.locator(".card").first().innerText();
+  const pointsShown = new RegExp(`\\b${tasks[0].points}\\s*pts\\b`).test(cardText);
+  note(`judge card points: ${(cardText.match(/\d+\s*pts/) ?? ["none"])[0]}`);
   check(
-    "approve button shows the task's own value",
-    new RegExp(`\\b${tasks[0].points}\\b`).test(approveLabel),
-    approveLabel
+    "judge card shows the task's own value",
+    pointsShown,
+    cardText.replace(/\s+/g, " ").slice(0, 120)
   );
   await page.getByRole("button", { name: /^Approve/ }).click();
   await page.waitForTimeout(1500);
