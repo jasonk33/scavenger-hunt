@@ -27,7 +27,7 @@ const [{ data: settings }, { data: players }, { data: teams }, { data: roster },
     admin.from("players").select("id,name"),
     admin.from("teams").select("id,name,round"),
     admin.from("roster").select("round,player_id,team_id"),
-    admin.from("tasks").select("id,round,slug,title,points,requires_video,is_secret,revealed_at,active"),
+    admin.from("tasks").select("id,round,slug,title,points,prop,requires_video,is_secret,revealed_at,active"),
     admin.from("submissions").select("id,status"),
   ]);
 
@@ -110,6 +110,30 @@ check(split.length === 0, `all ${paired} secret challenges match across both rou
     `open the planner and re-type the field to write both rounds at once`);
 check(lonely.length === 0, `every secret challenge exists in both rounds`,
   `marked secret but only in one round, so half the event will never see it: ${lonely.join(", ")}`);
+
+// Props are packed into a goodie bag per round, so a prop needed in both rounds
+// has to be bought and packed twice -- and when it isn't, the second round's
+// task is simply undoable and nothing about the app looks wrong. Secrets are
+// exempt because they exist in both rounds by design, so a secret needing a prop
+// would be a permanent false positive here.
+//
+// This can only see props that are declared. A task that names its prop in the
+// title and leaves the column empty is invisible to it -- which is exactly how
+// the saltines ended up split across both rounds unnoticed -- so a new task that
+// needs something has to say so in `prop` rather than implying it in the title.
+const propRounds = new Map();
+for (const t of tasks ?? []) {
+  if (t.active === false || t.is_secret || !t.prop) continue;
+  if (!propRounds.has(t.prop)) propRounds.set(t.prop, new Map());
+  const rounds = propRounds.get(t.prop);
+  rounds.set(t.round, [...(rounds.get(t.round) ?? []), t.slug]);
+}
+const splitProps = [...propRounds.entries()].filter(([, rounds]) => rounds.size > 1);
+check(splitProps.length === 0, `all ${propRounds.size} props are needed in one round only`,
+  `needed in both rounds, so it has to go in both bags: ${splitProps
+    .map(([prop, rounds]) =>
+      `${prop} (${[...rounds.entries()].sort().map(([r, slugs]) => `R${r}: ${slugs.join(", ")}`).join("; ")})`)
+    .join(" · ")}`, false);
 
 check(env.SUPABASE_ANON_KEY?.startsWith("ey"), "upload key is the legacy anon JWT",
   "SUPABASE_ANON_KEY is not a JWT — uploads will fail. It must be the legacy anon key.");
