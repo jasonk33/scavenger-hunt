@@ -252,6 +252,39 @@ real device.
   decision made calmly after the round, not a score entered under queue pressure.
 - Jason and Anna organize and are **not** players.
 
+## The room — facts about the day, not inferences to re-derive
+
+Task content only makes sense against these. They are not visible in the schema, so an agent
+that reasons from the data alone will invent a different party and give confident advice about
+it. **Every one of these has already been guessed wrong.**
+
+- **Everyone already knows everyone.** ~24 adult friends at Jason's birthday, not colleagues
+  and not strangers. There is no ice to break and no rapport curve: a task is not "harder in
+  Round 1 because they only just met."
+- **The remix destroys teammate continuity, it does not build it.** Round 2 puts a player with
+  different people, so nothing about a task's social cost can be justified by time spent with
+  *that* team. Round 1 and Round 2 differ by the clock and the drinking, and not much else.
+- **Round order is thematic and weak.** Do not propose wholesale re-arrangements of tasks
+  between rounds on a "warm-up then escalate" theory. It has been tried and rejected.
+- **Jason buys and packs the props himself**, into a goodie bag per round. An empty `prop`
+  field is bookkeeping, not a missing item, and "you forgot to buy X" is not a finding.
+  What *is* worth reporting: a prop needed in **both** rounds (it has to go in both bags), or
+  a task whose wording silently assumes a prop that was never going to be bought — `r2-14`
+  lost "made from something off the street" to a rewrite and quietly started demanding rings.
+
+**The rule this exists to enforce: do not infer a fact about the guests, the venue, the day,
+or how a field behaves — check it, or ask.** Repeated failures in one session came from
+asserting plausible-sounding facts and building on them, and the cost lands on whoever reads
+the confident wrong answer.
+
+## Field semantics that get assumed wrong
+
+- **`measurement_label` is `quantity`-only.** `judge/page.tsx` gates it behind
+  `scoringMode === "quantity"` and `submit/page.tsx` uses it for the per-unit hint. The Admin
+  "Leader bonuses" picker renders the **title**, the bonus and a team dropdown — never the
+  label. So on a `competition` task the label is dead data, and **the winner criterion has
+  nowhere to live but the title.** Setting the label instead accomplishes nothing.
+
 ## Sharp edges
 
 - `npm run seed` **and** `npm run seed:reset` both delete every submission and every object in
