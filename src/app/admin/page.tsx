@@ -490,7 +490,10 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   const [editing, setEditing] = useState<string | null>(null);
 
   const tasks = useMemo(() => data.tasks.filter((t) => t.round === round), [data.tasks, round]);
-  const secrets = tasks.filter((t) => t.is_secret);
+  // Cut tasks are excluded for the same reason as the contests below: revealing
+  // one does nothing, because /api/state drops inactive rows before it checks
+  // revealed_at. Leaving them in showed every retired secret with a live button.
+  const secrets = tasks.filter((t) => t.is_secret && t.active);
   // Leader bonuses are decided after the round, so this list is the checklist of
   // what still owes a decision. Cut tasks are excluded: nobody could submit to
   // them, so there is nothing to award.

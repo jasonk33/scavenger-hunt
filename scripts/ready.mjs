@@ -48,8 +48,8 @@ const leftovers = [
 check(leftovers.length === 0, "no test fixtures left behind",
   `test fixtures still present: ${leftovers.join(", ")}`);
 
-const revealed = (tasks ?? []).filter((t) => t.is_secret && t.revealed_at);
-check(revealed.length === 0, `all ${(tasks ?? []).filter((t) => t.is_secret).length} secret challenges still hidden`,
+const revealed = (tasks ?? []).filter((t) => t.is_secret && t.active && t.revealed_at);
+check(revealed.length === 0, `all ${(tasks ?? []).filter((t) => t.is_secret && t.active).length} secret challenges still hidden`,
   `secret challenge(s) already revealed: ${revealed.map((t) => t.title).join(", ")} — Admin → tasks → tap "Live" to hide again`);
 
 const rostered = new Set((roster ?? []).filter((r) => r.round === round).map((r) => r.player_id));
