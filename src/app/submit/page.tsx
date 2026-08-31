@@ -404,6 +404,14 @@ export default function SubmitPage() {
   // is allowed. Written out twice they agreed only by copy-paste.
   const uploadBlocked = Boolean(closed) || !data?.team || job?.status === "uploading";
 
+  /* Which control actually emptied the saved list. The unsaved empty state
+     below already branches on this; the saved one used to name the points
+     filter unconditionally, which told a player looking at a chip row reading
+     "All" to go and clear a filter they had never set. Naming the wrong
+     control is the same small bug both empty states exist to avoid. */
+  const savedNarrowedBy =
+    tier !== null && q.trim() ? "both" : tier !== null ? "tier" : "search";
+
   return (
     <>
       <input
@@ -626,13 +634,21 @@ export default function SubmitPage() {
               ? "Nothing saved yet"
               : savedCount === 0
                 ? "None of your saved tasks are in this round"
-                : "No saved tasks match those filters"}
+                : savedNarrowedBy === "tier"
+                  ? `None of your saved tasks are worth ${tier} point${tier === 1 ? "" : "s"}`
+                  : savedNarrowedBy === "both"
+                    ? "No saved tasks match those filters"
+                    : "No saved tasks match that search"}
           </b>
           {saved.size === 0
             ? "Tap ☆ on any task to keep it here for later."
             : savedCount === 0
               ? "This half of the hunt has its own task list — star the ones you want from it."
-              : "Clear the points filter or the search to see the rest of your saved tasks."}
+              : savedNarrowedBy === "tier"
+                ? "Tap All to see the rest of your saved tasks."
+                : savedNarrowedBy === "both"
+                  ? "Clear the points filter or the search to see the rest of your saved tasks."
+                  : "Clear the search to see the rest of your saved tasks."}
           <div>
             <button
               className="btn btn-sm"

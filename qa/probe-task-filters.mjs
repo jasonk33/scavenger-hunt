@@ -206,6 +206,35 @@ try {
   check("and the fixture tier's chip is gone with its tasks",
     !(await chips(page).allInnerTexts()).map((s) => s.trim()).includes(`${TIER} pts`),
     JSON.stringify((await chips(page).allInnerTexts()).map((s) => s.trim())));
+
+  console.log("\n8. Each empty state blames only the filter that is actually on");
+  /* The saved and points filters narrow the same list, so the saved empty state
+     has to name whichever one is really responsible. It used to name the points
+     filter unconditionally, which told a player looking at a chip row reading
+     "All" to go and clear a filter they had never set -- the same misdirection
+     the unsaved empty state above branches to avoid. Search-only is the case
+     that catches it, because there the points filter is provably off. */
+  for (const id of ids) {
+    await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({ id, active: true }) });
+  }
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForTimeout(1800);
+  await page.locator(".card-flat").first().getByRole("button", { name: "Save for later" }).click();
+  await page.waitForTimeout(300);
+  await page.locator(".saved-filter").click();
+  await page.waitForTimeout(300);
+  await page.getByPlaceholder("Search tasks").fill("__qa nothing matches this");
+  await page.waitForTimeout(500);
+
+  const activeChip = (await page.locator(".tier-filter.is-on").innerText()).trim();
+  const savedEmpty = await page.locator(".empty").innerText();
+  note(`points chip on: ${JSON.stringify(activeChip)}; empty reads: ${savedEmpty.replace(/\s+/g, " ")}`);
+  check("the points filter really is off for this case", activeChip === "All", activeChip);
+  check("the saved empty state does not blame a points filter that is not set",
+    !/points filter/i.test(savedEmpty),
+    `told the player to clear a points filter while the chip row reads "All": ${JSON.stringify(savedEmpty.replace(/\s+/g, " "))}`);
+  check("and it names the search, which is what actually emptied the list",
+    /search/i.test(savedEmpty), JSON.stringify(savedEmpty.replace(/\s+/g, " ")));
 } finally {
   if (browser) await browser.close();
   await teardownTasks();
