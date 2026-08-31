@@ -145,6 +145,24 @@ h2 {
   margin: 22px 0 8px;
 }
 
+/* An .eyebrow that stays on screen while you scroll its section, so a player
+   part-way down a long list can still see which points tier they are reading.
+
+   `top` is the measured height of the sticky nav-and-notice bar rather than a
+   constant, because that bar grows by however many lines a broadcast notice
+   wraps to; a hardcoded offset would put this heading behind the notice the
+   moment an organizer set one. The background is opaque so cards scroll under
+   it, and the bottom padding replaces .eyebrow's margin so that background
+   covers the gap instead of leaving a transparent stripe cards show through. */
+.tier-head {
+  position: sticky;
+  top: var(--topbar-h, 0px);
+  z-index: 5;
+  margin-bottom: 0;
+  padding: 6px 0 8px;
+  background: var(--bg);
+}
+
 /* Standfirst under an h1. */
 .lede {
   color: var(--muted);
@@ -394,7 +412,8 @@ h2 {
   color: var(--muted);
 }
 .btn-star.is-on,
-.saved-filter.is-on {
+.saved-filter.is-on,
+.tier-filter.is-on {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-weak);

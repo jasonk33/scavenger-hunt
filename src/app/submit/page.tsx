@@ -104,6 +104,8 @@ export default function SubmitPage() {
   // -- no frame where every task claims to be unsaved.
   const [saved, setSavedState] = useState<Set<string>>(new Set());
   const [onlySaved, setOnlySaved] = useState(false);
+  /** Show one points tier only, or all of them. Navigation, not scoring. */
+  const [tier, setTier] = useState<number | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [switching, setSwitching] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -161,8 +163,25 @@ export default function SubmitPage() {
     const list = data?.tasks ?? [];
     const needle = q.trim().toLowerCase();
     const found = needle ? list.filter((t) => t.title.toLowerCase().includes(needle)) : list;
-    return onlySaved ? found.filter((t) => saved.has(t.id)) : found;
-  }, [data, q, onlySaved, saved]);
+    const tiered = tier === null ? found : found.filter((t) => t.points === tier);
+    return onlySaved ? tiered.filter((t) => saved.has(t.id)) : tiered;
+  }, [data, q, tier, onlySaved, saved]);
+
+  /* Derived from the round's whole task list rather than from `tasks`, for the
+     same reason the saved count is: the chips must not rearrange themselves
+     under the thumb as the player types, and a chip that vanished while its own
+     filter was still on would leave them on an empty list with nothing marked
+     as the cause of it. That last case is not hypothetical -- an organizer
+     cutting the last task of a tier empties it out from under whoever is
+     reading it -- so the selected tier is added back in even once no task
+     carries it, exactly as the saved chip stays put at zero saved tasks.
+     Tiers are not hardcoded: they are edited live from the canvas, and the
+     7-pointers were cut entirely at one point. */
+  const tiers = useMemo(() => {
+    const set = new Set((data?.tasks ?? []).map((t) => t.points));
+    if (tier !== null) set.add(tier);
+    return [...set].sort((a, b) => a - b);
+  }, [data, tier]);
 
   /* Counted against the round's live task list rather than the stored set, so
      ids left behind by the remix or by a task an organizer cut never inflate
@@ -549,6 +568,34 @@ export default function SubmitPage() {
         style={{ margin: "6px 0 4px" }}
       />
 
+      {/* Points chips, above the saved filter because on a list this long the
+          usual question is "what's still worth 10" rather than "what did I
+          star". Rendered whenever there is more than one tier to choose
+          between -- and whenever one is chosen, even if the round has since
+          shrunk to a single tier, so the control that set the filter can never
+          disappear while the filter is still on. */}
+      {data && (tiers.length > 1 || tier !== null) && (
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", margin: "0 0 4px" }}>
+          <button
+            className={`btn btn-sm tier-filter${tier === null ? " is-on" : ""}`}
+            aria-pressed={tier === null}
+            onClick={() => setTier(null)}
+          >
+            All
+          </button>
+          {tiers.map((p) => (
+            <button
+              key={p}
+              className={`btn btn-sm tier-filter${tier === p ? " is-on" : ""}`}
+              aria-pressed={tier === p}
+              onClick={() => setTier((v) => (v === p ? null : p))}
+            >
+              {p} pt{p === 1 ? "" : "s"}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Stays on screen whenever the filter is ON, even at zero saved tasks.
           Hiding it at that moment would take away the only control that undoes
           it and leave the player staring at an empty list. It only disappears
@@ -579,18 +626,21 @@ export default function SubmitPage() {
               ? "Nothing saved yet"
               : savedCount === 0
                 ? "None of your saved tasks are in this round"
-                : "No saved tasks match that search"}
+                : "No saved tasks match those filters"}
           </b>
           {saved.size === 0
             ? "Tap ☆ on any task to keep it here for later."
             : savedCount === 0
               ? "This half of the hunt has its own task list — star the ones you want from it."
-              : "Clear the search to see the rest of your saved tasks."}
+              : "Clear the points filter or the search to see the rest of your saved tasks."}
           <div>
             <button
               className="btn btn-sm"
               style={{ marginTop: 12 }}
-              onClick={() => setOnlySaved(false)}
+              onClick={() => {
+                setOnlySaved(false);
+                setTier(null);
+              }}
             >
               Show all tasks
             </button>
@@ -601,13 +651,21 @@ export default function SubmitPage() {
       {data && grouped.length === 0 && !onlySaved && (
         <div className="empty">
           <b>No tasks match</b>
-          Try a shorter search.
+          {/* Three causes, and only one of them is the search box. A player
+              filtered to a tier an organizer has just cut every task out of has
+              typed nothing, and telling them to shorten a search they never
+              made sends them hunting for the wrong thing. */}
+          {tier === null
+            ? "Try a shorter search."
+            : q.trim()
+              ? "Try a shorter search, or tap All to look at every points tier."
+              : `Nothing is worth ${tier} point${tier === 1 ? "" : "s"} in this round any more — tap All to see the rest.`}
         </div>
       )}
 
       {grouped.map(([points, list]) => (
         <section key={points}>
-          <h2 className="eyebrow">
+          <h2 className="eyebrow tier-head">
             {points} point{points === 1 ? "" : "s"}
           </h2>
           <div className="stack">
@@ -720,6 +778,15 @@ function TaskRow({
             </button>
           </div>
           <div className="row" style={{ gap: 6, marginTop: 7, flexWrap: "wrap" }}>
+            {/* First, and on every card. The tier headings answer "where am I"
+                while scrolling, but once a card is the one being read -- or
+                reached from the rejected list, or a search -- what it is worth
+                has to be on the card itself. Solid because it is the one thing
+                on this row that is true of every task, matching how /judge
+                already shows the same number to the organizer. */}
+            <span className="pill pill-solid">
+              {task.points} pt{task.points === 1 ? "" : "s"}
+            </span>
             {task.requires_video && <span className="pill">video only</span>}
             {task.scoring_mode === "quantity" && (
               <span className="pill pill-accent">
@@ -731,9 +798,9 @@ function TaskRow({
                 best one wins +{task.competition_bonus} at the end of the round
               </span>
             )}
-            {task.is_secret && (
-              <span className="pill pill-warn">secret · {task.points} pts</span>
-            )}
+            {/* Just the word: the points pill beside it already carries the
+                number this used to have to spell out on its own. */}
+            {task.is_secret && <span className="pill pill-warn">secret</span>}
             {task.competition && (
               <span className="pill pill-wrap">
                 {task.competition.team} won +{task.competition.bonus}

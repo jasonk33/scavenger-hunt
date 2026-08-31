@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import Nav from "@/components/Nav";
-import Notice from "@/components/Notice";
+import Topbar from "@/components/Topbar";
 import { THEME_SCRIPT } from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
@@ -30,10 +29,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
-        <header className="topbar">
-          <Nav />
-          <Notice />
-        </header>
+        <Topbar />
         <div className="wrap">{children}</div>
       </body>
     </html>
