@@ -376,9 +376,9 @@ h2 {
   border-radius: 10px;
 }
 /* The save-for-later star, on every task card in the list. It stays quiet
-   until it is actually on, because ~38 cards each shouting an accent colour is
-   worse than no shortlist at all. Fixed width so the stars line up down the
-   page however far a task title wraps.
+   until it is actually on, because a whole list of cards each shouting an
+   accent colour is worse than no shortlist at all. Fixed width so the stars
+   line up down the page however far a task title wraps.
 
    Both states are built from existing palette variables, so unlike a literal
    colour this needs no matching edit in the two dark-mode blocks above. */

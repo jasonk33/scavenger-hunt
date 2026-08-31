@@ -174,11 +174,20 @@ export default function SubmitPage() {
 
   const toggleSaved = (taskId: string) => {
     if (!me) return;
-    const next = new Set(saved);
+    /* Re-read storage at the moment of the tap rather than trusting the set
+       this render closed over. Two things break if we trust the closure: a
+       second tab (or a duplicate of this page opened from the QR code) holds a
+       snapshot from ITS mount, and writing the whole set back would silently
+       destroy every star the other tab added. Reading first makes localStorage
+       the single source of truth and makes the write a merge, so no tap is ever
+       lost. It also removes the stale-closure hazard in two toggles dispatched
+       from one commit. The other tab's display stays stale until it reloads,
+       which is cosmetic -- nothing is lost. */
+    const next = getSaved(me.id);
     if (next.has(taskId)) next.delete(taskId);
     else next.add(taskId);
-    setSavedState(next);
     setSaved(me.id, next);
+    setSavedState(next);
   };
 
   const grouped = useMemo(() => {
@@ -560,10 +569,23 @@ export default function SubmitPage() {
 
       {data && grouped.length === 0 && onlySaved && (
         <div className="empty">
-          <b>{savedCount === 0 ? "Nothing saved yet" : "No saved tasks match that search"}</b>
-          {savedCount === 0
+          {/* Three different truths, and saying the wrong one is its own small
+              bug: after the remix a player who saved five Round 1 tasks has a
+              full shortlist and an empty round, which is not "nothing saved".
+              saved.size is what they stored; savedCount is what survives into
+              this round's list. */}
+          <b>
+            {saved.size === 0
+              ? "Nothing saved yet"
+              : savedCount === 0
+                ? "None of your saved tasks are in this round"
+                : "No saved tasks match that search"}
+          </b>
+          {saved.size === 0
             ? "Tap ☆ on any task to keep it here for later."
-            : "Clear the search to see the rest of your saved tasks."}
+            : savedCount === 0
+              ? "This half of the hunt has its own task list — star the ones you want from it."
+              : "Clear the search to see the rest of your saved tasks."}
           <div>
             <button
               className="btn btn-sm"
@@ -681,13 +703,13 @@ function TaskRow({
     <div className={`card card-flat${approved ? " card-done" : ""}`}>
       <div className="task-content">
         <div>
-          <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
-            <div style={{ fontWeight: 600, lineHeight: 1.35, flex: 1, minWidth: 0 }}>
+          <div className="row" style={{ alignItems: "flex-start" }}>
+            <div className="grow" style={{ fontWeight: 600, lineHeight: 1.35 }}>
               {task.title}
             </div>
-            {/* Sits on the title line rather than in the action row below: with
-                ~38 tasks to triage this gets tapped far more often than Upload,
-                and it must not push the real actions around as titles wrap. */}
+            {/* Sits on the title line rather than in the action row below: on a
+                list this long it gets tapped far more often than Upload, and it
+                must not push the real actions around as titles wrap. */}
             <button
               className={`btn btn-sm btn-star${saved ? " is-on" : ""}`}
               aria-label="Save for later"

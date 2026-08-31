@@ -103,8 +103,11 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
 - `tasks(round, slug, title, points, scoring_mode, is_secret, revealed_at, active)` plus
   planning-only columns (`doc_title`, `doc_order`, the five ratings, `prop`, `note`,
   `rewrite`, `tier_ok`)
-  that no player-facing query selects. Point tiers **1/3/5/7/10**; 7-pointers are the secret
-  challenges, revealed manually from Admin (never on a timer). **`sort_order` is a generated
+  that no player-facing query selects. Point tiers are **1/3/5/7/10**, but do not infer a
+  task's kind from its tier — check the data. The original design made every secret a
+  7-pointer; as of the last check every 7-pointer is cut (`active = false`) and the one live
+  secret per round is a 5-pointer, so the active tiers are 1/3/5/10. Secrets are revealed
+  manually from Admin (never on a timer). **`sort_order` is a generated
   column** — `(is_secret, points, doc_order)` — so nothing maintains it and it cannot drift.
   It is the only thing ordering the player's task list.
 - **`scoring_mode` is `fixed` | `quantity` | `competition`**, and it decides what the judge is
@@ -250,13 +253,17 @@ real device.
   worth. The one number they type is the `quantity` count — an objective tally of what is in
   the photo, at a rate the task fixed in advance — and the `competition` winner is a separate
   decision made calmly after the round, not a score entered under queue pressure.
-- **Saved tasks are localStorage, not a table.** The star on each task card and the
-  "Saved" filter on `/submit` are a private triage note for a player facing ~38 tasks,
-  written to `sh.saved.<playerId>` by `getSaved`/`setSaved` in `src/lib/client.ts`. Keyed
-  by player id because a phone can change hands. Do not migrate this to the database:
-  it would add a migration, a route and 5s of poll latency to a tap, and buy nothing the
-  afternoon needs. The count is computed against the live task list, so ids left by the
-  remix or by a cut task never inflate it.
+- **Saved tasks are localStorage, not a table.** Not to be confused with the removed award
+  star above — this one is player-side, private, and touches no score. The ☆ on each task
+  card and the "Saved" filter on `/submit` are a triage note for a guest facing a task list
+  far longer than 90 minutes allows, written to `sh.saved.<playerId>` by `getSaved`/
+  `setSaved` in `src/lib/client.ts`. Keyed by player id because a phone can change hands.
+  Do not migrate this to the database: it would add a migration, a route and 5s of poll
+  latency to a tap, and buy nothing the afternoon needs. Two details are load-bearing:
+  `toggleSaved` **re-reads storage at the moment of the tap** rather than trusting the set
+  the render closed over, because a second tab holds its own snapshot and a whole-set write
+  would silently destroy its stars; and the count is computed against the live task list, so
+  ids left by the remix or by a cut task never inflate it.
 - Jason and Anna organize and are **not** players.
 
 ## The room — facts about the day, not inferences to re-derive

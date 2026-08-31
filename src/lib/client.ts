@@ -26,9 +26,9 @@ const SAVED_PREFIX = "sh.saved.";
 /**
  * The tasks a player has starred to come back to.
  *
- * Deliberately local to the device rather than a table. A round puts ~38 tasks
- * in front of a guest in 90 minutes, which nobody can hold in their head, but
- * the shortlist is a private triage note rather than shared team state -- so it
+ * Deliberately local to the device rather than a table. A round puts far more
+ * tasks in front of a guest than anyone can hold in their head, but the
+ * shortlist is a private triage note rather than shared team state -- so it
  * needs no schema, no route and no poll, and a tap lands instantly instead of
  * at the next 5-second tick.
  *

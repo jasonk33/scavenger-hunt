@@ -15,7 +15,7 @@
 import { chromium } from "@playwright/test";
 import {
   BASE, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings,
-  asPlayer, check, note, summary, call,
+  asPlayer, check, note, summary, call, pollNow, shot,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -107,10 +107,18 @@ try {
     "the only control that can undo the filter vanished — the player is stuck on an empty list");
   const escape = page.getByRole("button", { name: "Show all tasks" });
   check("the empty state offers a way back to the full list", await escape.count() > 0);
-  const emptyText = await page.locator(".empty").innerText().catch(() => "");
+  /* Assert on exactly one .empty before reading it. An earlier version read
+     innerText() with a .catch(() => "") fallback, which passed on the empty
+     string -- so the very regression this exists to catch (dropping the
+     `!onlySaved` guard, rendering BOTH empty states at once) tripped
+     Playwright's strict-mode multi-match, got swallowed, and reported green. */
+  const emptyCount = await page.locator(".empty").count();
+  check("exactly one empty state renders, never both stacked", emptyCount === 1,
+    `found ${emptyCount} .empty elements`);
+  const emptyText = emptyCount === 1 ? await page.locator(".empty").innerText() : "";
   note(`empty state reads: ${emptyText.replace(/\s+/g, " ")}`);
   check("the empty state blames the saved filter, not the search box",
-    !/shorter search/i.test(emptyText), emptyText);
+    emptyCount === 1 && !/shorter search/i.test(emptyText), emptyText);
 
   console.log("\n7. Escaping restores the full list");
   await escape.click();
@@ -158,6 +166,45 @@ try {
   check("and the stale id does not inflate the saved filter",
     await filterChip(alicePage).count() === 0,
     `chip still shown: ${await filterChip(alicePage).innerText().catch(() => "")}`);
+
+  console.log("\n11. Being cut out from under the filter, with no action by the player");
+  /* The strand shape step 10 cannot see: there the filter was off, so an empty
+     list was unremarkable. Here the player is actively filtered when an
+     organizer cuts their only saved task, and the change arrives on a poll
+     rather than a reload -- no tap of theirs is involved. If the chip were
+     hidden at savedCount === 0 they would be looking at an empty task list with
+     the control that caused it gone from the screen. */
+  await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({
+    id: taskIds[TITLES[1]], active: true }) });
+  await alicePage.reload({ waitUntil: "networkidle" });
+  await alicePage.waitForTimeout(1500);
+  await filterChip(alicePage).click();
+  await alicePage.waitForTimeout(400);
+  check("the player is filtered down to their one saved task",
+    (await visibleTitles(alicePage)).length === 1,
+    JSON.stringify(await visibleTitles(alicePage)));
+
+  await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({
+    id: taskIds[TITLES[1]], active: false }) });
+  await pollNow(alicePage);
+  await alicePage.waitForTimeout(1200);
+  check("the cut arrives on the poll without a reload",
+    await alicePage.getByText(TITLES[1], { exact: false }).count() === 0);
+  check("the filter chip survives being emptied by someone else",
+    await filterChip(alicePage).count() > 0,
+    "chip vanished on a poll -- the player is stranded on an empty list they did not empty");
+  const strandedEscape = alicePage.getByRole("button", { name: "Show all tasks" });
+  check("and the escape is still offered", await strandedEscape.count() > 0);
+  const strandedText = await alicePage.locator(".empty").innerText().catch(() => "");
+  note(`empty state reads: ${strandedText.replace(/\s+/g, " ")}`);
+  check("the empty state does not claim they saved nothing when they did",
+    !/Nothing saved yet/i.test(strandedText), strandedText);
+  await shot(alicePage, "saved-stranded-by-organizer");
+  await strandedEscape.click();
+  await alicePage.waitForTimeout(400);
+  check("escaping returns them to a populated list",
+    (await visibleTitles(alicePage)).length > 0,
+    JSON.stringify(await visibleTitles(alicePage)));
 } finally {
   if (browser) await browser.close();
   await teardownTasks();
