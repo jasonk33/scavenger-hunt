@@ -250,6 +250,13 @@ real device.
   worth. The one number they type is the `quantity` count — an objective tally of what is in
   the photo, at a rate the task fixed in advance — and the `competition` winner is a separate
   decision made calmly after the round, not a score entered under queue pressure.
+- **Saved tasks are localStorage, not a table.** The star on each task card and the
+  "Saved" filter on `/submit` are a private triage note for a player facing ~38 tasks,
+  written to `sh.saved.<playerId>` by `getSaved`/`setSaved` in `src/lib/client.ts`. Keyed
+  by player id because a phone can change hands. Do not migrate this to the database:
+  it would add a migration, a route and 5s of poll latency to a tap, and buy nothing the
+  afternoon needs. The count is computed against the live task list, so ids left by the
+  remix or by a cut task never inflate it.
 - Jason and Anna organize and are **not** players.
 
 ## The room — facts about the day, not inferences to re-derive

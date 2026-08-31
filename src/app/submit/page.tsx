@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, errorMessage, fmtBytes, getMe, inkOn, setMe, usePoll, type Me } from "@/lib/client";
+import { api, errorMessage, fmtBytes, getMe, getSaved, inkOn, setMe, setSaved, usePoll, type Me } from "@/lib/client";
 import { groupBy, NOTE_MAX } from "@/lib/groups";
 import { isJwt, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
 import EvidenceEntryCard, { type EvidenceEntry } from "@/components/EvidenceEntry";
@@ -99,6 +99,11 @@ export default function SubmitPage() {
   const router = useRouter();
   const [me, setMeState] = useState<Me | null>(null);
   const [q, setQ] = useState("");
+  // Loaded from localStorage alongside `me`, never before it. The task list is
+  // gated on `me`, so the saved set is always ready by the time a star renders
+  // -- no frame where every task claims to be unsaved.
+  const [saved, setSavedState] = useState<Set<string>>(new Set());
+  const [onlySaved, setOnlySaved] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [switching, setSwitching] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -121,7 +126,10 @@ export default function SubmitPage() {
   useEffect(() => {
     const m = getMe();
     if (!m) router.replace("/");
-    else setMeState(m);
+    else {
+      setMeState(m);
+      setSavedState(getSaved(m.id));
+    }
   }, [router]);
 
   const { data, reload, error } = usePoll<State>(
@@ -152,8 +160,26 @@ export default function SubmitPage() {
   const tasks = useMemo(() => {
     const list = data?.tasks ?? [];
     const needle = q.trim().toLowerCase();
-    return needle ? list.filter((t) => t.title.toLowerCase().includes(needle)) : list;
-  }, [data, q]);
+    const found = needle ? list.filter((t) => t.title.toLowerCase().includes(needle)) : list;
+    return onlySaved ? found.filter((t) => saved.has(t.id)) : found;
+  }, [data, q, onlySaved, saved]);
+
+  /* Counted against the round's live task list rather than the stored set, so
+     ids left behind by the remix or by a task an organizer cut never inflate
+     the number the chip shows. */
+  const savedCount = useMemo(
+    () => (data?.tasks ?? []).filter((t) => saved.has(t.id)).length,
+    [data, saved]
+  );
+
+  const toggleSaved = (taskId: string) => {
+    if (!me) return;
+    const next = new Set(saved);
+    if (next.has(taskId)) next.delete(taskId);
+    else next.add(taskId);
+    setSavedState(next);
+    setSaved(me.id, next);
+  };
 
   const grouped = useMemo(() => {
     const g = new Map<number, Task[]>();
@@ -514,7 +540,43 @@ export default function SubmitPage() {
         style={{ margin: "6px 0 4px" }}
       />
 
-      {data && grouped.length === 0 && (
+      {/* Stays on screen whenever the filter is ON, even at zero saved tasks.
+          Hiding it at that moment would take away the only control that undoes
+          it and leave the player staring at an empty list. It only disappears
+          when there is nothing saved AND the filter is already off, where there
+          is no state to strand. */}
+      {(savedCount > 0 || onlySaved) && (
+        <div className="row" style={{ margin: "0 0 4px" }}>
+          <button
+            className={`btn btn-sm saved-filter${onlySaved ? " is-on" : ""}`}
+            aria-pressed={onlySaved}
+            onClick={() => setOnlySaved((v) => !v)}
+          >
+            ★ Saved · {savedCount}
+          </button>
+          {onlySaved && <span className="muted tiny">showing saved only</span>}
+        </div>
+      )}
+
+      {data && grouped.length === 0 && onlySaved && (
+        <div className="empty">
+          <b>{savedCount === 0 ? "Nothing saved yet" : "No saved tasks match that search"}</b>
+          {savedCount === 0
+            ? "Tap ☆ on any task to keep it here for later."
+            : "Clear the search to see the rest of your saved tasks."}
+          <div>
+            <button
+              className="btn btn-sm"
+              style={{ marginTop: 12 }}
+              onClick={() => setOnlySaved(false)}
+            >
+              Show all tasks
+            </button>
+          </div>
+        </div>
+      )}
+
+      {data && grouped.length === 0 && !onlySaved && (
         <div className="empty">
           <b>No tasks match</b>
           Try a shorter search.
@@ -534,6 +596,8 @@ export default function SubmitPage() {
                 subs={byTask.get(t.id) ?? []}
                 disabled={uploadBlocked}
                 playerId={me.id}
+                saved={saved.has(t.id)}
+                onToggleSaved={() => toggleSaved(t.id)}
                 onPick={() => pickFor(t)}
                 onAddTo={(anchorId, note) => pickFor(t, { anchorId, note })}
                 onChanged={reload}
@@ -561,6 +625,8 @@ function TaskRow({
   subs,
   disabled,
   playerId,
+  saved,
+  onToggleSaved,
   onPick,
   onAddTo,
   onChanged,
@@ -569,6 +635,8 @@ function TaskRow({
   subs: Sub[];
   disabled: boolean;
   playerId: string;
+  saved: boolean;
+  onToggleSaved: () => void;
   onPick: () => void;
   onAddTo: (anchorId: string, note: string) => void;
   onChanged: () => void;
@@ -613,7 +681,22 @@ function TaskRow({
     <div className={`card card-flat${approved ? " card-done" : ""}`}>
       <div className="task-content">
         <div>
-          <div style={{ fontWeight: 600, lineHeight: 1.35 }}>{task.title}</div>
+          <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
+            <div style={{ fontWeight: 600, lineHeight: 1.35, flex: 1, minWidth: 0 }}>
+              {task.title}
+            </div>
+            {/* Sits on the title line rather than in the action row below: with
+                ~38 tasks to triage this gets tapped far more often than Upload,
+                and it must not push the real actions around as titles wrap. */}
+            <button
+              className={`btn btn-sm btn-star${saved ? " is-on" : ""}`}
+              aria-label="Save for later"
+              aria-pressed={saved}
+              onClick={onToggleSaved}
+            >
+              {saved ? "★" : "☆"}
+            </button>
+          </div>
           <div className="row" style={{ gap: 6, marginTop: 7, flexWrap: "wrap" }}>
             {task.requires_video && <span className="pill">video only</span>}
             {task.scoring_mode === "quantity" && (

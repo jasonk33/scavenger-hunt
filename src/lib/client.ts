@@ -21,6 +21,48 @@ export function setMe(me: Me | null) {
   else localStorage.removeItem(KEY);
 }
 
+const SAVED_PREFIX = "sh.saved.";
+
+/**
+ * The tasks a player has starred to come back to.
+ *
+ * Deliberately local to the device rather than a table. A round puts ~38 tasks
+ * in front of a guest in 90 minutes, which nobody can hold in their head, but
+ * the shortlist is a private triage note rather than shared team state -- so it
+ * needs no schema, no route and no poll, and a tap lands instantly instead of
+ * at the next 5-second tick.
+ *
+ * Keyed by player id because one phone can change hands mid-event (the submit
+ * page has a "pick a different name" flow). An unkeyed list would hand the new
+ * player the previous one's picks.
+ *
+ * Task ids are per-round rows, so a Round 1 list simply stops matching anything
+ * after the remix -- correct, since the second half is a different list. A task
+ * cut mid-event (active = false) leaves an id here that never matches again, so
+ * there is nothing to clean up.
+ */
+export function getSaved(playerId: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(SAVED_PREFIX + playerId);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+export function setSaved(playerId: string, ids: Set<string>) {
+  try {
+    if (ids.size) localStorage.setItem(SAVED_PREFIX + playerId, JSON.stringify([...ids]));
+    else localStorage.removeItem(SAVED_PREFIX + playerId);
+  } catch {
+    // A full or disabled store must not take the task list down with it: a star
+    // that fails to persist is a far better outcome than a screen that throws.
+  }
+}
+
 export async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
