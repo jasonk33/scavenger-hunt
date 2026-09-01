@@ -283,8 +283,11 @@ it. **Every one of these has already been guessed wrong.**
 - **Jason buys and packs the props himself**, into a goodie bag per round. An empty `prop`
   field is bookkeeping, not a missing item, and "you forgot to buy X" is not a finding.
   What *is* worth reporting: a prop needed in **both** rounds (it has to go in both bags), or
-  a task whose wording silently assumes a prop that was never going to be bought — `r2-14`
-  lost "made from something off the street" to a rewrite and quietly started demanding rings.
+  a task whose wording assumes a prop the `prop` column never declares — `r2-14` lost "made
+  from something off the street" to a rewrite and quietly started demanding rings.
+  **The fix for that is to ask and then declare the prop, never to reword the need away.**
+  Rewording it away has already been tried once and was wrong: Jason had bought fake
+  engagement rings, so `r2-14` asks for a real one and now names them in `prop`.
 
 **The rule this exists to enforce: do not infer a fact about the guests, the venue, the day,
 or how a field behaves — check it, or ask.** Repeated failures in one session came from
