@@ -148,8 +148,9 @@ const scoringMode = (v) => (["fixed", "quantity", "competition"].includes(v) ? v
  * wording and the evidence of what a task used to say, and slug/round/isSecret
  * together decide how many rows a task is. A patch that could move a task
  * between rounds, or turn one row into two, is a different operation from
- * editing one -- and `revealed_at` is not here either, because revealing a
- * secret is per-round and belongs to Admin on the day.
+ * editing one -- moving is `moveTask`, which has its own refusals and renumbers
+ * `doc_order` to match -- and `revealed_at` is not here either, because
+ * revealing a secret is per-round and belongs to Admin on the day.
  *
  * Every validator returns `undefined` for "not a legal value", which is what
  * drops the field. Returning the raw value instead would send it to a column
@@ -320,6 +321,13 @@ export async function rest(client, { method = "GET", path, body, prefer }) {
 
 const eq = (value) => `eq.${encodeURIComponent(value)}`;
 
+/**
+ * A refusal: the request was understood and is not allowed, as opposed to
+ * something going wrong. Tagged so a caller can answer 409 rather than 500 --
+ * "this cannot be done" and "the database is unreachable" must not look alike.
+ */
+const refuse = (message) => Object.assign(new Error(message), { refusal: true });
+
 // ── Queries ──────────────────────────────────────────────────────────────────
 
 /**
@@ -396,6 +404,83 @@ export async function updateTask(client, slug, patch) {
     throw new Error(`could not update task ${slug}: ${e.message}`);
   });
   return groupRows(updated)[0] ?? null;
+}
+
+/**
+ * Moves a task to the other half of the event.
+ *
+ * Its own operation rather than a field on `updateTask`, because `round` is not
+ * content: it decides which half a task is offered in, it is half of what makes
+ * a task's rows unique, and changing it has to renumber `doc_order` as well.
+ * Those are refusals and a second write, neither of which belongs in a
+ * per-field patch.
+ *
+ * What it deliberately does NOT touch is the point. A submission carries its
+ * own `round`, `team_id` and `task_points`, snapshotted at insert, so anything
+ * already played on this task in the round it is leaving goes on scoring
+ * exactly as it did. Moving a task changes where it is offered next; it never
+ * rewrites what already happened.
+ *
+ * @returns {Promise<object|null>} the moved task, or null if the slug is unknown.
+ */
+export async function moveTask(client, slug, round) {
+  if (typeof slug !== "string" || !slug) return null;
+  const target = Number(round);
+  if (![1, 2].includes(target)) throw refuse("a task can only be moved to Round 1 or Round 2");
+
+  // One read, unfiltered, because the destination's highest doc_order is needed
+  // as well as this task's own rows -- the same shape `addTask` uses.
+  const rows = await rest(client, {
+    path: `${TASK_TABLE}?select=slug,round,is_secret,doc_order,winner_team_id`,
+  }).catch((e) => {
+    throw new Error(`could not move task ${slug}: ${e.message}`);
+  });
+
+  const mine = rows.filter((r) => r.slug === slug);
+  if (!mine.length) return null;
+
+  if (mine.some((r) => r.is_secret)) {
+    throw refuse(
+      "A secret challenge runs in both halves of the event, so there is no round to move it to. " +
+        "Cut it and add a replacement in the round you want instead."
+    );
+  }
+
+  if (mine.some((r) => r.winner_team_id)) {
+    throw refuse(
+      "This task's leader bonus has already been awarded to a team in the round it is in. " +
+        "Clear the winner in Admin first, or the bonus would follow the task out of that round's standings."
+    );
+  }
+
+  const current = mine[0];
+  // Already there. Still a read, so the caller gets the task back rather than a
+  // silent no-op -- and no empty UPDATE to bump updated_at for an edit nobody
+  // made, and no renumbering of a doc_order that is already correct.
+  if (Number(current.round) === target) {
+    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&slug=${eq(slug)}` }).catch((e) => {
+      throw new Error(`could not read task ${slug}: ${e.message}`);
+    });
+    return groupRows(found)[0] ?? null;
+  }
+
+  // Last in the round it arrives in. doc_order is the tie-break inside a tier,
+  // and the number it carried from the other round was never ordered against
+  // this one -- it could land mid-list, or share a sort_order with a task that
+  // is already there and swap places with it between polls.
+  const lastOrder = rows
+    .filter((r) => Number(r.round) === target)
+    .reduce((max, r) => Math.max(max, Number(r.doc_order) || 0), 0);
+
+  const moved = await rest(client, {
+    method: "PATCH",
+    path: `${TASK_TABLE}?slug=${eq(slug)}&select=${SELECT}`,
+    body: { round: target, doc_order: lastOrder + 1, updated_at: new Date().toISOString() },
+    prefer: "return=representation",
+  }).catch((e) => {
+    throw new Error(`could not move task ${slug}: ${e.message}`);
+  });
+  return groupRows(moved)[0] ?? null;
 }
 
 /**

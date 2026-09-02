@@ -53,8 +53,8 @@
         </div>
 
         <p class="live-note">
-          Everything on this tab is live. Wording, points, video-only and cut all reach players
-          on their next refresh — there is nothing to publish.
+          Everything on this tab is live. Wording, points, round, video-only and cut all reach
+          players on their next refresh — there is nothing to publish.
         </p>
 
         <div class="add-box task-add-box">
@@ -227,6 +227,11 @@
           <button class="tier-dismiss ghost" hidden aria-label="Keep this tier">&times;</button>
           <span class="title" role="textbox" contenteditable="plaintext-only" spellcheck="true"></span>
           <span class="chips"></span>
+          <div class="seg round" role="group" aria-label="Round">
+            <button data-round="1">R1</button>
+            <button data-round="2">R2</button>
+            <button class="round-both" disabled title="A secret challenge runs in both halves of the event, so it has no round to move to.">Both</button>
+          </div>
           <div class="seg shown" role="group" aria-label="Live or cut">
             <button data-active="true" title="Players can see this task">In</button>
             <button data-active="false" title="Hide from players. Never deleted; points already scored stand.">X</button>

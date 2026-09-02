@@ -20,6 +20,7 @@ import {
   TIERS,
   addTask as insertTask,
   createTaskClient,
+  moveTask as moveTaskRound,
   readTasks,
   updateModel as writeModel,
   updateTask as patchTask,
@@ -49,6 +50,8 @@ const client = () => (db ??= createTaskClient());
  */
 export const loadTasks = () => readTasks(client());
 export const updateTask = (slug, patch) => patchTask(client(), slug, patch);
+/** Which half of the event a task is offered in. Its own write: see task-store.mjs. */
+export const moveTask = (slug, round) => moveTaskRound(client(), slug, round);
 export const addTask = (input) => insertTask(client(), input);
 export const updateModel = (patch) => writeModel(client(), patch);
 

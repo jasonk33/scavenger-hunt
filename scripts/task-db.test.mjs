@@ -19,7 +19,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { MODEL_KEY, TASK_TABLE, addTask, createTaskClient, readTasks, updateModel, updateTask } from "./task-store.mjs";
+import {
+  MODEL_KEY,
+  TASK_TABLE,
+  addTask,
+  createTaskClient,
+  moveTask,
+  readTasks,
+  updateModel,
+  updateTask,
+} from "./task-store.mjs";
 
 const ROW = {
   id: "uuid-1",
@@ -246,6 +255,86 @@ test("a failed update throws and names the task", async () => {
     () => updateTask(fakeDb({ failOn: TASK_TABLE }), "r1-01", { points: 5 }),
     /could not update task r1-01/
   );
+});
+
+// ── Moving between rounds ────────────────────────────────────────────────────
+
+/** Round 2 already has two tasks, so "last in the destination round" has a number to beat. */
+const R2_ROWS = [
+  { ...ROW, id: "uuid-9", slug: "r2-01", round: 2, doc_order: 4, title: "Already in R2" },
+  { ...ROW, id: "uuid-10", slug: "r2-02", round: 2, doc_order: 9, title: "Also in R2" },
+];
+
+test("a move writes the round and nothing else about the task", async () => {
+  const db = fakeDb({ rows: [ROW, ...R2_ROWS] });
+  const task = await moveTask(db, "r1-01", 2);
+  const write = writeOf(db);
+  assert.ok(write.url.includes("slug=eq.r1-01"), "scoped to one task");
+  assert.deepEqual(Object.keys(write.body).sort(), ["doc_order", "round", "updated_at"]);
+  assert.equal(write.body.round, 2);
+  assert.equal(task.round, 2);
+});
+
+test("a moved task lands last in the round it arrives in", async () => {
+  // doc_order is the tie-break inside a tier, so keeping the one it had in the
+  // round it left would drop it into the middle of a list it was never ordered
+  // against -- and could hand it a sort_order another task already has.
+  const db = fakeDb({ rows: [ROW, ...R2_ROWS] });
+  await moveTask(db, "r1-01", 2);
+  assert.equal(writeOf(db).body.doc_order, 10, "one past the highest in Round 2");
+});
+
+test("a move leaves every other task alone", async () => {
+  const db = fakeDb({ rows: [ROW, ...R2_ROWS] });
+  await moveTask(db, "r1-01", 2);
+  assert.deepEqual(
+    db.state.rows.map((r) => [r.slug, r.round, r.doc_order]),
+    [["r1-01", 2, 10], ["r2-01", 2, 4], ["r2-02", 2, 9]]
+  );
+});
+
+test("moving a task to the round it is already in writes nothing", async () => {
+  // An empty UPDATE would bump updated_at for an edit nobody made, and
+  // renumbering doc_order would silently reorder the round for a no-op.
+  const db = fakeDb({ rows: [ROW, ...R2_ROWS] });
+  const task = await moveTask(db, "r1-01", 1);
+  assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false, "no write may be issued");
+  assert.equal(task.round, 1, "the unchanged task is still returned");
+});
+
+test("a secret challenge refuses to move", async () => {
+  // It is two rows because it runs in BOTH halves. Moving it to one round means
+  // deleting the other row, and that cascades to submissions.
+  const db = fakeDb({ rows: [ROW, SECRET_R1, SECRET_R2] });
+  await assert.rejects(() => moveTask(db, "s-04", 2), /both halves/);
+  assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false);
+});
+
+test("a task whose leader bonus has been awarded refuses to move", async () => {
+  // The winner is a team in the round the task is leaving, and team_scores pays
+  // the bonus on `winner_team_id = team_id`. Moving the row silently either
+  // takes points off a team that already earned them or leaves a winner that is
+  // not in the task's round. Say so instead.
+  const db = fakeDb({ rows: [{ ...ROW, scoring_mode: "competition", winner_team_id: "team-r1" }] });
+  await assert.rejects(() => moveTask(db, "r1-01", 2), /winner/i);
+  assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false);
+});
+
+test("only Round 1 and Round 2 are somewhere to move to", async () => {
+  for (const round of [0, 3, -1, null, "2x", undefined]) {
+    await assert.rejects(() => moveTask(fakeDb(), "r1-01", round), /Round 1 or Round 2/);
+  }
+});
+
+test("moving an unknown slug reports null instead of inventing a row", async () => {
+  const db = fakeDb();
+  assert.equal(await moveTask(db, "nope-99", 2), null);
+  assert.equal(await moveTask(db, "", 2), null);
+  assert.equal(await moveTask(db, null, 2), null);
+});
+
+test("a failed move throws and names the task", async () => {
+  await assert.rejects(() => moveTask(fakeDb({ failOn: TASK_TABLE }), "r1-01", 2), /r1-01/);
 });
 
 test("an added task is live, with a slug that is not already taken", async () => {

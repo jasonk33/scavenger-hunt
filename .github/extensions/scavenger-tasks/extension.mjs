@@ -16,7 +16,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
-import { addTask, loadTasks, summarize, updateModel, updateTask } from "./store.mjs";
+import { addTask, loadTasks, moveTask, summarize, updateModel, updateTask } from "./store.mjs";
 import {
   addPlayers,
   addTeam,
@@ -159,6 +159,26 @@ async function handle(req, res) {
     const body = await readJson(req);
     if (!body) return json(res, 400, { error: "invalid JSON" });
     const task = await updateTask(taskMatch[1], body);
+    if (!task) return json(res, 404, { error: "unknown task" });
+    await broadcast();
+    return json(res, 200, task);
+  }
+
+  // Its own endpoint rather than a field on the patch above: `round` is not
+  // content, and it has refusals a per-field patch has no way to report. A
+  // refusal is a 409 so the panel can tell "you cannot do that" from "the
+  // database is unreachable", which are the same sentence otherwise.
+  const roundMatch = path.match(/^\/api\/task\/([\w.-]+)\/round$/);
+  if (roundMatch && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body) return json(res, 400, { error: "invalid JSON" });
+    let task;
+    try {
+      task = await moveTask(roundMatch[1], body.round);
+    } catch (e) {
+      if (!e?.refusal) throw e;
+      return json(res, 409, { error: String(e.message) });
+    }
     if (!task) return json(res, 404, { error: "unknown task" });
     await broadcast();
     return json(res, 200, task);
@@ -308,7 +328,7 @@ const listTasks = {
 const updateTaskAction = {
   name: "update_task",
   description:
-    "Change one task, live — players see it on their next poll. Use this to apply a wording rewrite (and clear its rewrite flag), or to record a rating, tier or cut decision the user asked for in chat. Setting active:false hides a task from players; it is never deleted and points already scored stand.",
+    "Change one task, live — players see it on their next poll. Use this to apply a wording rewrite (and clear its rewrite flag), or to record a rating, tier or cut decision the user asked for in chat. Setting active:false hides a task from players; it is never deleted and points already scored stand. It cannot change which round a task runs in: that is a move rather than an edit, and it is made from the R1/R2 control on the row in the planner.",
   inputSchema: {
     type: "object",
     properties: {

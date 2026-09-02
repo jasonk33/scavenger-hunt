@@ -92,6 +92,8 @@ let loadError = null;
 const rows = new Map();
 /** slug -> { patch, timer } for edits still waiting to be sent. */
 const pending = new Map();
+/** Slugs with a round change in flight. Not in `pending`: a move is not debounced. */
+const moving = new Set();
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
@@ -224,6 +226,22 @@ function paint(row, task) {
     b.classList.toggle("on", (b.dataset.active === "true") === Boolean(task.active));
   }
 
+  // Which half of the event the task is offered in. A secret is offered in both,
+  // so it has no round to move to and says so instead of showing a live control.
+  const secret = task.round === 0;
+  const busy = moving.has(task.slug);
+  for (const b of row.querySelectorAll(".seg.round button[data-round]")) {
+    const to = Number(b.dataset.round);
+    b.hidden = secret;
+    b.disabled = busy;
+    b.classList.toggle("on", !secret && to === task.round);
+    b.title =
+      to === task.round
+        ? `Players see this task in Round ${to}.`
+        : `Move to Round ${to}. It lands last in its tier there, and anything already scored on it stands.`;
+  }
+  row.querySelector(".round-both").hidden = !secret;
+
   for (const [key] of RATINGS) {
     const slider = row.querySelector(`.slider.${key}`);
     if (!slider) continue;
@@ -337,6 +355,11 @@ function buildRow(task) {
     if (filters.shown !== "all") renderList();
   });
 
+  row.querySelector(".seg.round").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-round]");
+    if (btn) moveToRound(task, Number(btn.dataset.round));
+  });
+
   const points = row.querySelector(".points");
   points.addEventListener("change", () => {
     save(task, { points: Number(points.value) });
@@ -421,6 +444,77 @@ function renderList() {
     rows.set(task.slug, row);
     el.list.append(row);
   }
+}
+
+// ── Moving a task between rounds ─────────────────────────────────────────────
+
+/** Puts the round and live/cut buttons back in step with `filters`. */
+function syncFilterButtons() {
+  for (const [id, key] of [["round-filter", "round"], ["shown-filter", "shown"]]) {
+    for (const b of document.getElementById(id).children) {
+      b.classList.toggle("on", b.dataset[key] === filters[key]);
+    }
+  }
+}
+
+/**
+ * Keeps a task on screen after its round changed.
+ *
+ * Filtered to Round 1, moving a task to Round 2 would otherwise make the row
+ * vanish -- which reads as "it is gone" rather than "it is in the other round
+ * now". Same reasoning as revealTask, and only the round filter is touched:
+ * it is the only one a move can fall out of, and clearing a search someone
+ * used to find the task would be its own small theft.
+ */
+function followTask(task) {
+  if (filters.round !== "all" && Number(filters.round) !== task.round) {
+    filters.round = String(task.round);
+    syncFilterButtons();
+  }
+  renderList();
+  rows.get(task.slug)?.scrollIntoView({ block: "center" });
+}
+
+/**
+ * Moves a task to the other half of the event, live.
+ *
+ * Deliberately not `save()`. That one debounces and swallows failures, which is
+ * right for a field whose value is on screen and wrong here: the server can
+ * REFUSE a move -- a secret challenge runs in both rounds, and a task whose
+ * leader bonus has been awarded would take the bonus out of that round's
+ * standings -- and a swallowed refusal would leave the panel showing a round
+ * the database does not have, until a poll silently yanked it back.
+ *
+ * Nothing moves locally until the server says it did, for the same reason: a
+ * row that regroups itself and then flips back is the "screen claims a result
+ * it does not have" class. The buttons disable for the round trip instead.
+ */
+async function moveToRound(task, round) {
+  if (task.round === round || moving.has(task.slug)) return;
+  moving.add(task.slug);
+  el.taskError.hidden = true;
+  const row = rows.get(task.slug);
+  if (row) paint(row, task);
+  try {
+    const res = await fetch(`/api/task/${task.slug}/round`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ round }),
+    });
+    const moved = await res.json().catch(() => null);
+    // A body that is not a task is a failure however it arrived.
+    if (!res.ok || !moved?.slug) throw new Error(moved?.error || `the task was not moved (HTTP ${res.status})`);
+    Object.assign(task, moved);
+  } catch (e) {
+    el.taskError.textContent = String(e?.message ?? e);
+    el.taskError.hidden = false;
+  } finally {
+    moving.delete(task.slug);
+  }
+  // Either way: the round it ended up in is the one the row now shows, and the
+  // buttons come back out of their disabled state.
+  followTask(task);
+  renderSummary();
 }
 
 // ── Summary and balance ──────────────────────────────────────────────────────
@@ -591,11 +685,7 @@ function revealTask(task) {
   filters.q = "";
   el.onlyFlagged.checked = false;
   el.search.value = "";
-  for (const [id, key] of [["round-filter", "round"], ["shown-filter", "shown"]]) {
-    for (const b of document.getElementById(id).children) {
-      b.classList.toggle("on", b.dataset[key] === filters[key]);
-    }
-  }
+  syncFilterButtons();
   renderList();
   rows.get(task.slug)?.scrollIntoView({ block: "center" });
 }
@@ -735,8 +825,10 @@ async function fetchTasks() {
 
 async function refreshTasks() {
   // An unsent edit is newer than anything the server can return, and applying
-  // the poll over it would visibly undo what was just typed.
-  if (pending.size) return;
+  // the poll over it would visibly undo what was just typed. A move in flight is
+  // the same case from the other side: the server has not applied it yet, so its
+  // answer is correct and stale, and would flip the row back mid-request.
+  if (pending.size || moving.size) return;
   try {
     const next = await fetchTasks();
     loadError = null;
@@ -781,8 +873,8 @@ events.addEventListener("roster", (e) => {
 });
 
 events.addEventListener("tasks", (e) => {
-  // Ignore pushes while an edit is in flight; the local copy is newer.
-  if (pending.size) return;
+  // Ignore pushes while an edit or a move is in flight; the local copy is newer.
+  if (pending.size || moving.size) return;
   let next;
   try {
     next = JSON.parse(e.data);

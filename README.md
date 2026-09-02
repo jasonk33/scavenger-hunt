@@ -103,15 +103,15 @@ a task to overtake someone.
 ### 4. Edit the tasks and the roster
 
 Both live in the Copilot canvas in `.github/extensions/scavenger-tasks/`. The
-Tasks tab edits titles, point tiers, which need a clip, the ratings, and which
-tasks are cut; the Roster tab edits people, paired team names and Round 1/2
-assignments.
+Tasks tab edits titles, point tiers, which round a task runs in, which need a
+clip, the ratings, and which tasks are cut; the Roster tab edits people, paired
+team names and Round 1/2 assignments.
 
 **Everything in it is live.** There is no publish step and nothing staged: the
 canvas writes the same `tasks` and `roster` rows the app reads, so a change is in
 front of players on their next poll. Editing a task's rating or its note is
 invisible to players either way — those columns are planning-only — but wording,
-points, video-only and cut are not, and they land immediately.
+points, round, video-only and cut are not, and they land immediately.
 
 That is safe during the event, which is the point. Nothing here touches
 submissions, media or any revealed secret. Cutting a task hides it
