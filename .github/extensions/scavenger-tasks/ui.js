@@ -94,6 +94,15 @@ const rows = new Map();
 const pending = new Map();
 /** Slugs with a round change in flight. Not in `pending`: a move is not debounced. */
 const moving = new Set();
+/**
+ * Counts local writes that have landed on screen.
+ *
+ * The `pending`/`moving` gates cannot catch a poll that STARTED before a write
+ * and resolves after it: by then the write has finished and both sets are empty
+ * again, so the poll merges a body that predates it and visibly undoes what was
+ * just done. Comparing this across the await is what closes that window.
+ */
+let localWrites = 0;
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
@@ -115,6 +124,7 @@ const advice = (t) => tierAdvice(t, data.model);
  */
 function save(task, patch) {
   Object.assign(task, patch);
+  localWrites += 1;
   const queued = pending.get(task.slug) ?? { patch: {}, timer: 0 };
   Object.assign(queued.patch, patch);
   pending.set(task.slug, queued);
@@ -480,10 +490,12 @@ function followTask(task) {
  *
  * Deliberately not `save()`. That one debounces and swallows failures, which is
  * right for a field whose value is on screen and wrong here: the server can
- * REFUSE a move -- a secret challenge runs in both rounds, and a task whose
- * leader bonus has been awarded would take the bonus out of that round's
- * standings -- and a swallowed refusal would leave the panel showing a round
- * the database does not have, until a poll silently yanked it back.
+ * REFUSE a move -- a secret challenge runs in both rounds, a task whose leader
+ * bonus has been awarded would take the bonus out of that round's standings,
+ * and a task someone has already submitted would strand that evidence in a
+ * round its task had left -- and a swallowed refusal would leave the panel
+ * showing a round the database does not have, until a poll silently yanked it
+ * back.
  *
  * Nothing moves locally until the server says it did, for the same reason: a
  * row that regroups itself and then flips back is the "screen claims a result
@@ -505,6 +517,7 @@ async function moveToRound(task, round) {
     // A body that is not a task is a failure however it arrived.
     if (!res.ok || !moved?.slug) throw new Error(moved?.error || `the task was not moved (HTTP ${res.status})`);
     Object.assign(task, moved);
+    localWrites += 1;
   } catch (e) {
     el.taskError.textContent = String(e?.message ?? e);
     el.taskError.hidden = false;
@@ -829,9 +842,18 @@ async function refreshTasks() {
   // the same case from the other side: the server has not applied it yet, so its
   // answer is correct and stale, and would flip the row back mid-request.
   if (pending.size || moving.size) return;
+  const at = localWrites;
   try {
     const next = await fetchTasks();
+    // The fetch succeeded, so any "not refreshing" note is wrong from here on
+    // even if the body itself turns out to be too old to apply.
     loadError = null;
+    // Checked AGAIN after the await, against the write counter as well as the
+    // gates: a poll that started before a move or an edit landed is stale even
+    // though nothing is in flight by the time it resolves, and merging it would
+    // undo the write on screen for a whole poll interval. Only once something
+    // has loaded, because before that nothing local can be newer.
+    if (loaded && (pending.size || moving.size || localWrites !== at)) return;
     loaded = true;
     applyTasks(next);
   } catch (e) {

@@ -64,9 +64,9 @@ const SECRET_R2 = { ...SECRET_R1, id: "uuid-s2", round: 2 };
  * but it deliberately interprets nothing else -- so an assertion about
  * filtering has to look at the recorded URL rather than trusting the fake.
  */
-function fakeDb({ rows = [ROW], settings = null, failOn = null } = {}) {
+function fakeDb({ rows = [ROW], settings = null, failOn = null, submissions = [] } = {}) {
   const calls = [];
-  const state = { rows: rows.map((r) => ({ ...r })), settings };
+  const state = { rows: rows.map((r) => ({ ...r })), settings, submissions };
 
   const respond = (url, init) => {
     const method = init.method ?? "GET";
@@ -82,6 +82,15 @@ function fakeDb({ rows = [ROW], settings = null, failOn = null } = {}) {
         return { ok: true, status: 201, text: "" };
       }
       return { ok: true, status: 200, text: JSON.stringify(state.settings === null ? [] : [{ value: state.settings }]) };
+    }
+
+    // Only ever asked "has this task been played", so it answers with the rows
+    // whose task_id was filtered on and interprets nothing else.
+    if (table === "submissions") {
+      const taskMatch = /task_id=eq\.([^&]+)/.exec(url);
+      const taskId = taskMatch ? decodeURIComponent(taskMatch[1]) : null;
+      const found = state.submissions.filter((s) => !taskId || s.task_id === taskId);
+      return { ok: true, status: 200, text: JSON.stringify(found) };
     }
 
     const slugMatch = /slug=eq\.([^&]+)/.exec(url);
@@ -320,8 +329,36 @@ test("a task whose leader bonus has been awarded refuses to move", async () => {
   assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false);
 });
 
+test("a task someone has already submitted refuses to move", async () => {
+  // The judge's queue, the player's task list and the feed all resolve a
+  // submission's task out of the tasks for THAT round, so the row leaving would
+  // strand real evidence: "(deleted task)" in the queue, a blank title in the
+  // feed, and a pending submission nobody can read.
+  const db = fakeDb({ rows: [ROW, ...R2_ROWS], submissions: [{ id: "sub-1", task_id: "uuid-1" }] });
+  await assert.rejects(() => moveTask(db, "r1-01", 2), /already submitted this task in Round 1/);
+  assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false);
+});
+
+test("a submission on a DIFFERENT task does not block a move", async () => {
+  const db = fakeDb({ rows: [ROW, ...R2_ROWS], submissions: [{ id: "sub-1", task_id: "uuid-9" }] });
+  const task = await moveTask(db, "r1-01", 2);
+  assert.equal(task.round, 2);
+});
+
+test("a task already in the target round is never refused", async () => {
+  // Nothing is moving, so neither an awarded bonus nor a played submission is a
+  // reason to say no -- refusing there would be a control failing at a no-op.
+  const rows = [{ ...ROW, scoring_mode: "competition", winner_team_id: "team-r1" }];
+  const db = fakeDb({ rows, submissions: [{ id: "sub-1", task_id: "uuid-1" }] });
+  const task = await moveTask(db, "r1-01", 1);
+  assert.equal(task.round, 1);
+  assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false);
+});
+
 test("only Round 1 and Round 2 are somewhere to move to", async () => {
-  for (const round of [0, 3, -1, null, "2x", undefined]) {
+  // `true` is in here because Number(true) is 1: a request to move a task to
+  // `true` must be refused, not quietly answered with Round 1.
+  for (const round of [0, 3, -1, null, "2x", undefined, true, false]) {
     await assert.rejects(() => moveTask(fakeDb(), "r1-01", round), /Round 1 or Round 2/);
   }
 });

@@ -166,8 +166,10 @@ async function handle(req, res) {
 
   // Its own endpoint rather than a field on the patch above: `round` is not
   // content, and it has refusals a per-field patch has no way to report. A
-  // refusal is a 409 so the panel can tell "you cannot do that" from "the
-  // database is unreachable", which are the same sentence otherwise.
+  // refusal answers 409, matching how the app's own admin task route answers a
+  // request it understood and will not carry out. The panel renders the message
+  // either way; the status is there so the two are not recorded as the same
+  // thing.
   const roundMatch = path.match(/^\/api\/task\/([\w.-]+)\/round$/);
   if (roundMatch && req.method === "POST") {
     const body = await readJson(req);

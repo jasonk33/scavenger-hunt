@@ -98,6 +98,12 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
   both rounds. `revealed_at` stays per-row, because revealing in R1 must not spoil R2.
 - **Cut means `active = false` — never a delete**, which would cascade to submissions. The
   canvas's In/X toggle writes exactly that column.
+- **`round` is moved, not patched.** It is not in `EDITABLE`, so a patch naming it writes
+  nothing; the canvas's R1/R2 toggle calls `moveTask`, which renumbers `doc_order` to last in
+  the destination and refuses three cases: a secret (two rows, so there is no round to move
+  to), an awarded leader bonus, and a task anyone has already submitted — the judge queue,
+  `/api/state` and the feed all resolve a submission's task out of the tasks for *that* round,
+  so a moved row would show as `(deleted task)`.
 - `teams(round, name, color)` — R1 and R2 teams are **separate rows**. `players(name)`.
 - `roster(round, player_id, team_id)` — the remix lives here and nowhere else.
 - `tasks(round, slug, title, points, scoring_mode, is_secret, revealed_at, active)` plus

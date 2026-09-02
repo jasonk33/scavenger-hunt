@@ -415,23 +415,30 @@ export async function updateTask(client, slug, patch) {
  * Those are refusals and a second write, neither of which belongs in a
  * per-field patch.
  *
- * What it deliberately does NOT touch is the point. A submission carries its
- * own `round`, `team_id` and `task_points`, snapshotted at insert, so anything
- * already played on this task in the round it is leaving goes on scoring
- * exactly as it did. Moving a task changes where it is offered next; it never
- * rewrites what already happened.
+ * It moves a task that has not been played yet, and nothing else. `team_scores`
+ * would survive a move -- a submission carries its own `round`, `team_id` and
+ * `task_points`, snapshotted at insert -- but the screens that show that history
+ * would not: `/api/judge/queue`, `/api/state` and `/api/feed` all read
+ * `tasks ... eq(round, round)` and look each submission's task up in that map,
+ * so a task that has left the round renders as "(deleted task)" in the judge's
+ * queue and as a blank title in the feed, with a pending submission stranded
+ * behind it. Hence the third refusal below. What already happened is never
+ * rewritten because a move that would strand it does not happen.
  *
  * @returns {Promise<object|null>} the moved task, or null if the slug is unknown.
  */
 export async function moveTask(client, slug, round) {
   if (typeof slug !== "string" || !slug) return null;
-  const target = Number(round);
+  // `int` rather than `Number`, so a boolean cannot arrive as a round: JSON
+  // `true` is Number 1, and a request asking to move a task to `true` must be
+  // refused rather than quietly answered with Round 1.
+  const target = int(round);
   if (![1, 2].includes(target)) throw refuse("a task can only be moved to Round 1 or Round 2");
 
   // One read, unfiltered, because the destination's highest doc_order is needed
   // as well as this task's own rows -- the same shape `addTask` uses.
   const rows = await rest(client, {
-    path: `${TASK_TABLE}?select=slug,round,is_secret,doc_order,winner_team_id`,
+    path: `${TASK_TABLE}?select=id,slug,round,is_secret,doc_order,winner_team_id`,
   }).catch((e) => {
     throw new Error(`could not move task ${slug}: ${e.message}`);
   });
@@ -446,6 +453,19 @@ export async function moveTask(client, slug, round) {
     );
   }
 
+  const current = mine[0];
+  // Already there. Still a read, so the caller gets the task back rather than a
+  // silent no-op -- and no empty UPDATE to bump updated_at for an edit nobody
+  // made, and no renumbering of a doc_order that is already correct. Ahead of
+  // the refusals below on purpose: a task that is not moving cannot be refused
+  // permission to move.
+  if (Number(current.round) === target) {
+    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&slug=${eq(slug)}` }).catch((e) => {
+      throw new Error(`could not read task ${slug}: ${e.message}`);
+    });
+    return groupRows(found)[0] ?? null;
+  }
+
   if (mine.some((r) => r.winner_team_id)) {
     throw refuse(
       "This task's leader bonus has already been awarded to a team in the round it is in. " +
@@ -453,15 +473,23 @@ export async function moveTask(client, slug, round) {
     );
   }
 
-  const current = mine[0];
-  // Already there. Still a read, so the caller gets the task back rather than a
-  // silent no-op -- and no empty UPDATE to bump updated_at for an edit nobody
-  // made, and no renumbering of a doc_order that is already correct.
-  if (Number(current.round) === target) {
-    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&slug=${eq(slug)}` }).catch((e) => {
-      throw new Error(`could not read task ${slug}: ${e.message}`);
-    });
-    return groupRows(found)[0] ?? null;
+  // Anything already submitted against this task pins it to the round it is in.
+  // The judge's queue, the player's task list and the feed all resolve a
+  // submission's task out of the tasks for THAT round, so moving the row leaves
+  // real evidence with no task behind it: "(deleted task)" in the queue, a blank
+  // title in the feed, and a pending submission the judge can no longer read.
+  // Cheaper to refuse than to teach three screens to look across rounds.
+  const played = await rest(client, {
+    path: `submissions?select=id&task_id=${eq(current.id)}&limit=1`,
+  }).catch((e) => {
+    throw new Error(`could not move task ${slug}: ${e.message}`);
+  });
+  if (played.length) {
+    throw refuse(
+      `Someone has already submitted this task in Round ${current.round}, and the judge's queue and the ` +
+        "feed look a submission's task up in the round it was submitted in. Moving it would leave that " +
+        "evidence with no task behind it. Cut it and add a replacement in the round you want instead."
+    );
   }
 
   // Last in the round it arrives in. doc_order is the tie-break inside a tier,
