@@ -59,6 +59,36 @@ export function effectivePoints(task, measurementValue, teamId = null) {
   return baseline;
 }
 
+/**
+ * The same answer as `effectivePoints`, split into what the task was worth and
+ * what the team earned on top of it.
+ *
+ * Both halves come off ONE rule object, so a task re-tiered after judging can
+ * never make the bonus look bigger -- or negative -- in hindsight. Every screen
+ * that shows a score renders this, rather than each one subtracting a baseline
+ * it fetched separately and getting a different answer.
+ */
+export function pointsBreakdown(task, measurementValue, teamId = null) {
+  const base = integer(task?.points);
+  const total = effectivePoints(task, measurementValue, teamId);
+  return { base, bonus: Math.max(0, total - base), total };
+}
+
+/**
+ * Breakdown for a judged row that `scoreApproved` did not rank -- a second
+ * approval on a task the team has already scored, or one whose task has since
+ * been cut. There is no task rule to consult, so it reads the baseline the judge
+ * froze onto the row and treats the rest of the award as the bonus.
+ */
+export function awardedBreakdown(row) {
+  const total = integer(row?.points_awarded);
+  // `integer` treats null as 0, which would report the whole award as bonus.
+  const snapshot = row?.task_points;
+  const base =
+    snapshot === null || snapshot === undefined ? total : Math.min(total, integer(snapshot, total));
+  return { base, bonus: total - base, total };
+}
+
 export function scoreApproved(rows, tasks) {
   const taskById = new Map((tasks ?? []).map((task) => [task.id, task]));
 
@@ -76,12 +106,12 @@ export function scoreApproved(rows, tasks) {
           winner_team_id: task.winner_team_id ?? null,
         }
       : null;
-    return {
-      row,
-      points: rule
-        ? effectivePoints(rule, row.measurement_value, row.team_id)
-        : row.points_awarded ?? 0,
-    };
+    const split = rule
+      ? pointsBreakdown(rule, row.measurement_value, row.team_id)
+      : // No task row to reason from -- the judge's number is all there is, so
+        // it is reported as the baseline with nothing on top of it.
+        { base: row.points_awarded ?? 0, bonus: 0, total: row.points_awarded ?? 0 };
+    return { row, points: split.total, base: split.base, bonus: split.bonus };
   });
 }
 

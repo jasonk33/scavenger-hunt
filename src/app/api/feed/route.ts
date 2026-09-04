@@ -2,7 +2,7 @@ import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { groupBy, groupKey } from "@/lib/groups";
 import { json, isVideoObject } from "@/lib/http";
-import { scoreApproved } from "@/lib/scoring.mjs";
+import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +35,7 @@ export async function GET(req: Request) {
     sb
       .from("submissions")
       .select(
-        "id,task_id,team_id,player_id,object_name,media_type,group_id,note,created_at,status,points_awarded,reject_reason"
+        "id,task_id,team_id,player_id,object_name,media_type,group_id,note,created_at,status,points_awarded,task_points,reject_reason"
       )
       .eq("round", round)
       .in("status", ["approved", "rejected"])
@@ -59,7 +59,10 @@ export async function GET(req: Request) {
         .eq("status", "approved")
     : { data: [] };
   const pointsById = new Map(
-    scoreApproved(approved ?? [], tasks ?? []).map(({ row, points }) => [row.id, points])
+    scoreApproved(approved ?? [], tasks ?? []).map(({ row, points, base, bonus }) => [
+      row.id,
+      { total: points, base, bonus },
+    ])
   );
 
   return json({
@@ -69,6 +72,9 @@ export async function GET(req: Request) {
       // about the order the files were shot in.
       const files = [...group].sort((a, b) => a.created_at.localeCompare(b.created_at));
       const s = files[0];
+      // A duplicate approval is not in the scoring map -- it still renders a
+      // pill, so it splits off the baseline the judge froze onto the row.
+      const split = pointsById.get(s.id) ?? awardedBreakdown(s);
       return {
         id: s.id,
         status: s.status,
@@ -83,7 +89,9 @@ export async function GET(req: Request) {
         })),
         note: files.find((f) => f.note)?.note ?? null,
         taskTitle: taskById.get(s.task_id)?.title ?? "",
-        points: pointsById.get(s.id) ?? s.points_awarded ?? 0,
+        points: split.total,
+        basePoints: split.base,
+        bonusPoints: split.bonus,
         rejectReason: s.reject_reason,
         teamName: teamById.get(s.team_id)?.name ?? "",
         teamColor: teamById.get(s.team_id)?.color ?? "#666",

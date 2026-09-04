@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage, fmtBytes, usePoll } from "@/lib/client";
 import { REASON_MAX } from "@/lib/groups";
+import Score from "@/components/Score";
 
 type Item = {
   id: string;
@@ -26,6 +27,10 @@ type Item = {
   playerName: string;
   duplicate: boolean;
   pointsAwarded: number | null;
+  /** What the task was worth and what the count bought, split the same way the
+      players see it. */
+  awardedBase: number;
+  awardedBonus: number;
   rejectReason: string | null;
 };
 
@@ -297,7 +302,9 @@ function JudgeQueue() {
                 >
                   currently{" "}
                   {reviewing.status === "approved"
-                    ? `approved +${reviewing.pointsAwarded ?? 0}`
+                    ? `approved +${reviewing.awardedBase}${
+                        reviewing.awardedBonus > 0 ? ` +${reviewing.awardedBonus} bonus` : ""
+                      }`
                     : "rejected"}
                 </span>
               </>
@@ -411,8 +418,12 @@ function JudgeQueue() {
 
           {current.scoringMode === "quantity" && (
             <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
+              {/* The stored label is ONE unit ("extra pigeon") so the rate line
+                  below reads as a sentence. That makes it the wrong thing to
+                  paste into a heading -- "How many extra pigeon?" -- so the
+                  question stays bare and the unit is named underneath. */}
               <div className="stat-label" style={{ marginBottom: 4 }}>
-                {current.measurementLabel || "Additional items"}
+                How many?
               </div>
               <div>
                 <input
@@ -422,7 +433,9 @@ function JudgeQueue() {
                   step={1}
                   inputMode="numeric"
                   placeholder="0"
-                  aria-label={current.measurementLabel || "Additional items"}
+                  aria-label={`How many, at +${current.pointsPerUnit} per ${
+                    current.measurementLabel || "extra item"
+                  }`}
                   value={measurement}
                   onChange={(e) => setMeasurement(e.target.value)}
                   style={{ width: "100%" }}
@@ -432,7 +445,8 @@ function JudgeQueue() {
                   judge types 3 and cannot tell whether that bought 3 points or
                   30. */}
               <div className="muted tiny" style={{ marginTop: 6 }}>
-                +{current.pointsPerUnit} each, on top of the {current.taskPoints} above
+                +{current.pointsPerUnit} pt{current.pointsPerUnit === 1 ? "" : "s"} per{" "}
+                {current.measurementLabel || "extra item"}, on top of the {current.taskPoints} above
               </div>
             </div>
           )}
@@ -602,7 +616,11 @@ function JudgeQueue() {
               <div
                 key={r.id}
                 className={`card card-flat row${r.id === current?.id ? " card-accent" : ""}`}
-                style={{ padding: 10 }}
+                /* Wraps rather than crushes. Page zoom and iOS larger text lay a
+                   390px phone out like a 260px one, and at that width the score,
+                   the name and Undo cannot share a line -- the name was handed
+                   zero pixels and disappeared entirely. */
+                style={{ padding: 10, flexWrap: "wrap" }}
               >
                 <span className="swatch" style={{ background: r.teamColor }} />
                 <button
@@ -616,7 +634,10 @@ function JudgeQueue() {
                   <div className="tiny nowrap" style={{ fontWeight: 600 }}>
                     {r.taskTitle}
                   </div>
-                  <div className="muted tiny nowrap">
+                  {/* Names wrap rather than clip, the same rule as everywhere
+                      else. This line used to be `nowrap`, which quietly
+                      ellipsised a team name the moment the row got tight. */}
+                  <div className="muted tiny name">
                     {r.teamName} · {r.playerName}
                   </div>
                 </button>
@@ -654,11 +675,13 @@ function JudgeQueue() {
               <div
                 key={r.id}
                 className={`card card-flat row${r.id === pickedId ? " card-accent" : ""}`}
-                style={{ padding: 10 }}
+                style={{ padding: 10, flexWrap: "wrap" }}
               >
-                <span className={`pill ${r.status === "approved" ? "pill-good" : "pill-bad"}`}>
-                  {r.status === "approved" ? `+${r.pointsAwarded ?? 0}` : "✗"}
-                </span>
+                {r.status === "approved" ? (
+                  <Score base={r.awardedBase} bonus={r.awardedBonus} tone="pill-good" />
+                ) : (
+                  <span className="pill pill-bad">✗</span>
+                )}
                 <button className="btn-plain grow" style={{ minHeight: 40 }} onClick={() => {
                   setPickedId(r.id);
                   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -666,7 +689,10 @@ function JudgeQueue() {
                   <div className="tiny nowrap" style={{ fontWeight: 600 }}>
                     {r.taskTitle}
                   </div>
-                  <div className="muted tiny nowrap">
+                  {/* A name and the judge's own words, so it wraps: the score
+                      beside it is two pills now, and at 320px the clipped
+                      remainder read "The Birthday Bur...". */}
+                  <div className="muted tiny name">
                     {r.teamName}
                     {r.status === "rejected" && r.rejectReason ? ` · ${r.rejectReason}` : ""}
                   </div>

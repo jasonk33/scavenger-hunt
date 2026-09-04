@@ -119,8 +119,7 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
 - **`scoring_mode` is `fixed` | `quantity` | `competition`**, and it decides what the judge is
   asked for. `fixed` is the default and asks nothing. `quantity` adds
   `points_per_unit` per counted item and is the **only** mode with a number field on the judge
-  screen — `measurement_label` names it, and the count lands in
-  `submissions.measurement_value`. `competition` adds `competition_bonus` to exactly one
+  screen — the count lands in `submissions.measurement_value`. `competition` adds `competition_bonus` to exactly one
   team: `tasks.winner_team_id`, which an **organizer picks from Admin once the round is
   over**. See the scoring invariants below — the end-of-round pick is load-bearing.
 - `submissions` — one row is **one file**. `status`: `uploading → pending → approved | rejected`.
@@ -169,6 +168,13 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
     a search outlives the box that clears it.
 11. The dark palette in `globals.css` is written **twice** (media query + `[data-theme]`).
     Change both or they diverge.
+12. The upload card renders **inside the task row it belongs to** and scrolls itself into view
+    (`block: "center"`). It used to render above the search box, so tapping Upload on a task
+    far down the list showed the player nothing at all — and the note box lives on that card,
+    which is why notes looked like something you could only add after uploading. The
+    top-of-page copy is now only the fallback for a task filtered off screen. Its preview is a
+    local `URL.createObjectURL`, revoked when the job is replaced; `.media-preview` shortens it
+    so the note box stays above the fold.
 
 ## Scoring invariants
 
@@ -302,11 +308,24 @@ the confident wrong answer.
 
 ## Field semantics that get assumed wrong
 
+- **`measurement_label` is ONE unit, singular and lower case** — `extra pigeon`, not
+  `Number of extra pigeons`. Both screens read it as the tail of a sentence: the player's pill
+  says `+1 pt per extra pigeon` and the judge's count box is headed with a bare `How many?`
+  and that same rate line underneath. A plural or a `Number of…` phrase renders as
+  `+1 pt per Number of extra pigeons`, which is what it used to say. It follows that **the
+  title must not repeat the rate** — three of them carried a `(+1 point for each additional
+  pigeon)` that said the pill's job twice.
 - **`measurement_label` is `quantity`-only.** `judge/page.tsx` gates it behind
-  `scoringMode === "quantity"` and `submit/page.tsx` uses it for the per-unit hint. The Admin
-  "Leader bonuses" picker renders the **title**, the bonus and a team dropdown — never the
-  label. So on a `competition` task the label is dead data, and **the winner criterion has
+  `scoringMode === "quantity"`. The Admin "Leader bonuses" picker renders the **title**, the
+  bonus and a team dropdown — never the label. So on a `competition` task the label is dead data, and **the winner criterion has
   nowhere to live but the title.** Setting the label instead accomplishes nothing.
+- **A score renders as two pills, never one total** — `<Score>` (`src/components/Score.tsx`):
+  what the task was worth, then `+N bonus` when the team earned more. `12 pts` hid the fact
+  that anyone had gone beyond the task. Both numbers come from `pointsBreakdown()` server-side
+  so no screen subtracts a baseline it fetched separately; `awardedBreakdown()` covers a row
+  `scoreApproved` did not rank. **The wrapper must not carry `min-width: 0`** — the pills
+  inside are `nowrap`, so a shrinkable wrapper lets them overflow the row rather than wrap.
+  `probe-truncation` measures both the feed header and the judge's judged-list row for this.
 
 ## Sharp edges
 

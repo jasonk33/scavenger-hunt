@@ -2,7 +2,7 @@ import { db, mediaUrl, uploadConfig } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { groupKey } from "@/lib/groups";
 import { json, isVideoObject } from "@/lib/http";
-import { competitionWinners, scoreApproved } from "@/lib/scoring.mjs";
+import { awardedBreakdown, competitionWinners, scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +73,7 @@ export async function GET(req: Request) {
     note: string | null;
     judged_at: string | null;
     measurement_value: number | null;
+    task_points: number | null;
   }> = [];
   // Names of whoever on the team actually sent each submission. Progress is
   // team-wide, so "you already submitted this" is often really a teammate --
@@ -137,10 +138,29 @@ export async function GET(req: Request) {
    * If these two ever disagree, a team sees one score on their own task list and
    * a different one on the leaderboard.
    */
+  const scoredRows = scoreApproved(mine, tasks) as Array<{
+    row: { id: string; task_id: string };
+    points: number;
+    base: number;
+    bonus: number;
+  }>;
   const bestByTask = new Map(
-    scoreApproved(mine, tasks).map(({ row: s, points }) => [s.task_id, { pts: points }])
+    scoredRows.map(({ row: s, points }) => [s.task_id, { pts: points }])
   );
-  const effectiveById = new Map(scoreApproved(mine, tasks).map(({ row: s, points }) => [s.id, points]));
+  /* Every judged row the screen may render, not just the scoring ones: a second
+     approval on a task the team already banked still shows its own pill in the
+     expanded list, and it has to split into baseline and bonus the same way. */
+  const splitById = new Map(
+    mine
+      .filter((s) => s.status === "approved")
+      .map((s) => {
+        const ranked = scoredRows.find(({ row }) => row.id === s.id);
+        const split = ranked
+          ? { base: ranked.base, bonus: ranked.bonus, total: ranked.points }
+          : awardedBreakdown(s);
+        return [s.id, split];
+      })
+  );
 
   /**
    * Rejections the team still needs to act on: rejected, and no approved
@@ -182,7 +202,12 @@ export async function GET(req: Request) {
     // endpoint is polled by every phone every 5 seconds.
     submissions: mine.map(({ object_name, media_type, group_id, ...s }) => ({
       ...s,
-      points_awarded: effectiveById.get(s.id) ?? s.points_awarded,
+      points_awarded: splitById.get(s.id)?.total ?? s.points_awarded,
+      // What the task itself was worth, and what the team earned on top of it.
+      // Sent split rather than as one number so no screen has to subtract a
+      // baseline it fetched separately and get a different answer.
+      basePoints: splitById.get(s.id)?.base ?? null,
+      bonusPoints: splitById.get(s.id)?.bonus ?? 0,
       // What ties several files into one piece of evidence.
       groupId: groupKey({ id: s.id, group_id }),
       mediaUrl: mediaUrl(object_name),

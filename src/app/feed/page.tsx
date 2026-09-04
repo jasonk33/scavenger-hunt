@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { usePoll } from "@/lib/client";
+import Score from "@/components/Score";
 
 type Feed = {
   round: number;
@@ -12,6 +13,9 @@ type Feed = {
     note: string | null;
     taskTitle: string;
     points: number;
+    /** What the task was worth, and what the team earned on top of it. */
+    basePoints: number;
+    bonusPoints: number;
     rejectReason: string | null;
     teamName: string;
     teamColor: string;
@@ -115,7 +119,7 @@ function Post({ item: it }: { item: Feed["items"][number] }) {
                 {it.status === "rejected" ? (
                   <span className="pill pill-bad push">didn&apos;t count</span>
                 ) : (
-                  <span className="pill push">{it.points} pts</span>
+                  <Score base={it.basePoints} bonus={it.bonusPoints} push />
                 )}
               </div>
               <div className="byline name muted tiny">{it.playerName}</div>

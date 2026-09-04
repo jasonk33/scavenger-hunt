@@ -63,9 +63,20 @@ await teardownTasks();
 const fx = await setup({ players: [PLAYER], teams: [LONG_TEAM, MID_TEAM, SHORT_TEAM, UNBROKEN_TEAM] });
 const player = fx.player(PLAYER);
 
+/* A quantity task on purpose. A scored entry renders as TWO pills -- what the
+   task was worth and what the team earned on top -- and that pair shares the
+   feed's header row with a team name. One pill fit where two do not: the pair
+   overflowed the row by 24px at 300px the first time it was built. */
 const task = await call("/api/admin/tasks", {
   method: "POST",
-  body: JSON.stringify({ round: 1, title: "__qa Truncation task", points: 10 }),
+  body: JSON.stringify({
+    round: 1,
+    title: "__qa Truncation task",
+    points: 10,
+    scoringMode: "quantity",
+    measurementLabel: "extra pigeon",
+    pointsPerUnit: 1,
+  }),
 });
 if (task.status !== 200) throw new Error(`task create failed: ${JSON.stringify(task.body)}`);
 const taskId = task.body.id;
@@ -84,7 +95,12 @@ async function putOnTeam(teamName) {
   await admin.from("submissions").delete().eq("player_id", player.id);
   await seed({ playerId: player.id, taskId });
   const approved = await seed({ playerId: player.id, taskId, name: "photo-2.jpg" });
-  await admin.from("submissions").update({ status: "approved" }).eq("id", approved);
+  // Awarded as the judge would: the baseline plus three counted extras, so the
+  // rows under test carry both pills rather than just one.
+  await admin
+    .from("submissions")
+    .update({ status: "approved", points_awarded: 13, measurement_value: 3 })
+    .eq("id", approved);
 }
 
 /**
@@ -92,6 +108,8 @@ async function putOnTeam(teamName) {
  * previous version of this probe measured an empty header and passed), and every
  * element that carries a name.
  */
+/* `label` distinguishes two entries that share a route. Screens are otherwise
+   named by their route in every assertion. */
 const SCREENS = [
   {
     // The QR code points here, so it is the first thing every guest sees.
@@ -138,6 +156,19 @@ const SCREENS = [
       { sel: ".cardhead .byline", what: "player name" },
     ],
   },
+  {
+    /* The judged-this-round list, which is a different layout from the card
+       above it: a name sharing one tight row with the score and an Undo button.
+       Scoped to a row carrying `.score-pills`, so the row measured is one with a
+       BONUS on it -- two pills where there used to be one. That row clipped a
+       real team name to "The Birthday Bur..." at 320px the day the bonus pill
+       was added, and the entry above never saw it. */
+    label: "/judge list",
+    route: "/judge",
+    ready: ".card-flat.row:has(.score-pills) .name",
+    row: ".card-flat.row:has(.score-pills)",
+    names: [{ sel: ".card-flat.row:has(.score-pills) .name", what: "team name" }],
+  },
 ];
 
 const browser = await chromium.launch();
@@ -154,8 +185,8 @@ try {
       await page.goto(`${BASE}${s.route}`);
 
       const shown = await page.waitForSelector(s.ready, { timeout: 30000 }).then(() => true).catch(() => false);
-      check(`${c.label} ${s.route} renders its name row`, shown);
-      if (!shown) { await shot(page, `trunc-${s.route.slice(1)}-${c.width}-missing`); await ctx.close(); continue; }
+      check(`${c.label} ${s.label ?? s.route} renders its name row`, shown);
+      if (!shown) { await shot(page, `trunc-${(s.label ?? s.route).slice(1).replace(/[^a-z]/g, "-")}-${c.width}-missing`); await ctx.close(); continue; }
 
       const m = await page.evaluate(({ names, row, stacked }) => {
         const r = document.querySelector(row);
@@ -190,27 +221,27 @@ try {
       }, { names: s.names, row: s.row, stacked: s.stacked });
 
       // Anything that scrolls sideways on a phone is a bug regardless of tier.
-      check(`${c.label} ${s.route} page does not scroll sideways`, m.pageOverflow <= 1,
+      check(`${c.label} ${s.label ?? s.route} page does not scroll sideways`, m.pageOverflow <= 1,
         `document is ${m.pageOverflow}px wider than the viewport`);
-      check(`${c.label} ${s.route} row does not overflow`, m.rowOverflow <= 1,
+      check(`${c.label} ${s.label ?? s.route} row does not overflow`, m.rowOverflow <= 1,
         `row scrolls ${m.rowOverflow}px past its box`);
       if (s.stacked) {
-        check(`${c.label} ${s.route} puts the team below the player name`, m.stacked?.below === true,
+        check(`${c.label} ${s.label ?? s.route} puts the team below the player name`, m.stacked?.below === true,
           `player ends at ${m.stacked?.firstBottom ?? "?"}px, team starts at ${m.stacked?.secondTop ?? "?"}px`);
       }
 
       s.names.forEach((n, i) => {
         const e = m.els[i];
-        if (!e) { check(`${c.label} ${s.route} has a ${n.what}`, false, `no element for ${n.sel}`); return; }
+        if (!e) { check(`${c.label} ${s.label ?? s.route} has a ${n.what}`, false, `no element for ${n.sel}`); return; }
 
         // 1px of slack: sub-pixel text metrics round up on some glyphs even when
         // nothing is actually hidden.
-        check(`${c.label} ${s.route} shows the whole ${n.what}`, e.clipped <= 1,
+        check(`${c.label} ${s.label ?? s.route} shows the whole ${n.what}`, e.clipped <= 1,
           `"${e.text}" clipped by ${e.clipped}px (visible ${e.w}px of ${e.natural}px)`);
       });
 
-      note(`${c.label} ${s.route.padEnd(8)} ${s.names.map((n, i) => `${n.what}=${m.els[i]?.w ?? "?"}px`).join("  ")}`);
-      await shot(page, `trunc-${s.route.slice(1)}-${c.width}-${c.team === LONG_TEAM ? "long" : "mid"}`);
+      note(`${c.label} ${(s.label ?? s.route).padEnd(12)} ${s.names.map((n, i) => `${n.what}=${m.els[i]?.w ?? "?"}px`).join("  ")}`);
+      await shot(page, `trunc-${(s.label ?? s.route).slice(1).replace(/[^a-z]/g, "-")}-${c.width}-${c.team === LONG_TEAM ? "long" : "mid"}`);
       await ctx.close();
     }
   }

@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import Score from "./Score";
 
 export type EvidenceEntry = {
   id: string;
   taskTitle?: string;
-  points: number;
+  /** What the task was worth, and what the team earned on top of it. */
+  basePoints: number;
+  bonusPoints: number;
   media: Array<{ id: string; url: string; isVideo: boolean }>;
   note: string | null;
   teamId: string;
@@ -35,7 +38,7 @@ export default function EvidenceEntryCard({
         <div className="row">
           <span className="swatch" style={{ background: entry.teamColor }} />
           <b className="name" style={{ fontSize: 15 }}>{entry.teamName}</b>
-          <span className="pill pill-good push">✓ {entry.points} pts</span>
+          <Score base={entry.basePoints} bonus={entry.bonusPoints} tone="pill-good" check push />
         </div>
         <div className="byline name muted tiny">{entry.playerName}</div>
       </div>

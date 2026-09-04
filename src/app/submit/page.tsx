@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, errorMessage, fmtBytes, getMe, getSaved, inkOn, setMe, setSaved, usePoll, type Me } from "@/lib/client";
 import { groupBy, NOTE_MAX } from "@/lib/groups";
-import { isJwt, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
+import { isJwt, isVideoFile, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
 import EvidenceEntryCard, { type EvidenceEntry } from "@/components/EvidenceEntry";
+import Score from "@/components/Score";
 
 type Task = {
   id: string;
@@ -27,6 +28,10 @@ type Sub = {
   player_id: string;
   status: "uploading" | "pending" | "approved" | "rejected";
   points_awarded: number | null;
+  /** What the task was worth, and what the team earned on top of it. Null until
+      the judge has ruled, which is not the same as zero. */
+  basePoints: number | null;
+  bonusPoints: number;
   measurement_value: number | null;
   reject_reason: string | null;
   created_at: string;
@@ -72,6 +77,15 @@ type Job = {
   task: Task;
   fileName: string;
   size: number;
+  /**
+   * The picked file itself, as a local object URL, so the card shows what is
+   * being sent while it is being sent. Revoked when the job is replaced or
+   * dismissed -- an iPhone clip is 150MB and holding several would be careless.
+   */
+  preview: { url: string; isVideo: boolean } | null;
+  /** Distinguishes one job from the next in the same card, so picking a second
+      file remounts it and brings it back into view. */
+  startedAt: number;
   pct: number;
   retries: number;
   status: "uploading" | "done" | "error";
@@ -124,6 +138,16 @@ export default function SubmitPage() {
   const wakeRef = useRef<ReturnType<typeof createWakeLock> | null>(null);
   if (!wakeRef.current) wakeRef.current = createWakeLock();
   const wake = wakeRef.current;
+
+  /* One preview is alive at a time. Revoking the previous URL as soon as it is
+     replaced -- and on unmount -- keeps a run of 150MB clips from piling up in
+     memory on a phone that has to last the afternoon. */
+  useEffect(() => {
+    const url = job?.preview?.url;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [job?.preview?.url]);
 
   useEffect(() => {
     const m = getMe();
@@ -280,6 +304,8 @@ export default function SubmitPage() {
         task,
         fileName: file.name,
         size: file.size,
+        preview: null,
+        startedAt: Date.now(),
         pct: 0,
         retries: 0,
         status: "error",
@@ -296,6 +322,10 @@ export default function SubmitPage() {
       task,
       fileName: file.name,
       size: file.size,
+      // Rendered locally, so the player can check they picked the right clip
+      // without waiting for it to land anywhere.
+      preview: { url: URL.createObjectURL(file), isVideo: isVideoFile(file) },
+      startedAt: Date.now(),
       pct: 0,
       retries: 0,
       status: "uploading",
@@ -403,6 +433,8 @@ export default function SubmitPage() {
   // Upload button open the same file picker, so they must agree about when that
   // is allowed. Written out twice they agreed only by copy-paste.
   const uploadBlocked = Boolean(closed) || !data?.team || job?.status === "uploading";
+  // Whether the card below can render where the player is actually looking.
+  const jobIsListed = Boolean(job && tasks.some((t) => t.id === job.task.id));
 
   /* Which control actually emptied the saved list. The unsaved empty state
      below already branches on this; the saved one used to name the points
@@ -555,9 +587,15 @@ export default function SubmitPage() {
         </div>
       )}
 
-      {job && (
+      {/* Normally the upload card renders inside the task it belongs to, right
+          under the button that was tapped. This is the fallback for when that
+          task is not on screen at all -- filtered out by a search or a tier
+          chip, or cut by an organizer mid-upload -- because a card with the
+          note box on it must never be somewhere the player cannot find it. */}
+      {job && !jobIsListed && (
         <JobCard
           job={job}
+          showTitle
           onClose={() => setJob(null)}
           onCancel={cancelUpload}
           onAddAnother={() =>
@@ -690,6 +728,9 @@ export default function SubmitPage() {
                 key={t.id}
                 task={t}
                 subs={byTask.get(t.id) ?? []}
+                job={job?.task.id === t.id ? job : null}
+                onJobClose={() => setJob(null)}
+                onJobCancel={cancelUpload}
                 disabled={uploadBlocked}
                 playerId={me.id}
                 saved={saved.has(t.id)}
@@ -719,6 +760,9 @@ function Stat({ label, value, big }: { label: string; value: number; big?: boole
 function TaskRow({
   task,
   subs,
+  job,
+  onJobClose,
+  onJobCancel,
   disabled,
   playerId,
   saved,
@@ -729,6 +773,10 @@ function TaskRow({
 }: {
   task: Task;
   subs: Sub[];
+  /** The upload in flight for THIS task, if there is one. */
+  job: Job | null;
+  onJobClose: () => void;
+  onJobCancel: () => void;
   disabled: boolean;
   playerId: string;
   saved: boolean;
@@ -805,8 +853,12 @@ function TaskRow({
             </span>
             {task.requires_video && <span className="pill">video only</span>}
             {task.scoring_mode === "quantity" && (
-              <span className="pill pill-accent">
-                +{task.points_per_unit} per extra {task.measurement_label || "item"}
+              /* The unit is stored as a singular phrase ("extra pigeon"), so the
+                 rate reads as a sentence without the task title having to spell
+                 it out a second time. */
+              <span className="pill pill-accent pill-wrap">
+                +{task.points_per_unit} pt{task.points_per_unit === 1 ? "" : "s"} per{" "}
+                {task.measurement_label || "extra item"}
               </span>
             )}
             {task.scoring_mode === "competition" && (
@@ -823,7 +875,12 @@ function TaskRow({
               </span>
             )}
             {approved && (
-              <span className="pill pill-good">✓ {approved.points_awarded ?? 0} pts</span>
+              <Score
+                base={approved.basePoints ?? approved.points_awarded ?? 0}
+                bonus={approved.bonusPoints}
+                tone="pill-good"
+                check
+              />
             )}
             {!approved && pending && <span className="pill">waiting on judge</span>}
             {!approved && !pending && rejected && (
@@ -864,6 +921,21 @@ function TaskRow({
           </button>
         </div>
       </div>
+
+      {/* The upload lands here rather than at the top of the page. It used to
+          render above the search box, which on a list this long meant tapping
+          Upload on a task far down showed the player nothing at all -- and the
+          note box lives on that card, so a note "could only be added after
+          uploading" when in fact it was live the whole time, just off screen. */}
+      {job && (
+        <JobCard
+          job={job}
+          onClose={onJobClose}
+          onCancel={onJobCancel}
+          onAddAnother={() => job.anchorId && onAddTo(job.anchorId, job.note)}
+          addAnotherBlocked={disabled}
+        />
+      )}
 
       {open && (
         <div className="stack" style={{ marginTop: 12 }}>
@@ -933,12 +1005,6 @@ function SubmissionView({
   // survives a member that predates it -- the same rule the judge screen and
   // the feed follow.
   const groupNote = files.find((f) => f.note)?.note ?? null;
-  const label =
-    sub.status === "approved"
-      ? `✓ ${sub.points_awarded ?? 0} pts`
-      : sub.status === "rejected"
-        ? `✗ ${sub.reject_reason || "rejected"}`
-        : "waiting on judge";
 
   return (
     <div>
@@ -949,13 +1015,19 @@ function SubmissionView({
             {files.length} files
           </span>
         )}
-        <span
-          className={`pill pill-wrap push ${
-            sub.status === "approved" ? "pill-good" : sub.status === "rejected" ? "pill-bad" : ""
-          }`}
-        >
-          {label}
-        </span>
+        {sub.status === "approved" ? (
+          <Score
+            base={sub.basePoints ?? sub.points_awarded ?? 0}
+            bonus={sub.bonusPoints}
+            tone="pill-good"
+            check
+            push
+          />
+        ) : (
+          <span className={`pill pill-wrap push ${sub.status === "rejected" ? "pill-bad" : ""}`}>
+            {sub.status === "rejected" ? `✗ ${sub.reject_reason || "rejected"}` : "waiting on judge"}
+          </span>
+        )}
       </div>
 
       <div className="stack" style={{ gap: 8 }}>
@@ -1072,28 +1144,75 @@ function NoteEditor({
   );
 }
 
+/**
+ * What is being sent, while it is being sent.
+ *
+ * The file is shown from a local object URL and the note box is live from the
+ * moment the row is reserved, so "look at it, say what it is, done" all happen
+ * during the upload rather than after it. Nothing waits on a Submit tap: an
+ * upload that has already started cannot be lost by a player who puts their
+ * phone in a pocket, and that matters more here than a confirmation step does.
+ */
 function JobCard({
   job,
+  showTitle = false,
   onClose,
   onCancel,
   onAddAnother,
   addAnotherBlocked,
 }: {
   job: Job;
+  /** Only when the card is stranded away from its task. Inside the task's own
+      card the title is directly above it already. */
+  showTitle?: boolean;
   onClose: () => void;
   onCancel: () => void;
   onAddAnother: () => void;
   addAnotherBlocked: boolean;
 }) {
+  const card = useRef<HTMLDivElement>(null);
   const tone =
     job.status === "error" ? "card-bad" : job.status === "done" ? "card-good" : "card-accent";
+
+  /* Brought into view once per picked file. Centred rather than merely made
+     visible: this card is tall enough that "scroll until its top edge shows"
+     leaves the note box below the fold, which is the exact problem it exists to
+     fix. It also covers the case of a card reached from the rejected list at the
+     top of the page, whose task can be hundreds of pixels down -- without this
+     the player taps Retry and sees nothing happen at all. */
+  useEffect(() => {
+    card.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [job.startedAt]);
+
   return (
-    <div className={`card ${tone}`}>
-      <div style={{ fontWeight: 700, lineHeight: 1.3 }}>{job.task.title}</div>
+    <div className={`card ${tone}`} ref={card} style={{ marginTop: 12 }}>
+      {showTitle && <div style={{ fontWeight: 700, lineHeight: 1.3 }}>{job.task.title}</div>}
       <div className="muted tiny" style={{ marginBottom: 10 }}>
         {job.fileName} · {fmtBytes(job.size)}
         {job.retries > 0 && ` · retry ${job.retries}`}
       </div>
+
+      {/* Checked before it is judged: the wrong clip out of a camera roll is the
+          realistic mistake, and it is far cheaper to spot here than to have a
+          judge reject it twenty minutes later. */}
+      {job.preview && (
+        <div className="media-box media-preview" style={{ marginBottom: 10 }}>
+          {job.preview.isVideo ? (
+            /* Same iOS rule as everywhere else: preload="auto" and the #t=0.1
+               fragment, or Safari renders an untappable black box. */
+            <video
+              className="media"
+              controls
+              playsInline
+              preload="auto"
+              src={`${job.preview.url}#t=0.1`}
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="media" src={job.preview.url} alt="What you're sending" />
+          )}
+        </div>
+      )}
 
       {job.status === "uploading" && (
         <>

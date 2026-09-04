@@ -2,6 +2,7 @@ import { db, mediaUrl } from "@/lib/db";
 import { getSettings, isOrganizer } from "@/lib/settings";
 import { groupBy, groupKey } from "@/lib/groups";
 import { json, fail, isVideoObject } from "@/lib/http";
+import { awardedBreakdown } from "@/lib/scoring.mjs";
 import type { Database } from "@/lib/database.types";
 
 type SubmissionRow = Database["public"]["Tables"]["submissions"]["Row"];
@@ -84,6 +85,7 @@ export async function GET(req: Request) {
       isVideo: isVideoObject(f.media_type, f.object_name),
       sizeBytes: f.size_bytes,
     }));
+    const awarded = awardedBreakdown(s);
     return {
       // The anchor's id. Judging it applies to the whole group server-side, so
       // every existing caller keeps working unchanged.
@@ -115,6 +117,11 @@ export async function GET(req: Request) {
       // any past approval that it duplicates itself.
       duplicate: s.status === "pending" && alreadyApproved.has(`${s.team_id}:${s.task_id}`),
       pointsAwarded: s.points_awarded,
+      // Split the same way the players see it, off the baseline frozen onto the
+      // row. A competition bonus is deliberately absent: it is picked in Admin
+      // after the round, so at judging time there is nothing to show.
+      awardedBase: awarded.base,
+      awardedBonus: awarded.bonus,
       rejectReason: s.reject_reason,
     };
   };

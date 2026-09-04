@@ -609,7 +609,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
           </select>
           {scoringMode === "quantity" && (
             <>
-              <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
+              <input className="field" placeholder="One unit, e.g. extra shirt — reads &quot;+1 pt per extra shirt&quot;" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
               <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
             </>
           )}
@@ -768,7 +768,7 @@ function TaskEditor({
         </select>
         {scoringMode === "quantity" && (
           <>
-            <input className="field" placeholder="Judge field label, e.g. Number of extra shirts" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
+            <input className="field" placeholder="One unit, e.g. extra shirt — reads &quot;+1 pt per extra shirt&quot;" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
             <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
           </>
         )}

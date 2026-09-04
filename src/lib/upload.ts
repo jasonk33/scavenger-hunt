@@ -38,6 +38,22 @@ export function playableType(file: File): string {
  */
 export const isJwt = (k: string) => /^ey[A-Za-z0-9_-]+\./.test(k ?? "");
 
+const VIDEO_EXT = /\.(mp4|m4v|mov|webm|avi|mkv|3gp|mpeg|mpg|ogv)$/i;
+
+/**
+ * Whether to preview a picked file with <video> or <img>.
+ *
+ * Mirrors isVideoObject() on the server and for the same reason: some Android
+ * pickers hand over a File with an empty `type`, and rendering a clip into an
+ * <img> shows the player a broken box instead of what they are about to send.
+ */
+export function isVideoFile(file: File): boolean {
+  const t = (file.type || "").toLowerCase();
+  if (t.startsWith("video")) return true;
+  if (t.startsWith("image")) return false;
+  return VIDEO_EXT.test(file.name);
+}
+
 /** tus surfaces the HTTP response only on DetailedError, not on plain Errors. */
 function httpStatus(err: Error | tus.DetailedError): number {
   return "originalResponse" in err ? (err.originalResponse?.getStatus() ?? 0) : 0;

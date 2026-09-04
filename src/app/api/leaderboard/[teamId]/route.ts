@@ -3,7 +3,7 @@ import { getSettings } from "@/lib/settings";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
-import { scoreApproved } from "@/lib/scoring.mjs";
+import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
 type SubmissionRow = Database["public"]["Tables"]["submissions"]["Row"];
 
@@ -66,7 +66,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
     allApproved = result[1].data ?? [];
   }
   const scored = scoreApproved(allApproved ?? [], taskRows ?? []);
-  const pointsById = new Map(scored.map(({ row, points }) => [row.id, points]));
+  const pointsById = new Map(
+    scored.map(({ row, points, base, bonus }) => [row.id, { total: points, base, bonus }])
+  );
   const groups = winningGroups(teamSubmissions) as SubmissionRow[][];
   const groupTaskIds = [...new Set(groups.map((files) => files[0].task_id))];
   const playerIds = [...new Set(groups.flatMap((files) => files.map((file) => file.player_id)))];
@@ -89,12 +91,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
     .map((files) => {
       const first = files[0];
       const task = taskById.get(first.task_id);
+      const split = pointsById.get(first.id) ?? awardedBreakdown(first);
       return {
         sortOrder: task?.sort_order ?? Number.MAX_SAFE_INTEGER,
         entry: {
           id: first.id,
           taskTitle: task?.title ?? "(deleted task)",
-          points: pointsById.get(first.id) ?? first.points_awarded ?? 0,
+          basePoints: split.base,
+          bonusPoints: split.bonus,
           media: files.map((file) => ({
             id: file.id,
             url: mediaUrl(file.object_name),

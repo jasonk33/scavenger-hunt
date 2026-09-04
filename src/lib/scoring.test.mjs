@@ -2,9 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  awardedBreakdown,
   competitionWinners,
   effectivePoints,
   latestApproved,
+  pointsBreakdown,
   scoreApproved,
 } from "./scoring.mjs";
 
@@ -154,4 +156,74 @@ test("latestApproved excludes rejected and unawarded rows", () => {
     ]).map((item) => item.id),
     ["submission-1"]
   );
+});
+
+test("pointsBreakdown splits what the task was worth from what was earned on top", () => {
+  const quantity = task({ points: 10, scoring_mode: "quantity", points_per_unit: 1 });
+  assert.deepEqual(pointsBreakdown(quantity, 2), { base: 10, bonus: 2, total: 12 });
+  assert.deepEqual(pointsBreakdown(quantity, 0), { base: 10, bonus: 0, total: 10 });
+  assert.deepEqual(pointsBreakdown(quantity, null), { base: 10, bonus: 0, total: 10 });
+
+  const fixed = task({ points: 3 });
+  assert.deepEqual(pointsBreakdown(fixed, null), { base: 3, bonus: 0, total: 3 });
+});
+
+test("pointsBreakdown shows a competition bonus only to the team that won it", () => {
+  const decided = task({
+    scoring_mode: "competition",
+    competition_bonus: 3,
+    winner_team_id: "team-b",
+  });
+  assert.deepEqual(pointsBreakdown(decided, null, "team-b"), { base: 5, bonus: 3, total: 8 });
+  assert.deepEqual(pointsBreakdown(decided, null, "team-a"), { base: 5, bonus: 0, total: 5 });
+});
+
+test("scoreApproved reports the breakdown alongside the total", () => {
+  const quantity = task({ points: 10, scoring_mode: "quantity", points_per_unit: 1 });
+  const [scored] = scoreApproved([row({ measurement_value: 2, points_awarded: 12 })], [quantity]);
+  assert.equal(scored.points, 12);
+  assert.equal(scored.base, 10);
+  assert.equal(scored.bonus, 2);
+});
+
+test("scoreApproved breaks down the frozen baseline, not the edited one", () => {
+  // A task re-tiered after judging must not make the bonus look bigger (or
+  // negative) in hindsight: both halves come off the same snapshot.
+  const quantity = task({ points: 10, scoring_mode: "quantity", points_per_unit: 1 });
+  const [scored] = scoreApproved(
+    [row({ task_points: 5, measurement_value: 2, points_awarded: 7 })],
+    [quantity]
+  );
+  assert.equal(scored.base, 5);
+  assert.equal(scored.bonus, 2);
+  assert.equal(scored.points, 7);
+});
+
+test("scoreApproved falls back to the awarded number when the task is gone", () => {
+  const [scored] = scoreApproved([row({ points_awarded: 4, task_id: "deleted" })], []);
+  assert.equal(scored.points, 4);
+  assert.equal(scored.base, 4);
+  assert.equal(scored.bonus, 0);
+});
+
+test("awardedBreakdown reads the baseline the judge froze onto the row", () => {
+  assert.deepEqual(awardedBreakdown(row({ points_awarded: 12, task_points: 10 })), {
+    base: 10,
+    bonus: 2,
+    total: 12,
+  });
+  // No snapshot to compare against, so the whole award is baseline rather than
+  // an invented bonus.
+  assert.deepEqual(awardedBreakdown(row({ points_awarded: 5, task_points: null })), {
+    base: 5,
+    bonus: 0,
+    total: 5,
+  });
+  // A baseline above the award (a task re-tiered up after judging) must never
+  // render as a negative bonus.
+  assert.deepEqual(awardedBreakdown(row({ points_awarded: 3, task_points: 10 })), {
+    base: 3,
+    bonus: 0,
+    total: 3,
+  });
 });

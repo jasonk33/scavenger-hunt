@@ -3,7 +3,7 @@ import { getSettings } from "@/lib/settings";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
-import { scoreApproved } from "@/lib/scoring.mjs";
+import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
 type SubmissionRow = Database["public"]["Tables"]["submissions"]["Row"];
 
@@ -62,7 +62,11 @@ export async function GET(req: Request) {
 
   if (submissionsError) return fail("Couldn't load task entries right now. Try again.", 503);
 
-  const scored = scoreApproved(submissions ?? [], [task]).map(({ row, points }) => ({ ...row, effectivePoints: points }));
+  const scored = scoreApproved(submissions ?? [], [task]).map(({ row, base, bonus }) => ({
+    ...row,
+    basePoints: base,
+    bonusPoints: bonus,
+  }));
   const groups = (winningGroups(scored as SubmissionRow[]) as SubmissionRow[][]).filter(
     (files) => files[0]?.team_id !== roster.team_id
   );
@@ -86,12 +90,17 @@ export async function GET(req: Request) {
     .map((files) => {
       const first = files[0];
       const team = teamById.get(first.team_id);
+      const ranked = scored.find((row) => row.id === first.id);
+      const split = ranked
+        ? { base: ranked.basePoints, bonus: ranked.bonusPoints }
+        : awardedBreakdown(first);
       return {
         sortOrder: teamOrder.get(first.team_id) ?? Number.MAX_SAFE_INTEGER,
         entry: {
           id: first.id,
           taskTitle: task.title,
-          points: scored.find((row) => row.id === first.id)?.effectivePoints ?? first.points_awarded ?? 0,
+          basePoints: split.base,
+          bonusPoints: split.bonus,
           media: files.map((file) => ({
             id: file.id,
             url: mediaUrl(file.object_name),
