@@ -485,17 +485,26 @@ h2 {
   box-shadow: var(--shadow);
 }
 /* The status filter on /submit has four options and lives above a fifty-row
-   list, so it takes the whole width and splits it evenly rather than sizing to
-   its labels -- an inline .seg of four words overflows a 320px phone sideways,
-   and this is the one control on that screen everybody uses. */
+   list, so it takes the whole width rather than sizing to its labels -- an
+   inline .seg of four words leaves a ragged gap on a wide phone, and this is
+   the one control on that screen everybody uses. */
 .seg-full {
   display: flex;
   width: 100%;
 }
 .seg-full button {
-  flex: 1;
+  /* Grow from the label's own width rather than from zero. A plain `flex: 1`
+     splits the row into four equal parts, which spends 73px on "All" (30px of
+     text) and then hands "Rejected" (73px) a box it does not fit in: measured,
+     it spills 12px at the 260px floor probe-truncation holds the app to, and
+     still has under 4px of slack at 320px, so any phone with text scaling
+     turned up wears the label into its neighbour. Sized from content, the four
+     labels need 226px in total and the leftover is shared out -- so the row is
+     still filled edge to edge and nothing overflows on any real phone. */
+  flex: 1 1 auto;
   min-width: 0;
   padding: 0 6px;
+  white-space: nowrap;
 }
 
 /* ---- Fields ------------------------------------------------------------ */

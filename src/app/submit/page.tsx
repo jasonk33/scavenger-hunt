@@ -274,10 +274,12 @@ export default function SubmitPage() {
   }, [data]);
 
   /* Every task's bucket, computed once against the round's whole list rather
-     than inside the filter, because the empty state below has to know whether a
-     bucket is empty in the ROUND or merely empty under the other filters -- and
-     telling a player "nothing rejected" when two rejections are sitting behind a
-     points chip is exactly the wrong-cause bug the empty states exist to avoid. */
+     than inside the filter, because the empty state below reads it twice and
+     needs both answers: which tasks are in the bucket, and whether the bucket
+     has anything in it AT ALL this round. Told only that the filtered list is
+     empty, the empty state cannot tell "two rejections are sitting behind a
+     points chip" from "nothing was ever rejected", and blaming the chip for the
+     second is the wrong-cause bug all three empty states exist to avoid. */
   const statusByTask = useMemo(() => {
     const m = new Map<string, TaskStatus>();
     for (const t of data?.tasks ?? []) m.set(t.id, statusOf(byTask.get(t.id)));
@@ -579,6 +581,15 @@ export default function SubmitPage() {
     setQ("");
   };
 
+  /* Whether the chosen bucket has ANY member in the round, which is a different
+     question from whether the filtered list came back empty -- and the whole
+     reason statusByTask is built against the round rather than inside the
+     filter. Without it, filtering to Rejected in a round with nothing rejected
+     announced that a search was narrowing it, when the search was narrowing
+     nothing and the real answer never got said. */
+  const bucketInRound =
+    status === "all" || [...statusByTask.values()].some((s) => matchesStatus(status, s));
+
   /* What the status empty state has to own up to. Named individually rather
      than counted, because "3 filters are on" tells a player nothing they can
      act on -- and the search box in particular is the one they will not think
@@ -588,6 +599,9 @@ export default function SubmitPage() {
     onlySaved ? "the saved filter" : null,
     q.trim() ? "your search" : null,
   ].filter(Boolean) as string[];
+  /* Only the other filters can be blamed, and only when there is something in
+     the bucket for them to be hiding. */
+  const blameOtherFilters = bucketInRound && alsoNarrowing.length > 0;
 
   return (
     <>
@@ -865,11 +879,11 @@ export default function SubmitPage() {
       {data && grouped.length === 0 && status !== "all" && (
         <div className="empty">
           <b>
-            {alsoNarrowing.length > 0
+            {blameOtherFilters
               ? `No ${STATUS_EMPTY[status].noun} tasks match your other filters`
               : STATUS_EMPTY[status].title}
           </b>
-          {alsoNarrowing.length > 0
+          {blameOtherFilters
             ? `${alsoNarrowing.join(" and ")} ${alsoNarrowing.length === 1 ? "is" : "are"} narrowing it too.`
             : STATUS_EMPTY[status].body}
           <div>

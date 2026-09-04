@@ -286,6 +286,30 @@ try {
   check("the status filter is on screen once the team has sent something",
     await seg.count() === 1, `${await seg.count()} status controls`);
 
+  /* Four labels in one row, on the narrowest screen the app is held to. Sized
+     into four equal parts they do not fit: "Rejected" is two and a half times
+     the width of "All" and spills out of its share into its neighbour, with
+     under 4px of slack left even at 320px. Nothing else would notice -- the
+     row is width-constrained, so the page does not scroll sideways and
+     probe-truncation's overflow assertion stays green while the label bleeds. */
+  await page.setViewportSize({ width: 260, height: 844 });
+  await page.waitForTimeout(400);
+  const segFit = await page.evaluate(() => {
+    const row = document.querySelector(".status-filter");
+    return [...row.querySelectorAll("button")].map((el) => ({
+      label: el.textContent.trim(),
+      box: Math.round(el.getBoundingClientRect().width),
+      needs: el.scrollWidth,
+    }));
+  });
+  const spilling = segFit.filter((x) => x.needs > x.box + 1);
+  note(`status labels at 260px: ${segFit.map((x) => `${x.label}:${x.box}`).join(" ")}`);
+  check("no status label spills out of its own button at 260px",
+    spilling.length === 0,
+    `${JSON.stringify(spilling)} -- the label runs into the one beside it`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+
   /** The tint on each fixture card, keyed by title. */
   const tints = () =>
     page.evaluate((titles) =>
@@ -364,6 +388,33 @@ try {
     (await page.getByPlaceholder("Search tasks").inputValue()) === ""
       && await page.locator(".card-flat").count() > 3,
     `${await page.locator(".card-flat").count()} cards, search ${JSON.stringify(await page.getByPlaceholder("Search tasks").inputValue())}`);
+
+
+  console.log("\n11. An empty bucket must own up to being empty, not blame a filter");
+  /* The other direction of section 10, and the one that was wrong: with nothing
+     rejected in the whole round, "your search is narrowing it too" points at a
+     control that is narrowing nothing, and the true reason never gets said. */
+  /* expectedStatus is not optional here: it defaults to "pending", so a bare
+     approve on an already-rejected row is refused with a 409 and the setup
+     silently does nothing -- which is exactly what happened, and left this
+     asserting against a round that still had a rejection in it. */
+  const unrejected = await call(`/api/judge/${failSub}`, { method: "POST", body: JSON.stringify({
+    action: "approve", expectedStatus: "rejected" }) });
+  check("the fixture rejection was cleared, so the bucket really is empty",
+    unrejected.status === 200, `judge returned ${unrejected.status}: ${JSON.stringify(unrejected.body)}`);
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForTimeout(1800);
+  await page.locator(".status-filter").getByRole("button", { name: "Rejected" }).click();
+  await page.waitForTimeout(300);
+  await page.getByPlaceholder("Search tasks").fill("__qa nothing matches this");
+  await page.waitForTimeout(500);
+  const noneText = await page.locator(".empty").innerText();
+  note(`empty state reads: ${noneText.replace(/\s+/g, " ")}`);
+  check("it says the bucket is empty rather than blaming the search",
+    /Nothing rejected/i.test(noneText),
+    `nothing is rejected all round, and the empty state said: ${JSON.stringify(noneText.replace(/\s+/g, " "))}`);
+  check("and it does not point at a filter that is narrowing nothing",
+    !/narrowing it too/i.test(noneText), JSON.stringify(noneText.replace(/\s+/g, " ")));
 
 } finally {
   if (browser) await browser.close();
