@@ -91,7 +91,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
     .map((files) => {
       const first = files[0];
       const task = taskById.get(first.task_id);
-      const split = pointsById.get(first.id) ?? awardedBreakdown(first);
+      /* Offered the whole group, for the reason spelled out in /api/feed: the
+         scoring map is keyed by the newest file and `first` is the oldest, so
+         looking up the anchor alone missed on every multi-file entry. */
+      const split =
+        files.map((f) => pointsById.get(f.id)).find((hit) => hit !== undefined) ??
+        awardedBreakdown(first);
       return {
         sortOrder: task?.sort_order ?? Number.MAX_SAFE_INTEGER,
         entry: {

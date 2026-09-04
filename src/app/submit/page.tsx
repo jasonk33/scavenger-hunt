@@ -83,8 +83,9 @@ type Job = {
    * dismissed -- an iPhone clip is 150MB and holding several would be careless.
    */
   preview: { url: string; isVideo: boolean } | null;
-  /** Distinguishes one job from the next in the same card, so picking a second
-      file remounts it and brings it back into view. */
+  /** Distinguishes one job from the next in the same card. The scroll-into-view
+      effect keys on it, so picking a second file brings the card back into
+      view rather than leaving it wherever the page had scrolled to. */
   startedAt: number;
   pct: number;
   retries: number;
@@ -318,13 +319,16 @@ export default function SubmitPage() {
       return;
     }
 
+    // Made BEFORE the updater, which has to stay pure: React invokes it twice
+    // under StrictMode, and a second URL minted in there is never revoked.
+    const previewUrl = URL.createObjectURL(file);
     setJob((prev) => ({
       task,
       fileName: file.name,
       size: file.size,
       // Rendered locally, so the player can check they picked the right clip
       // without waiting for it to land anywhere.
-      preview: { url: URL.createObjectURL(file), isVideo: isVideoFile(file) },
+      preview: { url: previewUrl, isVideo: isVideoFile(file) },
       startedAt: Date.now(),
       pct: 0,
       retries: 0,

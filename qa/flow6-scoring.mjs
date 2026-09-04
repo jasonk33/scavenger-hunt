@@ -163,8 +163,55 @@ try {
   const anonCsv = await fetch(`${BASE}/api/export?format=csv`);
   check("export is PIN-gated", anonCsv.status === 401, String(anonCsv.status));
 
+  /* ---- a group's own pills vs the team's total ---- */
+  console.log("\n7. A multi-file group's pills add up to what the team is credited");
+  /*
+   * Every screen shows a scored entry as a baseline plus a bonus, and the
+   * leaderboard shows one total. If those two disagree a team is looking at
+   * evidence of points it was not paid, which is the same class of bug as the
+   * CSV disagreeing with the view above.
+   *
+   * A COMPETITION task with a decided winner is the case that separates them:
+   * the bonus lives on the task, is chosen after the round, and is therefore
+   * added on read -- it is not in the `points_awarded` frozen onto the row. And
+   * it takes TWO files, because a group is anchored on its oldest file while
+   * the row that actually scores is the newest. Looking the anchor up in the
+   * scoring map missed on every multi-file group, silently fell back to the
+   * frozen number, and dropped the bonus.
+   */
+  const comp = await call("/api/admin/tasks", { method: "POST", body: JSON.stringify({
+    round: 1, title: "__qa competition group task", points: 5,
+    scoringMode: "competition", competitionBonus: 5 }) });
+  const compId = comp.body.id;
+  const anchor = await seed({ playerId: alice.id, taskId: compId });
+  await seed({ playerId: alice.id, taskId: compId, name: "photo-2.jpg", groupWith: anchor });
+  const { data: compFiles } = await admin.from("submissions").select("id,group_id").eq("task_id", compId);
+  check("the two files are one piece of evidence",
+    compFiles.length === 2 && compFiles[0].group_id === compFiles[1].group_id,
+    JSON.stringify(compFiles.map((r) => r.group_id)));
+  await call(`/api/judge/${anchor}`, { method: "POST", body: JSON.stringify({
+    action: "approve", expectedStatus: "pending" }) });
+  await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({
+    id: compId, winnerTeamId: red1.id }) });
+
+  const feedJson = await (await fetch(`${BASE}/api/feed?round=1`)).json();
+  const post = (feedJson.items ?? []).find((i) => i.taskTitle === "__qa competition group task");
+  note(`feed post: ${JSON.stringify(post && { base: post.basePoints, bonus: post.bonusPoints, files: post.media.length })}`);
+  check("the feed post carries both files", post?.media.length === 2, String(post?.media.length));
+  check("the feed shows the bonus the team won", post?.bonusPoints === 5,
+    `bonus ${post?.bonusPoints} — a multi-file group lost the competition bonus`);
+
+  const teamView = await (await fetch(`${BASE}/api/leaderboard/${red1.id}?round=1`, {
+    headers: { cookie: `organizer=${PIN}` } })).json();
+  const pillTotal = (teamView.entries ?? []).reduce((sum, e) => sum + e.basePoints + e.bonusPoints, 0);
+  const teamNow = await score(1, red1.id);
+  note(`entry pills add to ${pillTotal}; team_scores says ${teamNow.points}`);
+  check("the team's own entries add up to the score beside its name",
+    pillTotal === teamNow.points,
+    `${pillTotal} on the entries vs ${teamNow.points} on the leaderboard`);
+
   /* ---- feed weight ---- */
-  console.log("\n7. How heavy is the feed on a phone?");
+  console.log("\n8. How heavy is the feed on a phone?");
   const { data: template } = await admin.from("submissions").select("*").eq("id", s1).single();
   const clones = Array.from({ length: 40 }, (_, i) => {
     return cloneSubmission(template, { status: "approved", points_awarded: 5,

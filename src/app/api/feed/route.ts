@@ -72,9 +72,17 @@ export async function GET(req: Request) {
       // about the order the files were shot in.
       const files = [...group].sort((a, b) => a.created_at.localeCompare(b.created_at));
       const s = files[0];
-      // A duplicate approval is not in the scoring map -- it still renders a
-      // pill, so it splits off the baseline the judge froze onto the row.
-      const split = pointsById.get(s.id) ?? awardedBreakdown(s);
+      /* Every file in the group is offered to the scoring map, not just `s`.
+         The map is keyed by the row that actually SCORES, which within a group
+         is the newest file -- while `s` is deliberately the oldest. Looking up
+         the anchor alone therefore missed on every multi-file post and silently
+         took the fallback, which reads only what was frozen at judging time and
+         so cannot know about a competition bonus decided afterwards. The
+         fallback is for a genuinely unranked row: a second approval on a task
+         the team has already scored. */
+      const split =
+        files.map((f) => pointsById.get(f.id)).find((hit) => hit !== undefined) ??
+        awardedBreakdown(s);
       return {
         id: s.id,
         status: s.status,
