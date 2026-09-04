@@ -53,14 +53,14 @@ export async function GET(req: Request) {
   const { data: approved } = taskIds.length
     ? await sb
         .from("submissions")
-        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,created_at,judged_at")
+        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,group_id,created_at,judged_at")
         .eq("round", round)
         .in("task_id", taskIds)
         .eq("status", "approved")
     : { data: [] };
   const pointsById = new Map(
     scoreApproved(approved ?? [], tasks ?? []).map(({ row, points, base, bonus }) => [
-      row.id,
+      groupKey(row),
       { total: points, base, bonus },
     ])
   );
@@ -72,17 +72,14 @@ export async function GET(req: Request) {
       // about the order the files were shot in.
       const files = [...group].sort((a, b) => a.created_at.localeCompare(b.created_at));
       const s = files[0];
-      /* Every file in the group is offered to the scoring map, not just `s`.
-         The map is keyed by the row that actually SCORES, which within a group
-         is the newest file -- while `s` is deliberately the oldest. Looking up
-         the anchor alone therefore missed on every multi-file post and silently
+      /* Looked up by GROUP. A group is one decision the judge made, but only
+         one row inside it scores -- the newest -- while `s` here is deliberately
+         the oldest. Keyed by row id this missed on every multi-file post and
          took the fallback, which reads only what was frozen at judging time and
          so cannot know about a competition bonus decided afterwards. The
-         fallback is for a genuinely unranked row: a second approval on a task
+         fallback is for a genuinely unranked group: a second approval on a task
          the team has already scored. */
-      const split =
-        files.map((f) => pointsById.get(f.id)).find((hit) => hit !== undefined) ??
-        awardedBreakdown(s);
+      const split = pointsById.get(groupKey(s)) ?? awardedBreakdown(s);
       return {
         id: s.id,
         status: s.status,

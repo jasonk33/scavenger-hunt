@@ -5,10 +5,33 @@ function integer(value, fallback = 0) {
   return Number.isInteger(number) && number >= 0 ? number : fallback;
 }
 
+/**
+ * Which of two approved rows the judge ruled on most recently.
+ *
+ * Field by field, and with `>` rather than `localeCompare`, so that it agrees
+ * with the identical comparator in `scored-entries.mjs` -- the two decide the
+ * same question for the same team and task, and the routes now look one up in
+ * the other's result.
+ *
+ * They did not agree. Postgres trims trailing zeros off a fractional second, so
+ * a row judged exactly on the second comes back as `...T14:00:00+00:00` while
+ * its sibling half a second later is `...T14:00:00.5+00:00`. Concatenating and
+ * calling `localeCompare` puts the whole second AFTER the half -- collation does
+ * not treat `+` and `.` as their code points -- so the older row won and the
+ * newer ruling was ignored. Real rows already carry both two- and three-digit
+ * fractions, so the zero-digit form is one judging away.
+ */
 function compareNewest(a, b) {
-  const left = `${a.judged_at ?? ""}|${a.created_at ?? ""}|${a.id ?? ""}`;
-  const right = `${b.judged_at ?? ""}|${b.created_at ?? ""}|${b.id ?? ""}`;
-  return left.localeCompare(right);
+  const fields = [
+    [a.judged_at ?? "", b.judged_at ?? ""],
+    [a.created_at ?? "", b.created_at ?? ""],
+    [a.id ?? "", b.id ?? ""],
+  ];
+  for (const [left, right] of fields) {
+    if (left === right) continue;
+    return left > right ? 1 : -1;
+  }
+  return 0;
 }
 
 function isAwarded(row) {

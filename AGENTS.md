@@ -319,6 +319,18 @@ the confident wrong answer.
   `scoringMode === "quantity"`. The Admin "Leader bonuses" picker renders the **title**, the
   bonus and a team dropdown — never the label. So on a `competition` task the label is dead data, and **the winner criterion has
   nowhere to live but the title.** Setting the label instead accomplishes nothing.
+- **A group's score is looked up by `groupKey`, never by row id.** Several files sent
+  as one piece of evidence are one decision, but only ONE row inside the group scores — the
+  newest, per `latestApproved` — while every screen anchors its group on the OLDEST file.
+  Keyed by row id the lookup misses on every multi-file group and falls through to
+  `awardedBreakdown()`, which reads what was frozen at judging time and therefore cannot
+  know about a competition bonus decided afterwards. `/api/feed`, `/api/state`,
+  `/api/task-entries` and `/api/leaderboard/[teamId]` all carry this rule, and any query
+  feeding it must select `group_id` or `groupKey` silently degrades to the row id and
+  reintroduces the bug. `winningGroups` takes RAW rows for the same reason: handed ranked
+  ones it can only ever return single-file groups. `flow6` section 7 is the guard — a
+  competition task with a decided winner and two files is the only shape where the ranked
+  path and the frozen fallback differ.
 - **A score renders as two pills, never one total** — `<Score>` (`src/components/Score.tsx`):
   what the task was worth, then `+N bonus` when the team earned more. `12 pts` hid the fact
   that anyone had gone beyond the task. Both numbers come from `pointsBreakdown()` server-side

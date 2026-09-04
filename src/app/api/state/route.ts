@@ -139,7 +139,7 @@ export async function GET(req: Request) {
    * a different one on the leaderboard.
    */
   const scoredRows = scoreApproved(mine, tasks) as Array<{
-    row: { id: string; task_id: string };
+    row: { id: string; task_id: string; group_id: string | null };
     points: number;
     base: number;
     bonus: number;
@@ -147,19 +147,26 @@ export async function GET(req: Request) {
   const bestByTask = new Map(
     scoredRows.map(({ row: s, points }) => [s.task_id, { pts: points }])
   );
+  /* Keyed by GROUP, not by row. Several files sent as one piece of evidence are
+     one thing the judge decided, but only the newest of them is the row that
+     scores -- and the expanded list on /submit reads its pill off the OLDEST.
+     Keyed by row id, that pill fell through to the frozen numbers and lost a
+     competition bonus, so a card could show 10 on the task and 5 on the very
+     evidence that earned it. */
+  const rankedByGroup = new Map(
+    scoredRows.map(({ row, base, bonus, points }) => [
+      groupKey(row),
+      { base, bonus, total: points },
+    ])
+  );
   /* Every judged row the screen may render, not just the scoring ones: a second
      approval on a task the team already banked still shows its own pill in the
-     expanded list, and it has to split into baseline and bonus the same way. */
+     expanded list, and it has to split into baseline and bonus the same way. It
+     is its own group, so it misses the map above and takes the frozen split. */
   const splitById = new Map(
     mine
       .filter((s) => s.status === "approved")
-      .map((s) => {
-        const ranked = scoredRows.find(({ row }) => row.id === s.id);
-        const split = ranked
-          ? { base: ranked.base, bonus: ranked.bonus, total: ranked.points }
-          : awardedBreakdown(s);
-        return [s.id, split];
-      })
+      .map((s) => [s.id, rankedByGroup.get(groupKey(s)) ?? awardedBreakdown(s)])
   );
 
   /**

@@ -147,6 +147,25 @@ test("approved scoring keeps the submission baseline when the task is edited lat
   assert.equal(scored[0].points, 7);
 });
 
+test("latestApproved agrees with scored-entries on a trimmed fractional second", async () => {
+  // Postgres returns a whole second with no fractional part at all, so two
+  // rulings a fraction apart have different-length timestamps. Both modules
+  // pick the winner for the same team and task, and a route looks one up in the
+  // other's answer, so they have to agree on this shape.
+  const { winningGroups } = await import("./scored-entries.mjs");
+  const onTheSecond = row({ id: "on-the-second", judged_at: "2026-09-04T14:00:00+00:00" });
+  const aHalfLater = row({ id: "a-half-later", judged_at: "2026-09-04T14:00:00.5+00:00" });
+
+  assert.deepEqual(
+    latestApproved([onTheSecond, aHalfLater]).map((r) => r.id),
+    ["a-half-later"]
+  );
+  assert.deepEqual(
+    winningGroups([onTheSecond, aHalfLater]).map((files) => files.map((f) => f.id)),
+    [["a-half-later"]]
+  );
+});
+
 test("latestApproved excludes rejected and unawarded rows", () => {
   assert.deepEqual(
     latestApproved([

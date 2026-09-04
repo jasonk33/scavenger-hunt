@@ -1,6 +1,7 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { json, fail, isVideoObject } from "@/lib/http";
+import { groupKey } from "@/lib/groups";
 import { winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
 import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
@@ -57,7 +58,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
       sb.from("tasks").select("id,title,points,scoring_mode,points_per_unit,competition_bonus,winner_team_id,sort_order").in("id", taskIds),
       sb
         .from("submissions")
-        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,created_at,judged_at")
+        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,group_id,created_at,judged_at")
         .eq("round", round)
         .in("task_id", taskIds)
         .eq("status", "approved"),
@@ -67,7 +68,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
   }
   const scored = scoreApproved(allApproved ?? [], taskRows ?? []);
   const pointsById = new Map(
-    scored.map(({ row, points, base, bonus }) => [row.id, { total: points, base, bonus }])
+    scored.map(({ row, points, base, bonus }) => [groupKey(row), { total: points, base, bonus }])
   );
   const groups = winningGroups(teamSubmissions) as SubmissionRow[][];
   const groupTaskIds = [...new Set(groups.map((files) => files[0].task_id))];
@@ -91,12 +92,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
     .map((files) => {
       const first = files[0];
       const task = taskById.get(first.task_id);
-      /* Offered the whole group, for the reason spelled out in /api/feed: the
-         scoring map is keyed by the newest file and `first` is the oldest, so
-         looking up the anchor alone missed on every multi-file entry. */
-      const split =
-        files.map((f) => pointsById.get(f.id)).find((hit) => hit !== undefined) ??
-        awardedBreakdown(first);
+      /* By group, for the reason spelled out in /api/feed: only the newest row
+         inside a group scores, and `first` is the oldest. */
+      const split = pointsById.get(groupKey(first)) ?? awardedBreakdown(first);
       return {
         sortOrder: task?.sort_order ?? Number.MAX_SAFE_INTEGER,
         entry: {

@@ -4,7 +4,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, PIN, admin, setup, teardown, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, cloneSubmission, asOrganizer,
+  BASE, PIN, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings, seed, check, note, summary, call, cloneSubmission, asOrganizer,
 } from "./lib.mjs";
 
 const before = await snapshot();
@@ -18,6 +18,7 @@ const score = async (round, teamId) => {
 
 try {
   await teardown();
+  await teardownTasks();
   const fx = await setup();
   const alice = fx.player("__qa Alice"), bob = fx.player("__qa Bob");
   const red1 = fx.teamOf("__qa Red", 1);
@@ -187,7 +188,10 @@ try {
   await seed({ playerId: alice.id, taskId: compId, name: "photo-2.jpg", groupWith: anchor });
   const { data: compFiles } = await admin.from("submissions").select("id,group_id").eq("task_id", compId);
   check("the two files are one piece of evidence",
-    compFiles.length === 2 && compFiles[0].group_id === compFiles[1].group_id,
+    // Non-null explicitly: two ungrouped rows both carry null, and comparing
+    // them for equality would pass while grouping was completely broken.
+    compFiles.length === 2 && Boolean(compFiles[0].group_id) &&
+      compFiles[0].group_id === compFiles[1].group_id,
     JSON.stringify(compFiles.map((r) => r.group_id)));
   await call(`/api/judge/${anchor}`, { method: "POST", body: JSON.stringify({
     action: "approve", expectedStatus: "pending" }) });
@@ -209,6 +213,34 @@ try {
   check("the team's own entries add up to the score beside its name",
     pillTotal === teamNow.points,
     `${pillTotal} on the entries vs ${teamNow.points} on the leaderboard`);
+
+  /*
+   * The same evidence through the two endpoints the player screens read. Both
+   * resolve a group's score, and neither had any coverage: /api/state feeds the
+   * task card AND the expanded list under it, which anchor on opposite ends of
+   * the group, so a per-row split let one card show two different numbers for
+   * one piece of evidence.
+   */
+  const aliceState = await (await fetch(`${BASE}/api/state?playerId=${alice.id}`)).json();
+  const compSubs = (aliceState.submissions ?? []).filter((x) => x.task_id === compId && x.status === "approved");
+  note(`/api/state pills for the group: ${JSON.stringify(compSubs.map((x) => `${x.basePoints}+${x.bonusPoints}`))}`);
+  check("every file of the group reports the same score", compSubs.length === 2 &&
+    new Set(compSubs.map((x) => `${x.basePoints}+${x.bonusPoints}`)).size === 1,
+    JSON.stringify(compSubs.map((x) => ({ base: x.basePoints, bonus: x.bonusPoints }))));
+  check("and it is the score the task was actually paid", compSubs[0]?.bonusPoints === 5,
+    `bonus ${compSubs[0]?.bonusPoints} — the expanded list disagrees with the card above it`);
+
+  // "See other teams' entries" is read by somebody NOT on the team that scored.
+  await call("/api/admin/players", { method: "POST", body: JSON.stringify({ names: "__qa Carol" }) });
+  const { data: carolRow } = await admin.from("players").select("id").eq("name", "__qa Carol").single();
+  await call("/api/admin/roster", { method: "POST", body: JSON.stringify({
+    round: 1, entries: [{ playerId: carolRow.id, teamId: fx.teamOf("__qa Blue", 1).id }] }) });
+  const others = await (await fetch(`${BASE}/api/task-entries?taskId=${compId}&playerId=${carolRow.id}`)).json();
+  const shown = (others.entries ?? [])[0];
+  note(`other teams' entry: ${JSON.stringify(shown && { base: shown.basePoints, bonus: shown.bonusPoints, files: shown.media.length })}`);
+  check("another team sees the whole piece of evidence", shown?.media.length === 2,
+    `${shown?.media.length} file(s) — the rest of the group was dropped`);
+  check("and sees what it actually scored", shown?.bonusPoints === 5, String(shown?.bonusPoints));
 
   /* ---- feed weight ---- */
   console.log("\n8. How heavy is the feed on a phone?");
@@ -252,6 +284,10 @@ try {
 } finally {
   if (browser) await browser.close();
   await teardown();
+  // This driver creates a task of its own now, and `teardown` only sweeps
+  // players, teams, roster and submissions -- so without this the fixture task
+  // stays ACTIVE in round 1 and shows up in every player's list.
+  await teardownTasks();
   await restoreSettings(settingsBefore);
   const after = await snapshot();
   const intact = JSON.stringify(before) === JSON.stringify(after);

@@ -1,6 +1,7 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { json, fail, isVideoObject } from "@/lib/http";
+import { groupKey } from "@/lib/groups";
 import { winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
 import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
@@ -62,12 +63,19 @@ export async function GET(req: Request) {
 
   if (submissionsError) return fail("Couldn't load task entries right now. Try again.", 503);
 
-  const scored = scoreApproved(submissions ?? [], [task]).map(({ row, base, bonus }) => ({
-    ...row,
-    basePoints: base,
-    bonusPoints: bonus,
-  }));
-  const groups = (winningGroups(scored as SubmissionRow[]) as SubmissionRow[][]).filter(
+  /* Split per GROUP, because that is what an entry is: one decision the judge
+     made over however many files the team sent. */
+  const splitByGroup = new Map(
+    scoreApproved(submissions ?? [], [task]).map(({ row, base, bonus }) => [
+      groupKey(row),
+      { base, bonus },
+    ])
+  );
+  /* winningGroups is handed the RAW rows, not the ranked ones. Ranked rows are
+     one per team and task, so grouping those could only ever return single-file
+     groups -- a team that sent a photo and the clip explaining it had the clip
+     silently dropped from what everyone else could see. */
+  const groups = (winningGroups((submissions ?? []) as SubmissionRow[]) as SubmissionRow[][]).filter(
     (files) => files[0]?.team_id !== roster.team_id
   );
   if (groups.length === 0) return json({ entries: [] });
@@ -90,10 +98,7 @@ export async function GET(req: Request) {
     .map((files) => {
       const first = files[0];
       const team = teamById.get(first.team_id);
-      const ranked = scored.find((row) => row.id === first.id);
-      const split = ranked
-        ? { base: ranked.basePoints, bonus: ranked.bonusPoints }
-        : awardedBreakdown(first);
+      const split = splitByGroup.get(groupKey(first)) ?? awardedBreakdown(first);
       return {
         sortOrder: teamOrder.get(first.team_id) ?? Number.MAX_SAFE_INTEGER,
         entry: {

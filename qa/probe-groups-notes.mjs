@@ -234,7 +234,10 @@ try {
   check("the player's task list loads", await waitForText(submit, "__qa Group task A"));
 
   const rowA = submit.locator(".card-flat").filter({ hasText: "__qa Group task A" });
-  const seeA = rowA.getByRole("button", { name: /^(See|Hide)/ });
+  // Anchored at BOTH ends: the same row carries "See other teams' entries", so
+  // an unanchored /^(See|Hide)/ matches two buttons and Playwright refuses to
+  // act on either. That button landed in August and quietly broke this probe.
+  const seeA = rowA.getByRole("button", { name: /^(See( \d+)?|Hide)$/ });
   check(
     "three files count as one submission to look at",
     (await seeA.textContent())?.trim() === "See",
@@ -248,7 +251,7 @@ try {
   check("the judged note is shown back to the player", await waitForText(submit, "red hat"));
 
   const rowB = submit.locator(".card-flat").filter({ hasText: "__qa Group task B" });
-  await rowB.getByRole("button", { name: /^(See|Hide)/ }).click();
+  await rowB.getByRole("button", { name: /^(See( \d+)?|Hide)$/ }).click();
   await submit.waitForTimeout(600);
   check(
     "a waiting submission offers to take another file",
