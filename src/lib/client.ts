@@ -63,6 +63,43 @@ export function setSaved(playerId: string, ids: Set<string>) {
   }
 }
 
+// Deliberately not under SAVED_PREFIX, or clearing every key with that prefix
+// would take the record of the clear with it and the next poll would clear
+// again -- deleting each star a second after it was tapped.
+const EPOCH_KEY = "sh.savedEpoch";
+
+/**
+ * Throw away this device's shortlists when the organizer has reset the event.
+ *
+ * A reset deletes every submission, so a shortlist of tasks the team already
+ * "did" is worse than no shortlist -- but the stars are localStorage and no
+ * route can reach them. So the reset bumps `saved_epoch` in settings and each
+ * phone clears itself the first time it polls a value it has not seen.
+ *
+ * A device with no stored marker adopts the current one WITHOUT clearing: on
+ * the poll right after this shipped, every phone in the event would otherwise
+ * decide the epoch was news and wipe a shortlist nothing had reset.
+ *
+ * Returns whether anything was actually cleared, so the caller can drop the set
+ * it is rendering rather than wait for a state refresh to notice.
+ */
+export function syncSavedEpoch(epoch: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const seen = localStorage.getItem(EPOCH_KEY);
+    if (seen === epoch) return false;
+    localStorage.setItem(EPOCH_KEY, epoch);
+    if (seen === null) return false;
+
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(SAVED_PREFIX)) localStorage.removeItem(key);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,

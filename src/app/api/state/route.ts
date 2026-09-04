@@ -199,6 +199,7 @@ export async function GET(req: Request) {
     settings: {
       round,
       submissions_open: settings.submissions_open,
+      saved_epoch: settings.saved_epoch,
     },
     me,
     team,

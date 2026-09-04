@@ -18,7 +18,7 @@
  */
 import { chromium } from "@playwright/test";
 import {
-  BASE, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings,
+  BASE, admin, setup, teardown, teardownTasks, snapshot, captureSettings, restoreSettings,
   asPlayer, check, note, summary, call, pollNow, shot,
 } from "./lib.mjs";
 
@@ -209,11 +209,75 @@ try {
   check("escaping returns them to a populated list",
     (await visibleTitles(alicePage)).length > 0,
     JSON.stringify(await visibleTitles(alicePage)));
+
+  console.log("\n12. A reset clears the shortlist on a phone nobody is holding");
+  /* The stars live in localStorage, so the reset route cannot reach them --
+     it bumps a marker in settings and each device clears itself when it sees a
+     value it has not seen before. Bumping the marker directly is the same
+     signal a real reset sends, without deleting anyone's photos to send it.
+     It has to land on a poll, not a reload: a player whose phone is in their
+     pocket must not come back to a shortlist of tasks that no longer exist. */
+  const aliceStar = () => starIn(cardFor(alicePage, TITLES[0]));
+  await aliceStar().click();
+  await alicePage.waitForTimeout(400);
+  check("a task is saved before the reset",
+    await aliceStar().getAttribute("aria-pressed") === "true");
+
+  await admin.from("settings").upsert(
+    { key: "saved_epoch", value: `__qa-${Date.now()}` },
+    { onConflict: "key" }
+  );
+  /* Waited for rather than asserted at a fixed delay: usePoll drops a manual
+     refresh while a scheduled one is in flight, so the marker can legitimately
+     arrive a tick late. Still a real assertion -- against a device that never
+     clears, this waits out the whole window and fails. */
+  const clearedWithin = async (timeoutMs = 12000) => {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      await pollNow(alicePage);
+      if ((await aliceStar().getAttribute("aria-pressed")) === "false") return true;
+      if (Date.now() > end) return false;
+      await alicePage.waitForTimeout(500);
+    }
+  };
+  check("the reset clears the saved task on the next poll", await clearedWithin());
+  check("and the saved filter goes with it", await filterChip(alicePage).count() === 0);
+
+  /* Clearing once per reset, not once per poll. A device that re-cleared every
+     tick would delete each star a second after it was tapped, which is worse
+     than never clearing at all. */
+  await aliceStar().click();
+  await alicePage.waitForTimeout(400);
+  await pollNow(alicePage);
+  await alicePage.waitForTimeout(2500);
+  check("a star saved after the reset survives the next poll",
+    await aliceStar().getAttribute("aria-pressed") === "true",
+    String(await aliceStar().getAttribute("aria-pressed")));
+
+  /* A phone that has never seen the marker must adopt it rather than treat it
+     as news: shipping this must not wipe a shortlist that predates it. */
+  const freshCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await asPlayer(freshCtx, alice);
+  await freshCtx.addInitScript(
+    ([key, ids]) => localStorage.setItem(key, JSON.stringify(ids)),
+    [`sh.saved.${alice.id}`, [taskIds[TITLES[0]]]]
+  );
+  const freshPage = await freshCtx.newPage();
+  await freshPage.goto(`${BASE}/submit`, { waitUntil: "networkidle" });
+  await freshPage.waitForTimeout(1800);
+  check("a device that has never seen the marker keeps its existing shortlist",
+    await starIn(cardFor(freshPage, TITLES[0])).getAttribute("aria-pressed") === "true",
+    String(await starIn(cardFor(freshPage, TITLES[0])).getAttribute("aria-pressed")));
 } finally {
   if (browser) await browser.close();
   await teardownTasks();
   await teardown();
   await restoreSettings(settingsBefore);
+  // restoreSettings only writes keys back; it cannot remove one this run
+  // invented, and a leftover row would show up as real data having changed.
+  if (settingsBefore && settingsBefore.saved_epoch === undefined) {
+    await admin.from("settings").delete().eq("key", "saved_epoch");
+  }
   const after = await snapshot();
   console.log(`\nreal data intact: ${JSON.stringify(before) === JSON.stringify(after)}`);
   summary("Saved tasks");

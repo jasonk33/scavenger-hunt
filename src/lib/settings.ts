@@ -7,6 +7,13 @@ type Settings = {
   event_name: string;
   /** Free-text banner shown on every screen. The organizer's broadcast channel. */
   notice: string;
+  /**
+   * Bumped by a submission reset. The starred-task shortlists live in each
+   * phone's localStorage, where no route can reach them, so the reset leaves a
+   * marker here instead and every device clears its own the first time it polls
+   * a value it has not seen before. Empty means no reset has ever happened.
+   */
+  saved_epoch: string;
 };
 
 const DEFAULTS: Settings = {
@@ -14,6 +21,7 @@ const DEFAULTS: Settings = {
   submissions_open: true,
   event_name: "Scavenger Hunt",
   notice: "",
+  saved_epoch: "",
 };
 
 export async function getSettings(): Promise<Settings> {
@@ -24,6 +32,7 @@ export async function getSettings(): Promise<Settings> {
     submissions_open: (map.get("submissions_open") ?? "true") !== "false",
     event_name: String(map.get("event_name") || DEFAULTS.event_name),
     notice: String(map.get("notice") ?? ""),
+    saved_epoch: String(map.get("saved_epoch") ?? ""),
   };
 }
 

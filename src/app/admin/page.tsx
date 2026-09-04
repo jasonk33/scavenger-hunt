@@ -966,10 +966,10 @@ function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
       <b>Reset submissions</b>
       <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
         Deletes all <b>{total}</b> submission{total === 1 ? "" : "s"} and the media{" "}
-        {total === 1 ? "file" : "files"} they uploaded, and un-awards every leader bonus. Players,
-        teams, the roster, the task list and any revealed secrets are left alone.{" "}
-        <b>There is no undo</b> — the uploaded photos are the only copy. Type <b>RESET</b> to
-        enable the button.
+        {total === 1 ? "file" : "files"} they uploaded, un-awards every leader bonus, and clears
+        the tasks players have starred. Players, teams, the roster, the task list and any revealed
+        secrets are left alone. <b>There is no undo</b> — the uploaded photos are the only copy.
+        Type <b>RESET</b> to enable the button.
       </p>
       <input
         className="field"

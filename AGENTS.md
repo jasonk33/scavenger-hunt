@@ -276,6 +276,19 @@ real device.
   the render closed over, because a second tab holds its own snapshot and a whole-set write
   would silently destroy its stars; and the count is computed against the live task list, so
   ids left by the remix or by a cut task never inflate it.
+- **The one thing the server knows about a star is that they should all go.** A reset deletes
+  every submission, which makes a shortlist of tasks the team already "did" worse than no
+  shortlist — but the stars are on 24 phones and no route can reach them. So the reset bumps
+  `settings.saved_epoch`, `/api/state` hands it to every device, and `syncSavedEpoch`
+  (`src/lib/client.ts`) sweeps `sh.saved.*` the first time it sees a value it has not seen.
+  This is a **signal, not a store** — it does not make the database the home of the stars, and
+  it is not licence to put them there. Three details are load-bearing: a device with **no**
+  stored marker adopts the current one *without* clearing (otherwise shipping this would have
+  wiped every existing shortlist on the next poll); the marker lives under `sh.savedEpoch`,
+  deliberately **outside** the `sh.saved.` prefix the sweep deletes, or each poll would clear
+  again and delete stars a second after they were tapped; and it must arrive on a **poll**, not
+  a reload, because a phone in a pocket must not come back to a shortlist of work that no
+  longer exists.
 - Jason and Anna organize and are **not** players.
 
 ## The room — facts about the day, not inferences to re-derive
@@ -352,8 +365,9 @@ the confident wrong answer.
   neither can take submissions, media, roster or `revealed_at` with it.
 - **`/api/admin/reset` is the other destructive path** — Admin → health → "Reset submissions".
   It deletes every submission, the media each one uploaded and every awarded `winner_team_id`,
-  and it is the one thing in the app with no undo. It sweeps the submissions and not the bucket,
-  so bytes orphaned by a cancelled upload survive on purpose. Three guards, and none is
+  bumps `saved_epoch` so every phone drops its starred shortlist, and it is the one thing in
+  the app with no undo. It sweeps the submissions and not the bucket, so bytes orphaned by a
+  cancelled upload survive on purpose. Three guards, and none is
   redundant: the PIN, the `ALLOW_RESET` env switch (unset in Vercel for the event, which both
   hides the card and makes the route 403), and a typed confirm word that a stray request cannot
   supply. It deliberately stops at submissions — players, teams, roster, tasks and `revealed_at`

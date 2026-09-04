@@ -94,7 +94,8 @@ something. Use `seed:reset` to clear your own testing before the day.
 To clear only the testing — the submissions and their media, keeping the guest
 list, teams and tasks — set `ALLOW_RESET=1` and use **Admin → health → Reset
 submissions**. It asks you to type `RESET`, then deletes every submission, the
-media each one uploaded and every awarded leader bonus. There is no undo. Leave
+media each one uploaded and every awarded leader bonus, and clears the tasks
+players have starred on their phones. There is no undo. Leave
 `ALLOW_RESET` unset in Vercel on the day and the button is not rendered and the
 route refuses, so a mis-tap cannot destroy the afternoon's photos.
 

@@ -1,12 +1,13 @@
 import { db, BUCKET } from "@/lib/db";
-import { isOrganizer, resetEnabled } from "@/lib/settings";
+import { isOrganizer, resetEnabled, setSetting } from "@/lib/settings";
 import { json, fail } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Back to a clean slate for testing: every submission gone, along with the media
- * each one uploaded, and every leader bonus un-awarded.
+ * each one uploaded, every leader bonus un-awarded, and every phone's starred
+ * shortlist cleared.
  *
  * It sweeps the submissions, not the bucket, so bytes left behind by an upload
  * that was cancelled before its row survived are not its problem -- those cost
@@ -85,6 +86,13 @@ export async function POST(req: Request) {
     .from("tasks")
     .update({ winner_team_id: null })
     .not("winner_team_id", "is", null);
+
+  // The starred shortlists are localStorage on each phone, so nothing here can
+  // delete them. Bumping this marker is the signal: every device clears its own
+  // the first time /api/state hands it a value it has not seen before. Written
+  // last, so a reset that failed half way through does not tell 24 phones to
+  // throw away a shortlist that still matches live submissions.
+  await setSetting("saved_epoch", String(Date.now()));
 
   return json({
     ok: true,

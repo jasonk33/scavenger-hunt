@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, errorMessage, fmtBytes, getMe, getSaved, inkOn, setMe, setSaved, usePoll, type Me } from "@/lib/client";
+import { api, errorMessage, fmtBytes, getMe, getSaved, inkOn, setMe, setSaved, syncSavedEpoch, usePoll, type Me } from "@/lib/client";
 import { groupBy, NOTE_MAX } from "@/lib/groups";
 import { isJwt, isVideoFile, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
 import EvidenceEntryCard, { type EvidenceEntry } from "@/components/EvidenceEntry";
@@ -57,7 +57,7 @@ type OtherTeamEntries = {
 };
 
 type State = {
-  settings: { round: number; submissions_open: boolean };
+  settings: { round: number; submissions_open: boolean; saved_epoch: string };
   me: Me | null;
   team: { id: string; name: string; color: string } | null;
   tasks: Task[];
@@ -173,6 +173,18 @@ export default function SubmitPage() {
       router.replace("/");
     }
   }, [data, me, router]);
+
+  /* An organizer resetting the event deletes every submission, which makes a
+     shortlist of tasks this team already "did" worse than no shortlist at all.
+     The stars are on this device, so the reset can only leave a marker: clear
+     them the first time we poll one we have not seen. On a poll rather than a
+     reload, because a phone sitting in a pocket must not come back to a
+     shortlist of work that no longer exists. */
+  const epoch = data?.settings.saved_epoch;
+  useEffect(() => {
+    if (epoch === undefined) return;
+    if (syncSavedEpoch(epoch)) setSavedState(new Set());
+  }, [epoch]);
 
   const byTask = useMemo(() => {
     const m = new Map<string, Sub[]>();
