@@ -364,7 +364,61 @@ try {
   check("Sent covers both scored and still-with-the-judge",
     JSON.stringify(sent) === JSON.stringify([FIXTURES[3], FIXTURES[4]]), JSON.stringify(sent));
 
-  console.log("\n10. A bucket emptied by another filter must not blame the wrong one");
+  console.log("\n10. The saved count means what you would get, not what you have");
+  /* "★ Saved · 5" over a list of two is the same lie the tint fixed on the
+     cards: the number has to describe the tab you are standing in. The chip
+     itself must NOT vanish when the count hits zero -- a player with five stars
+     who taps Rejected and finds the control gone reads it as having lost them,
+     where "0" reads as "none of your saved ones are rejected". */
+  /* Section 8 leaves a star behind, and it rides through the reload in section 9
+     because the shortlist is localStorage. Clearing it makes the three counts
+     below exact numbers rather than offsets from whatever ran earlier. */
+  await page.evaluate(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("sh.saved.")) localStorage.removeItem(k);
+    }
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForTimeout(1800);
+  await openFold(page);
+  const saveStar = (title) =>
+    page.locator("section .card-flat").filter({ hasText: title })
+      .getByRole("button", { name: "Save for later" });
+  for (const t of [FIXTURES[3], FIXTURES[5]]) {
+    await saveStar(t).click();
+    await page.waitForTimeout(200);
+  }
+  const savedChip = page.locator(".saved-filter");
+  const chipCount = async () => (await savedChip.innerText()).trim();
+  note(`saved chip on All: ${await chipCount()}`);
+  check("two stars, one scored and one rejected, both counted on All",
+    /·\s*2$/.test(await chipCount()), await chipCount());
+
+  await seg.getByRole("button", { name: "Rejected" }).click();
+  await page.waitForTimeout(400);
+  note(`saved chip on Rejected: ${await chipCount()}`);
+  check("the count drops to the one saved task that is actually rejected",
+    /·\s*1$/.test(await chipCount()),
+    `${await chipCount()} -- the chip is counting saved tasks this tab will never show`);
+
+  await seg.getByRole("button", { name: "To do" }).click();
+  await page.waitForTimeout(400);
+  note(`saved chip on To do: ${await chipCount()}`);
+  check("and to zero on a tab holding neither of them",
+    /·\s*0$/.test(await chipCount()), await chipCount());
+  check("the chip itself stays put at zero, so the stars do not look lost",
+    await savedChip.count() === 1,
+    "the saved control vanished on a tab with none in it");
+
+  await page.evaluate(() => {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith("sh.saved.")) localStorage.removeItem(k);
+    }
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForTimeout(1800);
+
+  console.log("\n11. A bucket emptied by another filter must not blame the wrong one");
   /* The case that made the status empty state take precedence: filtered to
      Rejected with a points chip on, the points empty state announced that
      nothing is worth that tier any more, in a round that was full of them. */
@@ -390,7 +444,7 @@ try {
     `${await page.locator(".card-flat").count()} cards, search ${JSON.stringify(await page.getByPlaceholder("Search tasks").inputValue())}`);
 
 
-  console.log("\n11. An empty bucket must own up to being empty, not blame a filter");
+  console.log("\n12. An empty bucket must own up to being empty, not blame a filter");
   /* The other direction of section 10, and the one that was wrong: with nothing
      rejected in the whole round, "your search is narrowing it too" points at a
      control that is narrowing nothing, and the true reason never gets said. */

@@ -316,10 +316,32 @@ export default function SubmitPage() {
 
   /* Counted against the round's live task list rather than the stored set, so
      ids left behind by the remix or by a task an organizer cut never inflate
-     the number the chip shows. */
-  const savedCount = useMemo(
+     the number the chip shows.
+
+     Two numbers, because the chip's presence and the chip's number answer
+     different questions. `savedInRound` is how many stars survive into this
+     round -- it decides whether the control exists at all, and it is what the
+     saved empty state means when it says "none of your saved tasks are in this
+     round". `savedShown` is how many you would actually get if you tapped it
+     from where you are standing. */
+  const savedInRound = useMemo(
     () => (data?.tasks ?? []).filter((t) => saved.has(t.id)).length,
     [data, saved]
+  );
+
+  /* Narrowed by the status tab and nothing else. "★ Saved · 5" above a list of
+     two was the complaint, and the tab is what makes the difference -- but the
+     points chips and the search deliberately do not count here. The search
+     would rewrite the number under the player's thumb on every keystroke, and
+     the points chips share the fold with this one, so a count that moved with
+     them would make the saved empty state's "none of your saved tasks are in
+     this round" mean two different things depending on which chip was lit. */
+  const savedShown = useMemo(
+    () =>
+      (data?.tasks ?? []).filter(
+        (t) => saved.has(t.id) && matchesStatus(status, statusByTask.get(t.id) ?? "todo")
+      ).length,
+    [data, saved, status, statusByTask]
   );
 
   const toggleSaved = (taskId: string) => {
@@ -567,7 +589,7 @@ export default function SubmitPage() {
   /* Rendered on the same terms the controls inside it are: a fold with nothing
      in it is just a button that opens an empty box. */
   const showTiers = Boolean(data) && (tiers.length > 1 || tier !== null);
-  const showSaved = savedCount > 0 || onlySaved;
+  const showSaved = savedInRound > 0 || onlySaved;
   /* Held back until the team has actually sent something. Before that every
      task is To do and the row filters nothing -- and it cannot strand anyone by
      disappearing, because it only disappears while set to All. */
@@ -864,7 +886,7 @@ export default function SubmitPage() {
             aria-pressed={onlySaved}
             onClick={() => setOnlySaved((v) => !v)}
           >
-            ★ Saved · {savedCount}
+            ★ Saved · {savedShown}
           </button>
           {onlySaved && <span className="muted tiny">showing saved only</span>}
         </div>
@@ -899,12 +921,12 @@ export default function SubmitPage() {
           {/* Three different truths, and saying the wrong one is its own small
               bug: after the remix a player who saved five Round 1 tasks has a
               full shortlist and an empty round, which is not "nothing saved".
-              saved.size is what they stored; savedCount is what survives into
-              this round's list. */}
+              saved.size is what they stored; savedInRound is what survives
+              into this round's list. */}
           <b>
             {saved.size === 0
               ? "Nothing saved yet"
-              : savedCount === 0
+              : savedInRound === 0
                 ? "None of your saved tasks are in this round"
                 : savedNarrowedBy === "tier"
                   ? `None of your saved tasks are worth ${tier} point${tier === 1 ? "" : "s"}`
@@ -914,7 +936,7 @@ export default function SubmitPage() {
           </b>
           {saved.size === 0
             ? "Tap ☆ on any task to keep it here for later."
-            : savedCount === 0
+            : savedInRound === 0
               ? "This half of the hunt has its own task list — star the ones you want from it."
               : savedNarrowedBy === "tier"
                 ? "Clear the points filter to see the rest of your saved tasks."
