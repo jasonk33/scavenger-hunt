@@ -673,7 +673,12 @@ async function main() {
   const noPinReset = await fetch(`${BASE}/api/admin/reset`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ confirm: "RESET" }),
+    // Deliberately NOT the confirm word. isOrganizer() returns true when
+    // ORGANIZER_PIN is unset -- a supported local configuration -- so a probe
+    // carrying a valid payload would sail through all three guards and wipe the
+    // project it was meant to be proving is safe. The PIN is checked before the
+    // confirm word, so a wrong word still proves the 401.
+    body: JSON.stringify({ confirm: "definitely not the word" }),
   });
   check(
     "reset requires the PIN",

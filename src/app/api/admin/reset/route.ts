@@ -5,8 +5,13 @@ import { json, fail } from "@/lib/http";
 export const dynamic = "force-dynamic";
 
 /**
- * Back to a clean slate for testing: every submission and every media file gone,
- * and every leader bonus un-awarded.
+ * Back to a clean slate for testing: every submission gone, along with the media
+ * each one uploaded, and every leader bonus un-awarded.
+ *
+ * It sweeps the submissions, not the bucket, so bytes left behind by an upload
+ * that was cancelled before its row survived are not its problem -- those cost
+ * storage and nothing else, and reaching past the rows to delete them would mean
+ * deleting objects nothing in the database claims.
  *
  * This is the most destructive thing in the app and there is no undo -- Storage
  * deletes are permanent and the photos are the only copy. So it is guarded three
@@ -34,13 +39,30 @@ export async function POST(req: Request) {
     return fail(`Type ${CONFIRM_WORD} to confirm.`, 400);
 
   const sb = db();
-  const { data: subs, error: readErr } = await sb.from("submissions").select("id,object_name");
-  // Nothing is deleted if the list could not be read. Deleting the rows first
-  // and only then discovering the object names are unreadable would strand every
-  // file in the bucket with no record of what it was.
-  if (readErr) return fail(`Could not read submissions: ${readErr.message}`, 500);
 
-  const objects = (subs ?? []).map((s) => s.object_name).filter(Boolean);
+  // Paged, because PostgREST caps how many rows one select returns and the
+  // delete below is not capped: reading a single page and then deleting
+  // everything would strand the rest of the media in the bucket with no record
+  // of what it was -- the exact failure the ordering below exists to avoid.
+  // Termination is by an empty page rather than a short one, so it stays correct
+  // whatever the server's row cap turns out to be.
+  const subs: Array<{ id: string; object_name: string }> = [];
+  for (let from = 0; ; ) {
+    const { data, error } = await sb
+      .from("submissions")
+      .select("id,object_name")
+      .order("id")
+      .range(from, from + 1000 - 1);
+    // Nothing is deleted if the list could not be read. Deleting the rows first
+    // and only then discovering the object names are unreadable would strand
+    // every file in the bucket with no record of what it was.
+    if (error) return fail(`Could not read submissions: ${error.message}`, 500);
+    if (!data?.length) break;
+    subs.push(...data);
+    from += data.length;
+  }
+
+  const objects = subs.map((s) => s.object_name).filter(Boolean);
 
   // Media first, rows second. The other order leaves rows pointing at files that
   // are already gone, which is a judge screen full of broken evidence; this
@@ -66,7 +88,7 @@ export async function POST(req: Request) {
 
   return json({
     ok: true,
-    submissions: subs?.length ?? 0,
+    submissions: subs.length,
     objects: objects.length,
     orphaned,
     winnersCleared: !winnerErr,

@@ -112,7 +112,7 @@ try {
   // assertion: an organizer must never be left with no explanation for a control
   // that is not there.
   const { body: adminData } = await call("/api/admin/data");
-  const resetButton = page.getByRole("button", { name: /Delete \d+ submissions? and all media/ });
+  const resetButton = page.getByRole("button", { name: /Delete \d+ submissions? and their media/ });
 
   if (adminData.resetEnabled) {
     check("the reset card is offered when ALLOW_RESET is on", (await resetButton.count()) > 0);
@@ -120,12 +120,12 @@ try {
       (await page.getByText("There is no undo", { exact: false }).count()) > 0);
     check("the reset button starts disabled", await resetButton.isDisabled());
 
-    // Typing the word is the guard a mis-tap cannot get past, so the button must
-    // stay dead until it matches -- a near miss is still a miss.
+    // Typing the word is the guard a mis-tap cannot get past. The box is
+    // case-insensitive -- the client always posts the literal word -- but a
+    // partial word must leave the button dead.
     await page.getByPlaceholder("RESET").fill("reset");
     await page.waitForTimeout(300);
-    check("a lower-case near miss still arms the button (case-insensitive)",
-      await resetButton.isEnabled());
+    check("the box accepts the word in lower case", await resetButton.isEnabled());
     await page.getByPlaceholder("RESET").fill("RESE");
     await page.waitForTimeout(300);
     check("a partial word leaves the button disabled", await resetButton.isDisabled());

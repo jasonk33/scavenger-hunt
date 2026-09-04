@@ -917,7 +917,7 @@ function HealthTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
 function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => void }) {
   const [word, setWord] = useState("");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState("");
+  const [done, setDone] = useState<{ text: string; ok: boolean } | null>(null);
 
   if (!data.resetEnabled) {
     return (
@@ -933,19 +933,28 @@ function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
 
   const reset = () => {
     setBusy(true);
-    setDone("");
+    setDone(null);
     run(async () => {
       try {
-        const r = await api<{ submissions: number; objects: number; orphaned: number }>(
-          "/api/admin/reset",
-          { method: "POST", body: JSON.stringify({ confirm: "RESET" }) }
-        );
+        const r = await api<{
+          submissions: number;
+          objects: number;
+          orphaned: number;
+          winnersCleared: boolean;
+        }>("/api/admin/reset", { method: "POST", body: JSON.stringify({ confirm: "RESET" }) });
         setWord("");
-        setDone(
-          `Deleted ${r.submissions} submission${r.submissions === 1 ? "" : "s"} and ` +
+        // Both partial outcomes are reported. A silent "done" over media that is
+        // still in the bucket, or over leader bonuses still being paid on the
+        // leaderboard, is worse than no reset at all -- nobody would think to
+        // look.
+        setDone({
+          text:
+            `Deleted ${r.submissions} submission${r.submissions === 1 ? "" : "s"} and ` +
             `${r.objects} file${r.objects === 1 ? "" : "s"}.` +
-            (r.orphaned ? ` ${r.orphaned} file(s) could not be removed from storage.` : "")
-        );
+            (r.orphaned ? ` ${r.orphaned} file(s) could not be removed from storage.` : "") +
+            (r.winnersCleared ? "" : " Leader bonuses could NOT be un-awarded — try again."),
+          ok: r.orphaned === 0 && r.winnersCleared,
+        });
       } finally {
         setBusy(false);
       }
@@ -956,10 +965,11 @@ function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
     <div className="card bad">
       <b>Reset submissions</b>
       <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-        Deletes all <b>{total}</b> submission{total === 1 ? "" : "s"} and every media file in the
-        bucket, and un-awards every leader bonus. Players, teams, the roster, the task list and any
-        revealed secrets are left alone. <b>There is no undo</b> — the uploaded photos are the only
-        copy. Type <b>RESET</b> to enable the button.
+        Deletes all <b>{total}</b> submission{total === 1 ? "" : "s"} and the media{" "}
+        {total === 1 ? "file" : "files"} they uploaded, and un-awards every leader bonus. Players,
+        teams, the roster, the task list and any revealed secrets are left alone.{" "}
+        <b>There is no undo</b> — the uploaded photos are the only copy. Type <b>RESET</b> to
+        enable the button.
       </p>
       <input
         className="field"
@@ -976,11 +986,11 @@ function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
         disabled={!armed || busy}
         onClick={reset}
       >
-        {busy ? "Deleting…" : `Delete ${total} submission${total === 1 ? "" : "s"} and all media`}
+        {busy ? "Deleting…" : `Delete ${total} submission${total === 1 ? "" : "s"} and their media`}
       </button>
       {done && (
-        <p className="good tiny" style={{ margin: "8px 0 0" }}>
-          {done}
+        <p className={`${done.ok ? "good" : "bad"} tiny`} style={{ margin: "8px 0 0" }}>
+          {done.text}
         </p>
       )}
     </div>
