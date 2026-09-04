@@ -220,7 +220,10 @@ window.addEventListener("beforeunload", (e) => {
 
 function visibleTasks() {
   const q = filters.q.toLowerCase();
+  const focusedSlug = document.activeElement?.closest("#list [data-slug]")?.dataset.slug;
   const list = data.tasks.filter((t) => {
+    // Keep a focused draft until blur, but still sort it with its round and tier.
+    if (t.slug === focusedSlug) return true;
     if (filters.round !== "all" && t.round !== Number(filters.round)) return false;
     // "Live" is everything players can see. A cut task is a decision already
     // made, so it stops taking up room in the list you are working through --
@@ -488,11 +491,6 @@ function buildRow(task) {
 
 function renderList() {
   const tasks = visibleTasks();
-  // A remote cut/filter change must not discard text that is still being edited.
-  // Reconcile that row when focus leaves; all other membership updates can land now.
-  const focused = document.activeElement?.closest("[data-slug]");
-  const editing = data.tasks.find((t) => t.slug === focused?.dataset.slug);
-  if (editing && !tasks.includes(editing)) tasks.splice(Math.min([...el.list.children].indexOf(focused), tasks.length), 0, editing);
 
   if (!loaded) {
     // Never "Nothing matches those filters" for a list that has not arrived.

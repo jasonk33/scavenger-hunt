@@ -226,3 +226,41 @@ test("a reordered focused row keeps its draft and only disappears after blur", a
   assert.deepEqual(write.patch, { title: "unfinished title" });
   await write.finish();
 });
+
+for (const concurrentMembership of [false, true]) {
+  test(`focused cut/restored tasks keep round headings ordered${concurrentMembership ? " with concurrent membership changes" : ""}`, async (t) => {
+    const c = await canvas(t);
+    c.state.tasks = [task("a"), task("b"), { ...task("c"), round: 2 }, { ...task("d"), round: 2 }];
+    await c.refresh();
+    const r1 = "Round 1 · Madison Square Park";
+    const r2 = "Round 2 · NoMad & Flatiron";
+    const interleaving = () => c.page.locator("#list > *").evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.slug || node.textContent)
+    );
+    assert.deepEqual(await interleaving(), [r1, "a", "b", r2, "c", "d"]);
+    await c.page.locator('[data-slug="b"] .caret').click();
+    const title = c.page.locator('[data-slug="b"] .title');
+    await title.fill("unfinished title");
+    await title.evaluate((node) => { node.marker = true; });
+    if (concurrentMembership) {
+      c.state.tasks[0].active = false;
+      c.state.tasks.push({ ...task("e"), docOrder: 1 });
+    }
+    const first = concurrentMembership ? "e" : "a";
+    for (const active of [false, true, false]) {
+      c.state.tasks[1].active = active;
+      await c.refresh();
+      assert.deepEqual(await interleaving(), [r1, first, "b", r2, "c", "d"]);
+      assert.equal(await title.evaluate((node) => node.marker && node === document.activeElement), true);
+      assert.equal(await title.innerText(), "unfinished title");
+      assert.equal(await c.page.locator('[data-slug="b"] .body').isVisible(), true);
+      assert.equal(c.writes.length, 0, "remote cut/restore must not blur or save the draft");
+    }
+    await c.page.locator("#search").focus();
+    await c.page.waitForFunction(() => !document.querySelector('[data-slug="b"]'));
+    assert.deepEqual(await interleaving(), [r1, first, r2, "c", "d"]);
+    const write = await c.written(1);
+    assert.deepEqual(write.patch, { title: "unfinished title" });
+    await write.finish();
+  });
+}
