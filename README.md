@@ -91,6 +91,13 @@ Both commands delete **every submission and every media file** in the project,
 so they refuse to run once anyone outside that guest list has submitted
 something. Use `seed:reset` to clear your own testing before the day.
 
+To clear only the testing — the submissions and their media, keeping the guest
+list, teams and tasks — set `ALLOW_RESET=1` and use **Admin → health → Reset
+submissions**. It asks you to type `RESET`, then deletes every submission, every
+file in the bucket and every awarded leader bonus. There is no undo. Leave
+`ALLOW_RESET` unset in Vercel on the day and the button is not rendered and the
+route refuses, so a mis-tap cannot destroy the afternoon's photos.
+
 Task scoring starts at the normal point tier. In Admin or the planner, choose
 `Extra per item` for values such as shirts or signatures, or `Leader bonus`
 for a task where the best entry earns extra. Judges only ever enter the number of
@@ -199,9 +206,9 @@ deployments for other branches and pull requests. Do not run `npx vercel` for
 normal releases. If the Git integration is unavailable during an emergency,
 `npx vercel --prod` remains a manual fallback.
 
-Set the same four environment variables in the Vercel project settings.
-Changing them requires a new deployment; use Vercel's redeploy action or push
-a follow-up commit.
+Set the same four environment variables in the Vercel project settings, and
+leave `ALLOW_RESET` unset there for the event. Changing them requires a new
+deployment; use Vercel's redeploy action or push a follow-up commit.
 
 ---
 

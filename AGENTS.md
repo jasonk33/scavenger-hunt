@@ -350,6 +350,17 @@ the confident wrong answer.
   rules (team sizes, split plus-one `PAIRS`, total remix).
   **These do not touch `tasks` at all.** Changing a task is a canvas or Admin edit, and
   neither can take submissions, media, roster or `revealed_at` with it.
+- **`/api/admin/reset` is the other destructive path** — Admin → health → "Reset submissions".
+  It deletes every submission, every object in the bucket and every awarded `winner_team_id`,
+  and it is the one thing in the app with no undo. Three guards, and none is redundant: the
+  PIN, the `ALLOW_RESET` env switch (unset in Vercel for the event, which both hides the card
+  and makes the route 403), and a typed confirm word that a stray request cannot supply. It
+  deliberately stops at submissions — players, teams, roster, tasks and `revealed_at` all
+  survive, so it costs a re-upload rather than a re-seed. **`npm run smoke` covers only its
+  refusals**, and that is not an oversight to correct: this Supabase project holds the live
+  event, so a test that proved the happy path would have to delete Jason's real photos to do
+  it. Each refusal assertion re-reads a submission afterwards, so a route that reset anyway
+  fails loudly.
 - **The canvas edits the live database, with no undo.** Safe mid-event in the sense that it
   cannot destroy anything — a cut is `active = false` and scores stand — but a keystroke in
   the title field is in front of players seconds later. Never drive the real tasks as a test

@@ -37,6 +37,7 @@ type AdminData = {
     mediaUrl: string;
   }>;
   counts: Record<string, { total: number; uploading: number; pending: number; approved: number; rejected: number }>;
+  resetEnabled: boolean;
 };
 
 export default function AdminPage() {
@@ -896,7 +897,93 @@ function HealthTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
           ))}
         </div>
       </div>
+
+      <ResetCard data={data} run={run} />
     </>
+  );
+}
+
+/**
+ * The clean slate for testing. Deleting media is permanent, so this is guarded
+ * three deep: the PIN, the server-side ALLOW_RESET switch, and typing the word.
+ * The typed word is the one that matters -- it is the only guard a mis-tap
+ * cannot get past.
+ *
+ * When the switch is off this says so rather than rendering nothing, because a
+ * control that silently vanishes sends the organizer hunting through the code
+ * for it. It is one muted line, not a disabled button, so there is nothing to
+ * tap at all during the event.
+ */
+function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => void }) {
+  const [word, setWord] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState("");
+
+  if (!data.resetEnabled) {
+    return (
+      <p className="muted tiny" style={{ margin: "4px 2px 0" }}>
+        Submission reset is switched off. Set <code>ALLOW_RESET=1</code> in the environment to
+        enable it.
+      </p>
+    );
+  }
+
+  const total = Object.values(data.counts).reduce((n, c) => n + c.total, 0);
+  const armed = word.trim().toUpperCase() === "RESET";
+
+  const reset = () => {
+    setBusy(true);
+    setDone("");
+    run(async () => {
+      try {
+        const r = await api<{ submissions: number; objects: number; orphaned: number }>(
+          "/api/admin/reset",
+          { method: "POST", body: JSON.stringify({ confirm: "RESET" }) }
+        );
+        setWord("");
+        setDone(
+          `Deleted ${r.submissions} submission${r.submissions === 1 ? "" : "s"} and ` +
+            `${r.objects} file${r.objects === 1 ? "" : "s"}.` +
+            (r.orphaned ? ` ${r.orphaned} file(s) could not be removed from storage.` : "")
+        );
+      } finally {
+        setBusy(false);
+      }
+    });
+  };
+
+  return (
+    <div className="card bad">
+      <b>Reset submissions</b>
+      <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
+        Deletes all <b>{total}</b> submission{total === 1 ? "" : "s"} and every media file in the
+        bucket, and un-awards every leader bonus. Players, teams, the roster, the task list and any
+        revealed secrets are left alone. <b>There is no undo</b> — the uploaded photos are the only
+        copy. Type <b>RESET</b> to enable the button.
+      </p>
+      <input
+        className="field"
+        value={word}
+        placeholder="RESET"
+        autoCapitalize="characters"
+        autoCorrect="off"
+        spellCheck={false}
+        onChange={(e) => setWord(e.target.value)}
+      />
+      <button
+        className="btn btn-wide btn-bad"
+        style={{ marginTop: 8 }}
+        disabled={!armed || busy}
+        onClick={reset}
+      >
+        {busy ? "Deleting…" : `Delete ${total} submission${total === 1 ? "" : "s"} and all media`}
+      </button>
+      {done && (
+        <p className="good tiny" style={{ margin: "8px 0 0" }}>
+          {done}
+        </p>
+      )}
+    </div>
   );
 }
 

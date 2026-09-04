@@ -660,6 +660,51 @@ async function main() {
   check("download script includes this run's media", Boolean(myLine), objectName);
   check("download script sorts into round/team folders", Boolean(myLine?.includes("round-1/")));
 
+  // --- reset guards -------------------------------------------------------
+  // Only the REFUSALS are testable here: this project holds the live event, so
+  // a test that proved the happy path would have to delete every real photo to
+  // do it. Each assertion ends by re-reading this run's own submission, so a
+  // route that reset anyway would fail loudly instead of passing quietly.
+  const stillThere = async () => {
+    const { data } = await admin.from("submissions").select("id").eq("id", submissionId);
+    return (data ?? []).length === 1;
+  };
+
+  const noPinReset = await fetch(`${BASE}/api/admin/reset`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ confirm: "RESET" }),
+  });
+  check(
+    "reset requires the PIN",
+    PIN ? noPinReset.status === 401 : true,
+    `HTTP ${noPinReset.status}`
+  );
+  check("reset without the PIN deleted nothing", await stillThere());
+
+  const wrongWord = await call("/api/admin/reset", {
+    method: "POST",
+    body: JSON.stringify({ confirm: "reset please" }),
+  });
+  // Ask the server whether its own kill switch is on rather than reading
+  // .env.local: the flag only means anything in the process serving BASE_URL.
+  const adminData = await call("/api/admin/data");
+  const gated = adminData.body?.resetEnabled !== true;
+  check(
+    gated ? "reset is disabled without ALLOW_RESET" : "reset refuses the wrong confirm word",
+    wrongWord.status === (gated ? 403 : 400),
+    `HTTP ${wrongWord.status} ${JSON.stringify(wrongWord.body)}`
+  );
+  check("a refused reset deleted nothing", await stillThere());
+
+  const noWord = await call("/api/admin/reset", { method: "POST", body: "{}" });
+  check(
+    "reset refuses an empty body",
+    noWord.status === (gated ? 403 : 400),
+    `HTTP ${noWord.status}`
+  );
+  check("an empty-body reset deleted nothing", await stillThere());
+
   // --- unauthenticated access --------------------------------------------
   const noCookie = await fetch(`${BASE}/api/judge/queue`);
   check("judge queue requires the PIN", PIN ? noCookie.status === 401 : true, `HTTP ${noCookie.status}`);

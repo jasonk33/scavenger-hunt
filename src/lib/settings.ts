@@ -49,3 +49,19 @@ export function checkPin(pin: string): boolean {
   if (!expected) return true;
   return pin === expected;
 }
+
+/**
+ * The kill switch on /api/admin/reset, which deletes every submission and every
+ * media file with no undo.
+ *
+ * The PIN is not a security boundary and never was, so it cannot be the only
+ * thing between a mis-tap and 60 irreplaceable photos. This is deliberately an
+ * environment variable rather than a setting: a setting lives in the same table
+ * the Admin screen already writes, so the same wrong tap could turn it on and
+ * then use it. Unset it in Vercel on the morning of the event and the button is
+ * gone from Admin AND the route refuses -- the check is server-side, so hiding
+ * the card is a convenience, not the guard.
+ */
+export function resetEnabled(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.ALLOW_RESET ?? "");
+}

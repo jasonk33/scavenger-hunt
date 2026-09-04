@@ -1,5 +1,5 @@
 import { db, mediaUrl } from "@/lib/db";
-import { getSettings, isOrganizer } from "@/lib/settings";
+import { getSettings, isOrganizer, resetEnabled } from "@/lib/settings";
 import { json, fail } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -62,5 +62,8 @@ export async function GET() {
     tasks: tasks ?? [],
     stuck,
     counts: { 1: counts(1), 2: counts(2) },
+    // Whether /api/admin/reset would answer at all. The route checks this for
+    // itself -- this only decides whether Admin offers a button that works.
+    resetEnabled: resetEnabled(),
   });
 }

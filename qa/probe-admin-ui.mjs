@@ -103,6 +103,47 @@ try {
     (await page.getByRole("button", { name: "Post" }).count()) > 0 &&
     (await page.getByRole("button", { name: "Clear" }).count()) > 0);
 
+  console.log("\n5. Health tab — the submission reset");
+  await page.getByRole("button", { name: "health", exact: true }).first().click();
+  await page.waitForTimeout(1500);
+
+  // The card only exists when the server's ALLOW_RESET switch is on, so ask the
+  // server rather than assuming either state. Both branches are worth an
+  // assertion: an organizer must never be left with no explanation for a control
+  // that is not there.
+  const { body: adminData } = await call("/api/admin/data");
+  const resetButton = page.getByRole("button", { name: /Delete \d+ submissions? and all media/ });
+
+  if (adminData.resetEnabled) {
+    check("the reset card is offered when ALLOW_RESET is on", (await resetButton.count()) > 0);
+    check("the reset card warns there is no undo",
+      (await page.getByText("There is no undo", { exact: false }).count()) > 0);
+    check("the reset button starts disabled", await resetButton.isDisabled());
+
+    // Typing the word is the guard a mis-tap cannot get past, so the button must
+    // stay dead until it matches -- a near miss is still a miss.
+    await page.getByPlaceholder("RESET").fill("reset");
+    await page.waitForTimeout(300);
+    check("a lower-case near miss still arms the button (case-insensitive)",
+      await resetButton.isEnabled());
+    await page.getByPlaceholder("RESET").fill("RESE");
+    await page.waitForTimeout(300);
+    check("a partial word leaves the button disabled", await resetButton.isDisabled());
+    await page.getByPlaceholder("RESET").fill("");
+    await page.waitForTimeout(300);
+    check("clearing the box disables the button again", await resetButton.isDisabled());
+    // Deliberately never clicked: the button deletes every real photo, and this
+    // driver runs against the same project the event does.
+  } else {
+    check("the reset button is absent when ALLOW_RESET is off", (await resetButton.count()) === 0);
+    check("admin says why the reset is missing",
+      (await page.getByText("ALLOW_RESET", { exact: false }).count()) > 0);
+  }
+
+  await page.screenshot({ path: new URL("./shots/admin-health.png", import.meta.url).pathname, fullPage: true });
+
+  await page.getByRole("button", { name: "event", exact: true }).first().click();
+  await page.waitForTimeout(800);
   await page.screenshot({ path: new URL("./shots/admin.png", import.meta.url).pathname, fullPage: true });
   check("no uncaught page errors while driving admin", errors.length === 0, errors.join(" | "));
 } finally {
