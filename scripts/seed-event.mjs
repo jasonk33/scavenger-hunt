@@ -3,17 +3,15 @@
  * Loads the real event data: the guest list and the team split.
  *
  *   npm run seed         load guests + teams, clear scoring
- *   npm run seed:reset   remove the guests, every submission and every file
+ *   npm run seed:reset   remove bootstrap guests, every submission and its media
  *
- * Re-runnable. The guest list and the team split below are the source of truth,
- * so as people RSVP or drop, edit the arrays and run it again rather than
- * clicking through Admin. Both commands clear every submission, which is what
- * makes a re-run safe -- a roster change would otherwise leave Round 1 scores
- * credited to teams that no longer exist.
+ * These arrays are initial bootstrap data, NOT the live roster. Use the
+ * canvas's Roster tab for ongoing RSVPs, team names and assignments. Re-running
+ * this replaces those live decisions with the initial allocations and clears
+ * every submission and its linked media. Never run it once the party has started.
  *
- * It deliberately does NOT touch `tasks`. The task list is edited live in the
- * planner canvas, so seeding must not be able to undo a task decision -- and a
- * task edit must never require running something that deletes every submission.
+ * It leaves task content alone, but re-hides revealed secrets and reopens Round 1.
+ * A task edit never requires running something that deletes every submission.
  */
 
 import { createAdminClient, loadEnv } from "./task-store.mjs";
@@ -73,8 +71,8 @@ function remix(round1) {
 const ROUND_2 = remix(ROUND_1);
 
 /*
- * The task list is not defined here and is not written here. It lives in the
- * `tasks` table, edited live through the planner canvas.
+ * Task content lives in the `tasks` table, edited through the planner canvas.
+ * The only task field this script resets is `revealed_at`.
  */
 
 const GUESTS = ROUND_1.flat();
@@ -119,7 +117,7 @@ function verifyTeams() {
 }
 
 /*
- * Both commands delete EVERY submission and every media object in the bucket,
+ * Both commands delete EVERY submission and its linked media (not orphaned objects),
  * and .env.local points at the same Supabase project the live app uses. Run
  * either one after the party and the photos are gone, so it refuses once
  * submissions exist that did not come from this script's own guest list.
@@ -137,7 +135,7 @@ async function confirmDestructive() {
   if (real > 0) {
     console.error(
       `\nRefusing to run: ${real} submission(s) are from players not in this script's guest list.\n` +
-        `This would delete all ${count} submission(s) and every file in the bucket.\n` +
+        `This would delete all ${count} submission(s) and their linked media.\n` +
         `Re-run with --force if that is genuinely what you want.\n`
     );
     process.exit(1);
@@ -180,8 +178,7 @@ async function wipe() {
 }
 
 async function seed() {
-  // Anyone in the app who is not on the current guest list is a leftover -- the
-  // demo names, or someone who has since dropped out.
+  // Restoring the bootstrap roster removes anyone added through the live canvas.
   const { data: existing } = await db.from("players").select("id,name");
   const staleIds = (existing ?? []).filter((p) => !GUESTS.includes(p.name)).map((p) => p.id);
 

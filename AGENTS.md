@@ -354,14 +354,16 @@ the confident wrong answer.
 
 ## Sharp edges
 
-- `npm run seed` **and** `npm run seed:reset` both delete every submission and every object in
-  the bucket. They refuse if submissions exist from anyone outside the guest list in
+- `npm run seed` **and** `npm run seed:reset` both delete every submission and its linked
+  media (not orphaned bucket objects), re-hide secrets and reopen Round 1.
+  They refuse if submissions exist from anyone outside the initial guest list in
   `scripts/seed-event.mjs` (`--force` overrides). **Never run either once the party has
-  started.** The guest list, `ROUND_1` split and `PAIRS` are arrays at the top of that
-  script and are the source of truth — edit there, not in Admin.
-  Round 2 is derived by rotation and the script hard-fails if the layout breaks the doc's
-  rules (team sizes, split plus-one `PAIRS`, total remix).
-  **These do not touch `tasks` at all.** Changing a task is a canvas or Admin edit, and
+  started.** The guest list, `ROUND_1` split and `PAIRS` arrays are initial bootstrap
+  data, not the live roster. **Use Canvas → Roster for ongoing RSVPs and assignments;
+  never re-seed to apply them.** The seed's initial Round 2 is derived by rotation and
+  checked for team sizes, split plus-one pairs and a total remix; it is not the current plan.
+  **These do not change task content, but they do reset `revealed_at`.**
+  Changing a task is a canvas or Admin edit, and
   neither can take submissions, media, roster or `revealed_at` with it.
 - **`/api/admin/reset` is the other destructive path** — Admin → health → "Reset submissions".
   It deletes every submission, the media each one uploaded and every awarded `winner_team_id`,

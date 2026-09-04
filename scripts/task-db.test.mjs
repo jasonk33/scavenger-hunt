@@ -78,8 +78,20 @@ function fakeDb({ rows = [ROW], settings = null, failOn = null, submissions = []
 
     if (table === "settings") {
       if (method === "POST") {
+        if (init.headers.Prefer?.includes("ignore-duplicates") && state.settings !== null) {
+          return { ok: true, status: 200, text: "[]" };
+        }
         state.settings = body.value;
-        return { ok: true, status: 201, text: "" };
+        return { ok: true, status: 201, text: JSON.stringify([{ value: state.settings }]) };
+      }
+      if (method === "PATCH") {
+        const expected = new URL(url).searchParams.get("value");
+        assert.ok(expected?.startsWith("eq."), "model writes must compare the value they read");
+        if (JSON.parse(expected.slice(3)) !== state.settings) {
+          return { ok: true, status: 200, text: "[]" };
+        }
+        state.settings = body.value;
+        return { ok: true, status: 200, text: JSON.stringify([{ value: state.settings }]) };
       }
       return { ok: true, status: 200, text: JSON.stringify(state.settings === null ? [] : [{ value: state.settings }]) };
     }
@@ -493,10 +505,11 @@ test("the model merges rather than replacing what it was not given", async () =>
   assert.equal(model.weights.guts, 4, "the change lands");
   assert.equal(model.weights.difficulty, 9, "everything else survives");
   assert.equal(model.thresholds.t5, 3);
-  const write = db.calls.find((c) => c.table === "settings" && c.method === "POST");
-  assert.equal(write.body.key, MODEL_KEY);
+  const write = db.calls.find((c) => c.table === "settings" && c.method === "PATCH");
+  assert.ok(write, "an existing model is conditionally patched, never blindly upserted");
+  assert.equal(new URL(write.url).searchParams.get("key"), `eq.${MODEL_KEY}`);
   assert.deepEqual(JSON.parse(write.body.value), model, "what was stored is what was returned");
-  assert.match(write.headers.Prefer, /merge-duplicates/, "an upsert, so a first save and a later one both work");
+  assert.match(write.headers.Prefer, /return=representation/, "an empty result exposes a concurrent update");
 });
 
 test("a nonsense model value cannot be stored", async () => {
@@ -505,6 +518,42 @@ test("a nonsense model value cannot be stored", async () => {
   for (const n of [...Object.values(model.weights), ...Object.values(model.thresholds)]) {
     assert.ok(Number.isFinite(n), `${n} is not a number`);
   }
+});
+
+for (const settings of [null, JSON.stringify({ weights: { difficulty: 9, guts: 9, luck: 9 } })]) {
+  test(`concurrent partial model edits survive (${settings === null ? "first save" : "existing row"})`, async () => {
+    const db = fakeDb({ settings });
+    await Promise.all([
+      updateModel(db, { weights: { guts: 4 } }),
+      updateModel(db, { thresholds: { t3: 12 } }),
+    ]);
+    const stored = JSON.parse(db.state.settings);
+    assert.equal(stored.weights.guts, 4);
+    assert.equal(stored.thresholds.t3, 12);
+    assert.equal(stored.weights.difficulty, settings === null ? 1.2 : 9);
+  });
+}
+
+test("contention is surfaced instead of claiming a model was saved", async () => {
+  const db = fakeDb({ settings: "{}" });
+  const fetch = db.fetch;
+  db.fetch = async (url, init) => init.method === "PATCH"
+    ? { ok: true, status: 200, text: async () => "[]" }
+    : fetch(url, init);
+  await assert.rejects(updateModel(db, { weights: { guts: 4 } }), /changed|retry/i);
+});
+
+test("a null model value is conditionally replaced, not mistaken for an absent row", async () => {
+  const calls = [];
+  const db = createTaskClient({ SUPABASE_URL: "https://fake.test", SUPABASE_SERVICE_ROLE_KEY: "k" }, async (url, init) => {
+    calls.push({ url, ...init });
+    const value = init.body ? JSON.parse(init.body).value : null;
+    return { ok: true, status: 200, text: async () => JSON.stringify([{ value }]) };
+  });
+  const model = await updateModel(db, { weights: { guts: 4 } });
+  assert.equal(model.weights.guts, 4);
+  assert.equal(calls[1].method, "PATCH");
+  assert.equal(new URL(calls[1].url).searchParams.get("value"), "is.null");
 });
 
 // ── The wire itself ──────────────────────────────────────────────────────────

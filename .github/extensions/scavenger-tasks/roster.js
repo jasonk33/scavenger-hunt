@@ -216,7 +216,15 @@ function renderTeams() {
     name.value = draft.name;
     name.setAttribute("aria-label", `Name for ${team.name}`);
 
-    const remember = () => teamDrafts.set(team.id, { name: name.value, color: color.value });
+    // Keep the editor's baseline across polls; a newer row is not a local edit.
+    let baseline = draft.baseline ?? { name: name.value.trim(), color: color.value };
+    const remember = () => teamDrafts.set(team.id, { name: name.value, color: color.value, baseline });
+    const resetTeam = () => {
+      name.value = team.name;
+      color.value = team.color;
+      baseline = { name: name.value.trim(), color: color.value };
+      teamDrafts.delete(team.id);
+    };
     const clearTeamTimer = () => {
       clearTimeout(teamTimers.get(team.id));
       teamTimers.delete(team.id);
@@ -225,19 +233,21 @@ function renderTeams() {
       clearTeamTimer();
       const nextName = name.value.trim();
       if (!nextName) {
-        name.value = team.name;
-        teamDrafts.delete(team.id);
+        resetTeam();
         return;
       }
-      if (nextName === team.name && color.value === team.color) {
-        teamDrafts.delete(team.id);
+      const patch = {};
+      if (nextName !== baseline.name) patch.name = nextName;
+      if (color.value !== baseline.color) patch.color = color.value;
+      if (!Object.keys(patch).length) {
+        resetTeam();
         return;
       }
-      const patch = { id: team.id, name: nextName, color: color.value };
       mutate(`Updating ${nextName}`, () => request("/api/roster/teams", {
         method: "PATCH",
-        body: patch,
+        body: { id: team.id, ...patch },
       }), () => {
+        teamDrafts.delete(team.id);
         for (const sibling of roster.teams) {
           if (sibling.name === team.name) teamDrafts.delete(sibling.id);
         }
@@ -263,9 +273,7 @@ function renderTeams() {
         persistTeam();
       } else if (event.key === "Escape") {
         clearTeamTimer();
-        name.value = team.name;
-        color.value = team.color;
-        teamDrafts.delete(team.id);
+        resetTeam();
       }
     });
 

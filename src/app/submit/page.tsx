@@ -144,6 +144,7 @@ type State = {
 };
 
 type Job = {
+  id: symbol;
   task: Task;
   fileName: string;
   size: number;
@@ -209,13 +210,12 @@ export default function SubmitPage() {
   const pendingGroup = useRef<{ anchorId: string; note: string } | null>(null);
   const handle = useRef<UploadHandle | null>(null);
   const currentSubmissionId = useRef<string | null>(null);
+  const activeJob = useRef<symbol | null>(null);
   // Set the moment tus reports success. From that point the bytes are already in
   // Storage and the row is being promoted, but the progress card is still
   // rendering "uploading" -- so Cancel is still on screen and still tappable.
   const settled = useRef(false);
   const wakeRef = useRef<ReturnType<typeof createWakeLock> | null>(null);
-  if (!wakeRef.current) wakeRef.current = createWakeLock();
-  const wake = wakeRef.current;
 
   /* One preview is alive at a time. Revoking the previous URL as soon as it is
      replaced -- and on unmount -- keeps a run of 150MB clips from piling up in
@@ -394,16 +394,21 @@ export default function SubmitPage() {
     // Once tus has succeeded there is nothing left to cancel: the bytes are in
     // Storage and the row is mid-promotion. Claiming "Nothing was sent" here
     // would send the player off to re-upload something already in the queue.
-    if (settled.current) return;
+    if (settled.current || !activeJob.current) return;
+    const jobId = activeJob.current;
+    // Invalidate before aborting: the reservation or wake request may still be
+    // awaiting a response, and neither has an upload handle to abort yet.
+    activeJob.current = null;
     handle.current?.abort();
     handle.current = null;
-    wake.release();
+    wakeRef.current?.release();
+    wakeRef.current = null;
     const id = currentSubmissionId.current;
     currentSubmissionId.current = null;
     if (id) void api(`/api/submissions/${id}`, { method: "DELETE" }).catch(() => {});
     setJob(
       (j) =>
-        j && {
+        j?.id === jobId ? {
           ...j,
           status: "error",
           message: j.sent
@@ -413,7 +418,7 @@ export default function SubmitPage() {
           // deleted. Unless an earlier file in the batch survived, there is
           // nothing left to attach a note to.
           anchorId: j.sent ? j.anchorId : null,
-        }
+        } : j
     );
   };
 
@@ -426,10 +431,12 @@ export default function SubmitPage() {
     const groupWith = group?.anchorId;
     pendingTask.current = null;
     pendingGroup.current = null;
-    if (!file || !task || !me || !data) return;
+    if (!file || !task || !me || !data || activeJob.current) return;
 
+    const jobId = Symbol();
     if (!isJwt(data.upload.anonKey)) {
       setJob({
+        id: jobId,
         task,
         fileName: file.name,
         size: file.size,
@@ -450,7 +457,16 @@ export default function SubmitPage() {
     // Made BEFORE the updater, which has to stay pure: React invokes it twice
     // under StrictMode, and a second URL minted in there is never revoked.
     const previewUrl = URL.createObjectURL(file);
+    activeJob.current = jobId;
+    const isCurrent = () => activeJob.current === jobId;
+    const updateJob = (update: (j: Job) => Job) =>
+      setJob((j) => j?.id === jobId ? update(j) : j);
+    // Each attempt owns its lock: an old acquire can resolve after the next
+    // upload has started, and must release only the old lock.
+    const wake = createWakeLock();
+    wakeRef.current = wake;
     setJob((prev) => ({
+      id: jobId,
       task,
       fileName: file.name,
       size: file.size,
@@ -491,22 +507,32 @@ export default function SubmitPage() {
           }),
         }
       );
+      if (!isCurrent()) {
+        void api(`/api/submissions/${init.submissionId}`, { method: "DELETE" }).catch(() => {});
+        return;
+      }
       submissionId = init.submissionId;
       objectName = init.objectName;
       contentType = init.contentType;
       currentSubmissionId.current = submissionId;
       // The row exists from here, so a note can be saved against it even though
       // the bytes are still moving.
-      setJob((j) => j && { ...j, anchorId: j.anchorId ?? submissionId });
+      updateJob((j) => ({ ...j, anchorId: j.anchorId ?? submissionId }));
     } catch (err) {
-      setJob(
-        (j) =>
-          j && { ...j, status: "error", message: errorMessage(err, "Could not start."), anchorId: j.sent ? j.anchorId : null }
-      );
+      if (!isCurrent()) return;
+      activeJob.current = null;
+      wakeRef.current = null;
+      updateJob((j) => ({
+        ...j, status: "error", message: errorMessage(err, "Could not start."), anchorId: j.sent ? j.anchorId : null,
+      }));
       return;
     }
 
     await wake.acquire();
+    if (!isCurrent()) {
+      wake.release();
+      return;
+    }
 
     handle.current = uploadFile({
       file,
@@ -515,22 +541,30 @@ export default function SubmitPage() {
       // keeps the stored content-type and the DB row from ever disagreeing.
       contentType: contentType || playableType(file),
       config: data.upload,
-      onProgress: (sent, total) =>
-        setJob((j) => j && { ...j, pct: Math.round((sent / total) * 100) }),
-      onRetry: (n) => setJob((j) => j && { ...j, retries: n }),
+      onProgress: (sent, total) => {
+        if (!isCurrent() || settled.current) return;
+        updateJob((j) => ({ ...j, pct: Math.round((sent / total) * 100) }));
+      },
+      onRetry: (n) => {
+        if (!isCurrent() || settled.current) return;
+        updateJob((j) => ({ ...j, retries: n }));
+      },
       onError: (message) => {
+        if (!isCurrent() || settled.current) return;
+        activeJob.current = null;
         wake.release();
+        wakeRef.current = null;
         handle.current = null;
         currentSubmissionId.current = null;
-        setJob(
-          (j) => j && { ...j, status: "error", message, anchorId: j.sent ? j.anchorId : null }
-        );
+        updateJob((j) => ({ ...j, status: "error", message, anchorId: j.sent ? j.anchorId : null }));
         // Drop the placeholder row so it doesn't linger as a phantom submission.
         void api(`/api/submissions/${submissionId}`, { method: "DELETE" }).catch(() => {});
       },
       onSuccess: async () => {
+        if (!isCurrent() || settled.current) return;
         settled.current = true;
         wake.release();
+        wakeRef.current = null;
         handle.current = null;
         currentSubmissionId.current = null;
         try {
@@ -538,20 +572,21 @@ export default function SubmitPage() {
             method: "PATCH",
             body: JSON.stringify({ sizeBytes: file.size, mediaType: contentType }),
           });
-          setJob((j) => j && { ...j, pct: 100, status: "done", sent: true });
+          if (!isCurrent()) return;
+          updateJob((j) => ({ ...j, pct: 100, status: "done", sent: true }));
           reload();
         } catch (err) {
+          if (!isCurrent()) return;
           // The bytes ARE in Storage; only the registration failed. Say so, and
           // leave the row for Admin to promote rather than deleting the media.
-          setJob(
-            (j) =>
-              j && {
-                ...j,
-                status: "error",
-                sent: true,
-                message: `Uploaded, but couldn't register it: ${errorMessage(err)}. Tell an organizer — the file did arrive.`,
-              }
-          );
+          updateJob((j) => ({
+            ...j,
+            status: "error",
+            sent: true,
+            message: `Uploaded, but couldn't register it: ${errorMessage(err)}. Tell an organizer — the file did arrive.`,
+          }));
+        } finally {
+          if (isCurrent()) activeJob.current = null;
         }
       },
     });

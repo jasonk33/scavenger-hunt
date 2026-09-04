@@ -56,6 +56,7 @@ const el = {
   newTaskNote: document.getElementById("new-task-note"),
   addTaskButton: document.getElementById("add-task-button"),
   taskError: document.getElementById("task-error"),
+  saveStatus: document.getElementById("save-status"),
 };
 
 const NEW_TASK_RATINGS = ["difficulty", "guts", "luck", "payoff", "risk"];
@@ -88,10 +89,11 @@ let data = { tasks: [], model: { weights: {}, thresholds: {} } };
  */
 let loaded = false;
 let loadError = null;
-/** Rows currently rendered, so an update can patch in place instead of rebuilding. */
+/** Rows keyed by slug, retained across filters so open editors survive a poll. */
 const rows = new Map();
-/** slug -> { patch, timer } for edits still waiting to be sent. */
+/** Unacknowledged fields, including in-flight and failed writes. */
 const pending = new Map();
+const MODEL_SAVE = Symbol("model");
 /** Slugs with a round change in flight. Not in `pending`: a move is not debounced. */
 const moving = new Set();
 /**
@@ -124,29 +126,95 @@ const advice = (t) => tierAdvice(t, data.model);
  */
 function save(task, patch) {
   Object.assign(task, patch);
-  localWrites += 1;
-  const queued = pending.get(task.slug) ?? { patch: {}, timer: 0 };
-  Object.assign(queued.patch, patch);
-  pending.set(task.slug, queued);
-  clearTimeout(queued.timer);
-  queued.timer = setTimeout(async () => {
-    const body = pending.get(task.slug)?.patch ?? {};
-    pending.delete(task.slug);
-    await fetch(`/api/task/${task.slug}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).catch(() => {});
-  }, 250);
+  queueSave(task.slug, patch);
 }
 
-async function saveModel() {
-  await fetch("/api/model", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data.model),
-  }).catch(() => {});
+function mergeModel(base, patch) {
+  const merged = { ...base };
+  for (const group of ["weights", "thresholds"]) {
+    if (patch[group]) merged[group] = { ...base[group], ...patch[group] };
+  }
+  return merged;
 }
+
+const mergeSave = (key, base, patch) => key === MODEL_SAVE ? mergeModel(base, patch) : { ...base, ...patch };
+const unsaved = (key) => {
+  const entry = pending.get(key);
+  return entry ? mergeSave(key, entry.inFlight ?? {}, entry.patch) : {};
+};
+
+function queueSave(key, patch) {
+  localWrites += 1;
+  const entry = pending.get(key) ?? { patch: {}, timer: 0, inFlight: null, error: null };
+  entry.patch = mergeSave(key, entry.patch, patch);
+  entry.error = null;
+  pending.set(key, entry);
+  clearTimeout(entry.timer);
+  if (!entry.inFlight) entry.timer = setTimeout(() => flushSave(key), 250);
+  renderSaveStatus();
+}
+
+async function flushSave(key) {
+  const entry = pending.get(key);
+  if (!entry || entry.inFlight) return;
+  clearTimeout(entry.timer);
+  const patch = entry.patch;
+  entry.patch = {};
+  entry.inFlight = patch;
+  entry.error = null;
+  renderSaveStatus();
+  try {
+    const res = await fetch(key === MODEL_SAVE ? "/api/model" : `/api/task/${key}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const body = await res.json().catch(() => null);
+    const valid = key === MODEL_SAVE ? body?.weights && body?.thresholds : body?.slug === key;
+    if (!res.ok || !valid) throw new Error(body?.error || `save failed (HTTP ${res.status})`);
+    localWrites += 1;
+    if (!Object.keys(entry.patch).length) pending.delete(key);
+  } catch (e) {
+    entry.patch = mergeSave(key, patch, entry.patch);
+    entry.error = String(e?.message ?? e);
+  } finally {
+    entry.inFlight = null;
+    renderSaveStatus();
+  }
+  if (pending.has(key) && !entry.error) void flushSave(key);
+}
+
+function saveModel(patch) {
+  data.model = mergeModel(data.model, patch);
+  queueSave(MODEL_SAVE, patch);
+}
+
+function renderSaveStatus() {
+  const failed = [...pending].filter(([, entry]) => entry.error);
+  el.saveStatus.hidden = !pending.size;
+  el.saveStatus.replaceChildren();
+  if (!pending.size) return;
+  const text = document.createElement("span");
+  text.textContent = failed.length
+    ? `Not saved — ${failed.map(([key, entry]) => `${key === MODEL_SAVE ? "Tier model" : key}: ${entry.error}`).join("; ")}. Edits are kept here. `
+    : "Saving changes\u2026";
+  el.saveStatus.append(text);
+  if (failed.length) {
+    const retry = document.createElement("button");
+    retry.className = "ghost";
+    retry.textContent = "Retry saves";
+    retry.addEventListener("click", () => {
+      for (const [key] of failed) void flushSave(key);
+    });
+    el.saveStatus.append(retry);
+  }
+}
+
+window.addEventListener("beforeunload", (e) => {
+  if (!pending.size) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
 
 // ── Filtering and sorting ────────────────────────────────────────────────────
 
@@ -420,8 +488,11 @@ function buildRow(task) {
 
 function renderList() {
   const tasks = visibleTasks();
-  rows.clear();
-  el.list.replaceChildren();
+  // A remote cut/filter change must not discard text that is still being edited.
+  // Reconcile that row when focus leaves; all other membership updates can land now.
+  const focused = document.activeElement?.closest("[data-slug]");
+  const editing = data.tasks.find((t) => t.slug === focused?.dataset.slug);
+  if (editing && !tasks.includes(editing)) tasks.splice(Math.min([...el.list.children].indexOf(focused), tasks.length), 0, editing);
 
   if (!loaded) {
     // Never "Nothing matches those filters" for a list that has not arrived.
@@ -440,21 +511,44 @@ function renderList() {
     return;
   }
 
+  const desired = [];
+  const headings = new Map([...el.list.querySelectorAll(".group")].map((h) => [h.textContent, h]));
   let lastGroup = null;
   for (const task of tasks) {
     const group = filters.sort === "doc" ? ROUND_LABELS[task.round] : null;
     if (group && group !== lastGroup) {
-      const h = document.createElement("h2");
+      const h = headings.get(group) ?? document.createElement("h2");
       h.className = "group";
       h.textContent = group;
-      el.list.append(h);
+      desired.push(h);
       lastGroup = group;
     }
-    const row = buildRow(task);
+    const row = rows.get(task.slug) ?? buildRow(task);
+    paint(row, task);
     rows.set(task.slug, row);
-    el.list.append(row);
+    desired.push(row);
+  }
+  const keep = new Set(desired);
+  for (const node of [...el.list.children]) if (!keep.has(node)) node.remove();
+  let cursor = el.list.firstChild;
+  for (const node of desired) {
+    if (node !== cursor) {
+      // Moving a focused DOM subtree blurs its editor. Move its siblings instead.
+      if (node.contains(document.activeElement)) {
+        while (cursor && cursor !== node) {
+          const next = cursor.nextSibling;
+          el.list.append(cursor);
+          cursor = next;
+        }
+      } else {
+        el.list.insertBefore(node, cursor);
+      }
+    }
+    cursor = node.nextSibling;
   }
 }
+
+el.list.addEventListener("focusout", () => setTimeout(renderList, 0));
 
 // ── Moving a task between rounds ─────────────────────────────────────────────
 
@@ -488,8 +582,7 @@ function followTask(task) {
 /**
  * Moves a task to the other half of the event, live.
  *
- * Deliberately not `save()`. That one debounces and swallows failures, which is
- * right for a field whose value is on screen and wrong here: the server can
+ * Deliberately not `save()`. A move is not an optimistic field edit: the server can
  * REFUSE a move -- a secret challenge runs in both rounds, a task whose leader
  * bonus has been awarded would take the bonus out of that round's standings,
  * and a task someone has already submitted would strand that evidence in a
@@ -516,7 +609,7 @@ async function moveToRound(task, round) {
     const moved = await res.json().catch(() => null);
     // A body that is not a task is a failure however it arrived.
     if (!res.ok || !moved?.slug) throw new Error(moved?.error || `the task was not moved (HTTP ${res.status})`);
-    Object.assign(task, moved);
+    Object.assign(task, moved, unsaved(task.slug));
     localWrites += 1;
   } catch (e) {
     el.taskError.textContent = String(e?.message ?? e);
@@ -577,7 +670,8 @@ function renderBalance() {
 
   const w = data.model.weights;
   const th = data.model.thresholds;
-  el.balance.innerHTML = `
+  const created = !el.balance.querySelector(".model");
+  if (created) el.balance.innerHTML = `
     <table>
       <thead><tr>
         <th></th><th>1</th><th>3</th><th>5</th><th>10</th>
@@ -594,18 +688,18 @@ function renderBalance() {
       <span>Tier caps</span>
       ${["t1", "t3", "t5"].map((k) => `<label>&le;${k.slice(1)}<input type="number" step="0.1" min="0" data-threshold="${k}" value="${th[k]}" /></label>`).join("")}
     </div>`;
+  else el.balance.querySelector("tbody").innerHTML = rowsHtml;
 
   for (const input of el.balance.querySelectorAll("input")) {
+    const group = input.dataset.weight ? "weights" : "thresholds";
+    const key = input.dataset.weight || input.dataset.threshold;
+    if (document.activeElement !== input) input.value = data.model[group][key];
+    if (!created) continue;
     input.addEventListener("change", () => {
       const value = Number(input.value);
       if (!Number.isFinite(value)) return;
-      if (input.dataset.weight) data.model.weights[input.dataset.weight] = value;
-      else data.model.thresholds[input.dataset.threshold] = value;
-      saveModel();
-      for (const [slug, row] of rows) {
-        const task = data.tasks.find((t) => t.slug === slug);
-        if (task) paint(row, task);
-      }
+      saveModel({ [group]: { [key]: value } });
+      renderList();
       renderSummary();
     });
   }
@@ -786,26 +880,20 @@ el.addTaskButton.addEventListener("click", addTask);
 syncNewTaskForm();
 syncAddButton();
 
-/** Pushes and poll results both arrive here. Rebuild only if the task set changed. */
+/** Merge by slug: row handlers retain their task object, not a stale snapshot. */
 function applyTasks(next) {
-  const sameTasks =
-    next.tasks.length === data.tasks.length &&
-    next.tasks.every((t, i) => t.slug === data.tasks[i]?.slug);
-  data.model = next.model;
-
-  if (!sameTasks || !rows.size) {
-    data.tasks = next.tasks;
-    renderList();
-  } else {
-    // Merge in place rather than swapping the array: every row's event handlers
-    // closed over its task object, so replacing them would leave the DOM wired
-    // to objects nothing else reads.
-    next.tasks.forEach((incoming, i) => Object.assign(data.tasks[i], incoming));
-    for (const [slug, row] of rows) {
-      const task = data.tasks.find((t) => t.slug === slug);
-      if (task) paint(row, task);
-    }
+  data.model = mergeModel(next.model, unsaved(MODEL_SAVE));
+  const existing = new Map(data.tasks.map((t) => [t.slug, t]));
+  data.tasks = next.tasks.map((incoming) =>
+    Object.assign(existing.get(incoming.slug) ?? {}, incoming, unsaved(incoming.slug))
+  );
+  const present = new Set(data.tasks.map((t) => t.slug));
+  for (const [slug, task] of existing) {
+    if (present.has(slug)) continue;
+    if (pending.has(slug)) data.tasks.push(task);
+    else rows.delete(slug);
   }
+  renderList();
   renderSummary();
 }
 
@@ -824,6 +912,7 @@ function applyTasks(next) {
 
 const POLL_MS = 8000;
 let pollTimer = 0;
+let refreshId = 0;
 
 async function fetchTasks() {
   const res = await fetch("/api/tasks");
@@ -837,14 +926,13 @@ async function fetchTasks() {
 }
 
 async function refreshTasks() {
-  // An unsent edit is newer than anything the server can return, and applying
-  // the poll over it would visibly undo what was just typed. A move in flight is
-  // the same case from the other side: the server has not applied it yet, so its
-  // answer is correct and stale, and would flip the row back mid-request.
-  if (pending.size || moving.size) return;
+  // Field edits are overlaid in applyTasks; a move is not a field patch.
+  if (moving.size) return;
   const at = localWrites;
+  const request = ++refreshId;
   try {
     const next = await fetchTasks();
+    if (request !== refreshId) return;
     // The fetch succeeded, so any "not refreshing" note is wrong from here on
     // even if the body itself turns out to be too old to apply.
     loadError = null;
@@ -853,10 +941,11 @@ async function refreshTasks() {
     // though nothing is in flight by the time it resolves, and merging it would
     // undo the write on screen for a whole poll interval. Only once something
     // has loaded, because before that nothing local can be newer.
-    if (loaded && (pending.size || moving.size || localWrites !== at)) return;
+    if (loaded && (moving.size || localWrites !== at)) return;
     loaded = true;
     applyTasks(next);
   } catch (e) {
+    if (request !== refreshId) return;
     loadError = String(e?.message ?? e);
     // Before the first success there is nothing on screen to keep, so the list
     // has to say why. After one, what is there stands and renderSummary marks it.
@@ -894,17 +983,7 @@ events.addEventListener("roster", (e) => {
   window.dispatchEvent(new CustomEvent("roster-update", { detail: e.data }));
 });
 
-events.addEventListener("tasks", (e) => {
-  // Ignore pushes while an edit or a move is in flight; the local copy is newer.
-  if (pending.size || moving.size) return;
-  let next;
-  try {
-    next = JSON.parse(e.data);
-  } catch {
-    return;
-  }
-  if (!next || !Array.isArray(next.tasks)) return;
-  loaded = true;
-  loadError = null;
-  applyTasks(next);
+events.addEventListener("tasks", () => {
+  // Broadcasts can finish out of order. Use them as a nudge for a fresh read.
+  void refreshTasks();
 });

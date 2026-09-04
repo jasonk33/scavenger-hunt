@@ -716,6 +716,7 @@ function TaskEditor({
   onCancel: () => void;
   onDelete: () => void;
 }) {
+  const [baseline] = useState(task);
   const [title, setTitle] = useState(task.title);
   const [points, setPoints] = useState(task.points);
   const [scoringMode, setScoringMode] = useState(task.scoring_mode);
@@ -724,6 +725,22 @@ function TaskEditor({
   const [competitionBonus, setCompetitionBonus] = useState(task.competition_bonus);
   const [clip, setClip] = useState(task.requires_video);
   const [secret, setSecret] = useState(task.is_secret);
+
+  const save = () => {
+    // Polls update `task`, not the values this editor opened with. Only send
+    // deliberate edits; in particular, a stale scoring mode would clear winners.
+    const patch: Record<string, unknown> = {};
+    if (title.trim() !== baseline.title.trim()) patch.title = title.trim();
+    if (points !== baseline.points) patch.points = points;
+    if (clip !== baseline.requires_video) patch.requiresVideo = clip;
+    if (secret !== baseline.is_secret) patch.isSecret = secret;
+    if (scoringMode !== baseline.scoring_mode) patch.scoringMode = scoringMode;
+    if (measurementLabel.trim() !== baseline.measurement_label.trim()) patch.measurementLabel = measurementLabel.trim();
+    if (pointsPerUnit !== baseline.points_per_unit) patch.pointsPerUnit = pointsPerUnit;
+    if (competitionBonus !== baseline.competition_bonus) patch.competitionBonus = competitionBonus;
+    if (Object.keys(patch).length) onSave(patch);
+    else onCancel();
+  };
 
   return (
     <div className="card" style={{ margin: 0, borderColor: "var(--accent)" }}>
@@ -782,22 +799,7 @@ function TaskEditor({
           className="btn btn-sm btn-primary"
           style={{ flex: 1 }}
           disabled={!title.trim()}
-          onClick={() =>
-            // Deliberately does NOT send `active`. Sending `active: true` here
-            // would silently un-remove a deactivated task just because someone
-            // fixed its wording -- and would make the Restore button below dead
-            // UI. Removed tasks stay removed until Restore is tapped.
-            onSave({
-              title,
-              points,
-              requiresVideo: clip,
-              isSecret: secret,
-              scoringMode,
-              measurementLabel,
-              pointsPerUnit,
-              competitionBonus,
-            })
-          }
+          onClick={save}
         >
           Save
         </button>

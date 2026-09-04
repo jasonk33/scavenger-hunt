@@ -194,6 +194,20 @@ test("renaming or recolouring a team updates both round rows in one scoped write
   assert.deepEqual(writes[0].body, { name: "Crimson", color: "#b91c1c" });
 });
 
+for (const patch of [{ name: "Crimson" }, { color: "#b91c1c" }]) {
+  test(`a ${Object.keys(patch)[0]}-only team patch leaves the other field alone in both rounds`, async () => {
+    const db = fakeDb();
+    await updateTeam(db, "t-1a", patch);
+    const writes = db.calls.filter((call) => call.method === "PATCH");
+    assert.equal(writes.length, 1);
+    assert.match(writes[0].url, /id=in\.\(t-1a,t-1b\)/);
+    assert.deepEqual(writes[0].body, patch);
+    assert.deepEqual(db.state.teams, TEAMS.map((team) =>
+      team.name === "Red" ? { ...team, ...patch } : team
+    ));
+  });
+}
+
 test("a team with submissions cannot be deleted", async () => {
   const db = fakeDb({ submissions: [{ id: "s-1", team_id: "t-1a" }] });
   await assert.rejects(() => deleteTeam(db, "t-1a"), /has 1 submission/);

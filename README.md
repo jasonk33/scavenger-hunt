@@ -84,12 +84,16 @@ npm run seed          # guest list and teams for both rounds
 npm run seed:reset    # remove them again
 ```
 
-The guest list and the team split live at the top of `scripts/seed-event.mjs`.
-Edit them there and re-run as people RSVP, rather than clicking through Admin.
+The arrays at the top of `scripts/seed-event.mjs` are **initial bootstrap data**,
+not the current guest list. After setup, use the canvas's **Roster** tab for
+RSVPs, team names and assignments. Do not re-run the seed to update the roster:
+it replaces those live decisions with its initial allocations.
 
-Both commands delete **every submission and every media file** in the project,
+Both commands delete **every submission and its linked media**, re-hide secrets
+and reopen Round 1. They do not sweep orphaned files from the bucket. Both are destructive,
 so they refuse to run once anyone outside that guest list has submitted
-something. Use `seed:reset` to clear your own testing before the day.
+something; that refusal does not protect submissions from guests on the list.
+**Never run either once the party has started.**
 
 To clear only the testing — the submissions and their media, keeping the guest
 list, teams and tasks — set `ALLOW_RESET=1` and use **Admin → health → Reset
@@ -217,8 +221,8 @@ deployment; use Vercel's redeploy action or push a follow-up commit.
 
 **Before the day**
 
-1. Admin → Roster → paste the guest list, one name per line.
-2. Assign everyone to a Round 1 team. Assign Round 2 too, or use
+1. Canvas → Roster → update the live guest list.
+2. Assign everyone to a Round 1 team there. Assign Round 2 too, or use
    *Copy from Round 1* and adjust at the break.
 3. Admin → health. Everything green.
 4. Share the app's normal homepage URL in the group text.
@@ -235,7 +239,7 @@ deployment; use Vercel's redeploy action or push a follow-up commit.
 **The break (2:30–3:30)**
 
 1. Admin → Event → close submissions. Let the queue drain.
-2. Admin → Roster → Round 2 → make the swaps.
+2. Canvas → Roster → make the Round 2 swaps.
 3. Admin → Event → active round = 2, reopen submissions.
 
 Nobody re-scans or re-joins anything. Round 1 scores cannot move: every

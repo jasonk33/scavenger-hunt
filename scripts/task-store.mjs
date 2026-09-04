@@ -578,22 +578,33 @@ export async function addTask(client, input) {
   return groupRows(created)[0] ?? null;
 }
 
-/** Merges a partial model into the stored one and returns the result. */
+/** Compare-and-swap the JSON text so different sessions' partial edits commute. */
 export async function updateModel(client, patch) {
-  const current = await readModel(client);
-  const merged = parseModel({
-    weights: { ...current.weights, ...(patch?.weights ?? {}) },
-    thresholds: { ...current.thresholds, ...(patch?.thresholds ?? {}) },
-  });
-  await rest(client, {
-    method: "POST",
-    path: "settings",
-    body: { key: MODEL_KEY, value: JSON.stringify(merged) },
-    prefer: "resolution=merge-duplicates,return=minimal",
-  }).catch((e) => {
-    throw new Error(`could not save the tier model: ${e.message}`);
-  });
-  return merged;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const rows = await rest(client, { path: `settings?select=value&key=${eq(MODEL_KEY)}` });
+    const current = parseModel(rows[0]?.value);
+    const merged = parseModel({
+      weights: { ...current.weights, ...(patch?.weights ?? {}) },
+      thresholds: { ...current.thresholds, ...(patch?.thresholds ?? {}) },
+    });
+    // PostgREST string filters need quoting/escaping for JSON's commas and quotes.
+    const expected = rows[0]?.value === null ? "is.null" : eq(JSON.stringify(rows[0]?.value));
+    const updated = await rest(client, rows.length ? {
+      method: "PATCH",
+      path: `settings?key=${eq(MODEL_KEY)}&value=${expected}&select=value`,
+      body: { value: JSON.stringify(merged) },
+      prefer: "return=representation",
+    } : {
+      method: "POST",
+      path: "settings?select=value",
+      body: { key: MODEL_KEY, value: JSON.stringify(merged) },
+      prefer: "resolution=ignore-duplicates,return=representation",
+    }).catch((e) => {
+      throw new Error(`could not save the tier model: ${e.message}`);
+    });
+    if (updated.length) return parseModel(updated[0].value);
+  }
+  throw new Error("The tier model changed repeatedly while saving. Please retry.");
 }
 
 export async function readModel(client) {
