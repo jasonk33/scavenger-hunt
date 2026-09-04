@@ -125,6 +125,11 @@ function Post({ item: it }: { item: Feed["items"][number] }) {
               <div className="byline name muted tiny">{it.playerName}</div>
             </div>
 
+            {/* Above the media, not below it: on a phone the card is about one
+                photo tall, so a title underneath only gets read after scrolling
+                past the thing it explains. */}
+            <div style={{ margin: "0 0 8px", fontSize: 15, lineHeight: 1.35 }}>{it.taskTitle}</div>
+
             <div style={{ display: "grid", gap: 8 }}>
               {shown.map((m) => (
                 <div className="media-box" key={m.id}>
@@ -157,15 +162,16 @@ function Post({ item: it }: { item: Feed["items"][number] }) {
               </button>
             )}
 
-            <div style={{ marginTop: 10, fontSize: 15, lineHeight: 1.35 }}>{it.taskTitle}</div>
-            {it.note && (
-              <div className="muted tiny" style={{ marginTop: 4, overflowWrap: "anywhere" }}>
-                “{it.note}”
-              </div>
-            )}
-            {it.status === "rejected" && (
-              <div className="muted tiny" style={{ marginTop: 4 }}>
-                {it.rejectReason || "Rejected"}
+            {(it.note || it.status === "rejected") && (
+              <div className="stack" style={{ gap: 4, marginTop: 10 }}>
+                {it.note && (
+                  <div className="muted tiny" style={{ overflowWrap: "anywhere" }}>
+                    “{it.note}”
+                  </div>
+                )}
+                {it.status === "rejected" && (
+                  <div className="muted tiny">{it.rejectReason || "Rejected"}</div>
+                )}
               </div>
             )}
           </div>

@@ -30,6 +30,7 @@
   --bad: #b42318;
   --bad-weak: #fdeceb;
   --warn: #b54708;
+  --warn-weak: #fdf2e6;
   --notice-bg: #fef3c7;
   --notice-line: #f0c36d;
   --notice-ink: #4a3308;
@@ -56,6 +57,7 @@
     --bad: #ff6b5e;
     --bad-weak: #2c1a19;
     --warn: #f5a54a;
+    --warn-weak: #2b2113;
     --notice-bg: #3a2f12;
     --notice-line: #6b571f;
     --notice-ink: #f6e3b4;
@@ -80,6 +82,7 @@
   --bad: #ff6b5e;
   --bad-weak: #2c1a19;
   --warn: #f5a54a;
+  --warn-weak: #2b2113;
   --notice-bg: #3a2f12;
   --notice-line: #6b571f;
   --notice-ink: #f6e3b4;
@@ -303,10 +306,23 @@ h2 {
 
 /* Same tint at a 1px border. Used for the many approved rows in the long task
    list, where thickening dozens of borders would read as noise; .card-accent's
-   2px is for a single highlighted row or a standalone alert. */
+   2px is for a single highlighted row or a standalone alert.
+
+   Three of them, because two was the confusing part: a player scrolling a list
+   of green cards and red cards read an untinted card as untouched, and a task
+   sitting with the judge is neither. .card-wait is that middle state -- sent,
+   nothing left to do, not scored yet. */
 .card-done {
   border-color: var(--good);
   background: var(--good-weak);
+}
+.card-wait {
+  border-color: var(--warn);
+  background: var(--warn-weak);
+}
+.card-fail {
+  border-color: var(--bad);
+  background: var(--bad-weak);
 }
 
 .empty {
@@ -413,6 +429,7 @@ h2 {
 }
 .btn-star.is-on,
 .saved-filter.is-on,
+.filters-toggle.is-on,
 .tier-filter.is-on {
   color: var(--accent);
   border-color: var(--accent);
@@ -466,6 +483,19 @@ h2 {
   background: var(--card);
   color: var(--ink);
   box-shadow: var(--shadow);
+}
+/* The status filter on /submit has four options and lives above a fifty-row
+   list, so it takes the whole width and splits it evenly rather than sizing to
+   its labels -- an inline .seg of four words overflows a 320px phone sideways,
+   and this is the one control on that screen everybody uses. */
+.seg-full {
+  display: flex;
+  width: 100%;
+}
+.seg-full button {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 /* ---- Fields ------------------------------------------------------------ */

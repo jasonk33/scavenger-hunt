@@ -56,6 +56,76 @@ type OtherTeamEntries = {
   entries: EvidenceEntry[];
 };
 
+/**
+ * Where a task has got to, for this team, in this round.
+ *
+ * One implementation, three call sites: the status filter, the pill on the card
+ * and the card's own tint. Written out three times they would agree only by
+ * copy-paste, and the first disagreement is a card tinted green while the chip
+ * row insists it is still to do.
+ *
+ * Approved wins over a stale rejection the team has already redone, and a retry
+ * already with the judge wins over the rejection it is answering -- so the only
+ * thing that reads as "rejected" is a task that genuinely still needs the work.
+ * That is the same precedence the pill has always used.
+ */
+type TaskStatus = "todo" | "waiting" | "rejected" | "done";
+
+function statusOf(subs: readonly Sub[] | undefined): TaskStatus {
+  if (!subs || subs.length === 0) return "todo";
+  if (subs.some((s) => s.status === "approved")) return "done";
+  if (subs.some((s) => s.status === "pending" || s.status === "uploading")) return "waiting";
+  if (subs.some((s) => s.status === "rejected")) return "rejected";
+  return "todo";
+}
+
+/**
+ * The four buckets on the chip row. "Sent" deliberately covers both scored and
+ * still-with-the-judge: from the player's side they are the same thing -- work
+ * that is done and needs nothing further -- and splitting them would put a
+ * fifth chip on a row that has to fit a 320px phone.
+ */
+const STATUS_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "todo", label: "To do" },
+  { key: "rejected", label: "Rejected" },
+  { key: "sent", label: "Sent" },
+] as const;
+
+type StatusFilter = (typeof STATUS_FILTERS)[number]["key"];
+
+function matchesStatus(filter: StatusFilter, status: TaskStatus): boolean {
+  if (filter === "all") return true;
+  if (filter === "sent") return status === "done" || status === "waiting";
+  return status === filter;
+}
+
+/**
+ * What each bucket says when it comes up empty. `noun` is the bucket read as an
+ * adjective mid-sentence -- "No untouched tasks match", which the chip labels
+ * themselves cannot give you ("No to do tasks match").
+ */
+const STATUS_EMPTY: Record<
+  Exclude<StatusFilter, "all">,
+  { noun: string; title: string; body: string }
+> = {
+  todo: {
+    noun: "untouched",
+    title: "Nothing left untouched",
+    body: "Your team has sent something for every task in this round. Redo one for a better shot at it.",
+  },
+  rejected: {
+    noun: "rejected",
+    title: "Nothing rejected",
+    body: "Nobody has had anything thrown out yet. Keep it that way.",
+  },
+  sent: {
+    noun: "sent",
+    title: "Nothing sent yet",
+    body: "Pick a task and upload something — a photo or a clip, either works.",
+  },
+};
+
 type State = {
   settings: { round: number; submissions_open: boolean; saved_epoch: string };
   me: Me | null;
@@ -121,6 +191,13 @@ export default function SubmitPage() {
   const [onlySaved, setOnlySaved] = useState(false);
   /** Show one points tier only, or all of them. Navigation, not scoring. */
   const [tier, setTier] = useState<number | null>(null);
+  /** Which of the four buckets to show. The most-used filter on the screen, so
+      it is the one that stays out in the open. */
+  const [status, setStatus] = useState<StatusFilter>("all");
+  /** Whether the points and saved filters are unfolded. They start folded
+      because on a 50-task list the status row is what people reach for, and
+      four stacked controls leave barely a card above the fold. */
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [switching, setSwitching] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -196,13 +273,28 @@ export default function SubmitPage() {
     return m;
   }, [data]);
 
+  /* Every task's bucket, computed once against the round's whole list rather
+     than inside the filter, because the empty state below has to know whether a
+     bucket is empty in the ROUND or merely empty under the other filters -- and
+     telling a player "nothing rejected" when two rejections are sitting behind a
+     points chip is exactly the wrong-cause bug the empty states exist to avoid. */
+  const statusByTask = useMemo(() => {
+    const m = new Map<string, TaskStatus>();
+    for (const t of data?.tasks ?? []) m.set(t.id, statusOf(byTask.get(t.id)));
+    return m;
+  }, [data, byTask]);
+
   const tasks = useMemo(() => {
     const list = data?.tasks ?? [];
     const needle = q.trim().toLowerCase();
     const found = needle ? list.filter((t) => t.title.toLowerCase().includes(needle)) : list;
     const tiered = tier === null ? found : found.filter((t) => t.points === tier);
-    return onlySaved ? tiered.filter((t) => saved.has(t.id)) : tiered;
-  }, [data, q, tier, onlySaved, saved]);
+    const bucketed =
+      status === "all"
+        ? tiered
+        : tiered.filter((t) => matchesStatus(status, statusByTask.get(t.id) ?? "todo"));
+    return onlySaved ? bucketed.filter((t) => saved.has(t.id)) : bucketed;
+  }, [data, q, tier, status, statusByTask, onlySaved, saved]);
 
   /* Derived from the round's whole task list rather than from `tasks`, for the
      same reason the saved count is: the chips must not rearrange themselves
@@ -456,9 +548,46 @@ export default function SubmitPage() {
      below already branches on this; the saved one used to name the points
      filter unconditionally, which told a player looking at a chip row reading
      "All" to go and clear a filter they had never set. Naming the wrong
-     control is the same small bug both empty states exist to avoid. */
+     control is the same small bug both empty states avoid. Only reached with
+     the status filter off, which is what keeps it to these three cases. */
   const savedNarrowedBy =
     tier !== null && q.trim() ? "both" : tier !== null ? "tier" : "search";
+
+  /* The folded filters, named rather than counted, so the button that hides
+     them says what it is hiding. A bare dot would leave a player looking at a
+     short list with nothing on screen telling them why -- the strand shape,
+     one fold further in. */
+  const foldedFilters = [
+    tier !== null ? `${tier} pt${tier === 1 ? "" : "s"}` : null,
+    onlySaved ? "★ saved" : null,
+  ].filter(Boolean) as string[];
+
+  /* Rendered on the same terms the controls inside it are: a fold with nothing
+     in it is just a button that opens an empty box. */
+  const showTiers = Boolean(data) && (tiers.length > 1 || tier !== null);
+  const showSaved = savedCount > 0 || onlySaved;
+  /* Held back until the team has actually sent something. Before that every
+     task is To do and the row filters nothing -- and it cannot strand anyone by
+     disappearing, because it only disappears while set to All. */
+  const showStatus = Boolean(data) && ((data?.submissions.length ?? 0) > 0 || status !== "all");
+
+  /** Back to the whole list, whichever combination got them here. */
+  const clearFilters = () => {
+    setStatus("all");
+    setTier(null);
+    setOnlySaved(false);
+    setQ("");
+  };
+
+  /* What the status empty state has to own up to. Named individually rather
+     than counted, because "3 filters are on" tells a player nothing they can
+     act on -- and the search box in particular is the one they will not think
+     of, since its text is sitting right there looking deliberate. */
+  const alsoNarrowing = [
+    tier !== null ? `the ${tier}-point filter` : null,
+    onlySaved ? "the saved filter" : null,
+    q.trim() ? "your search" : null,
+  ].filter(Boolean) as string[];
 
   return (
     <>
@@ -627,8 +756,59 @@ export default function SubmitPage() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         autoComplete="off"
-        style={{ margin: "6px 0 4px" }}
+        style={{ margin: "6px 0 8px" }}
       />
+
+      {/* Four buckets, always out in the open once there is anything to sort
+          into them. A segmented control rather than chips because exactly one
+          is ever in effect -- the same idiom the feed and the round switcher
+          use -- and full width so four labels cannot overflow a narrow phone
+          sideways. */}
+      {showStatus && (
+        <div className="seg seg-full status-filter" style={{ margin: "0 0 6px" }}>
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              className={status === f.key ? "on" : ""}
+              aria-pressed={status === f.key}
+              onClick={() => setStatus(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* The points and saved filters fold away, because four stacked controls
+          above a fifty-row list leaves almost no list. The button names what is
+          folded rather than merely marking that something is: a filter you
+          cannot see and cannot name is the strand shape all over again. */}
+      {(showTiers || showSaved) && (
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", margin: "0 0 6px" }}>
+          <button
+            className={`btn btn-sm filters-toggle${foldedFilters.length > 0 ? " is-on" : ""}`}
+            aria-expanded={filtersOpen}
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            {foldedFilters.length > 0
+              ? `Filters · ${foldedFilters.join(" · ")}`
+              : filtersOpen
+                ? "Filters ▴"
+                : "Filters ▾"}
+          </button>
+          {foldedFilters.length > 0 && (
+            <button
+              className="btn btn-sm"
+              onClick={() => {
+                setTier(null);
+                setOnlySaved(false);
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Points chips, above the saved filter because on a list this long the
           usual question is "what's still worth 10" rather than "what did I
@@ -636,7 +816,7 @@ export default function SubmitPage() {
           between -- and whenever one is chosen, even if the round has since
           shrunk to a single tier, so the control that set the filter can never
           disappear while the filter is still on. */}
-      {data && (tiers.length > 1 || tier !== null) && (
+      {filtersOpen && showTiers && (
         <div className="row" style={{ gap: 6, flexWrap: "wrap", margin: "0 0 4px" }}>
           <button
             className={`btn btn-sm tier-filter${tier === null ? " is-on" : ""}`}
@@ -658,12 +838,12 @@ export default function SubmitPage() {
         </div>
       )}
 
-      {/* Stays on screen whenever the filter is ON, even at zero saved tasks.
-          Hiding it at that moment would take away the only control that undoes
-          it and leave the player staring at an empty list. It only disappears
-          when there is nothing saved AND the filter is already off, where there
-          is no state to strand. */}
-      {(savedCount > 0 || onlySaved) && (
+      {/* Stays inside the fold whenever the filter is ON, even at zero saved
+          tasks. Hiding it at that moment would take away the only control that
+          undoes it and leave the player staring at an empty list. It only
+          disappears when there is nothing saved AND the filter is already off,
+          where there is no state to strand. */}
+      {filtersOpen && showSaved && (
         <div className="row" style={{ margin: "0 0 4px" }}>
           <button
             className={`btn btn-sm saved-filter${onlySaved ? " is-on" : ""}`}
@@ -676,7 +856,31 @@ export default function SubmitPage() {
         </div>
       )}
 
-      {data && grouped.length === 0 && onlySaved && (
+      {/* The status filter takes precedence over the other two empty states.
+          It is the coarsest cut and the one most likely to be the real cause,
+          and letting the others speak first produced the wrong answer outright:
+          filtered to Rejected with a 10-point chip on, the points empty state
+          announced that nothing is worth 10 points any more while the round was
+          full of them. */}
+      {data && grouped.length === 0 && status !== "all" && (
+        <div className="empty">
+          <b>
+            {alsoNarrowing.length > 0
+              ? `No ${STATUS_EMPTY[status].noun} tasks match your other filters`
+              : STATUS_EMPTY[status].title}
+          </b>
+          {alsoNarrowing.length > 0
+            ? `${alsoNarrowing.join(" and ")} ${alsoNarrowing.length === 1 ? "is" : "are"} narrowing it too.`
+            : STATUS_EMPTY[status].body}
+          <div>
+            <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={clearFilters}>
+              Show all tasks
+            </button>
+          </div>
+        </div>
+      )}
+
+      {data && grouped.length === 0 && status === "all" && onlySaved && (
         <div className="empty">
           {/* Three different truths, and saying the wrong one is its own small
               bug: after the remix a player who saved five Round 1 tasks has a
@@ -699,7 +903,7 @@ export default function SubmitPage() {
             : savedCount === 0
               ? "This half of the hunt has its own task list — star the ones you want from it."
               : savedNarrowedBy === "tier"
-                ? "Tap All to see the rest of your saved tasks."
+                ? "Clear the points filter to see the rest of your saved tasks."
                 : savedNarrowedBy === "both"
                   ? "Clear the points filter or the search to see the rest of your saved tasks."
                   : "Clear the search to see the rest of your saved tasks."}
@@ -707,10 +911,7 @@ export default function SubmitPage() {
             <button
               className="btn btn-sm"
               style={{ marginTop: 12 }}
-              onClick={() => {
-                setOnlySaved(false);
-                setTier(null);
-              }}
+              onClick={clearFilters}
             >
               Show all tasks
             </button>
@@ -718,18 +919,27 @@ export default function SubmitPage() {
         </div>
       )}
 
-      {data && grouped.length === 0 && !onlySaved && (
+      {data && grouped.length === 0 && status === "all" && !onlySaved && (
         <div className="empty">
           <b>No tasks match</b>
           {/* Three causes, and only one of them is the search box. A player
               filtered to a tier an organizer has just cut every task out of has
               typed nothing, and telling them to shorten a search they never
-              made sends them hunting for the wrong thing. */}
+              made sends them hunting for the wrong thing.
+
+              None of these name a control any more: the points chips fold away,
+              so "tap All" was an instruction to tap something that may not be
+              on the screen. The escape below is always there instead. */}
           {tier === null
             ? "Try a shorter search."
             : q.trim()
-              ? "Try a shorter search, or tap All to look at every points tier."
-              : `Nothing is worth ${tier} point${tier === 1 ? "" : "s"} in this round any more — tap All to see the rest.`}
+              ? "Try a shorter search, or look at every points tier."
+              : `Nothing is worth ${tier} point${tier === 1 ? "" : "s"} in this round any more.`}
+          <div>
+            <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={clearFilters}>
+              Show all tasks
+            </button>
+          </div>
         </div>
       )}
 
@@ -816,8 +1026,11 @@ function TaskRow({
         `${a.judged_at ?? ""}|${a.created_at}|${a.id}`
       )
     )[0];
-  const pending = subs.find((s) => s.status === "pending" || s.status === "uploading");
   const rejected = subs.find((s) => s.status === "rejected");
+  /* The one place the card's colour, its pill and the chip row above it agree.
+     Two of the three used to be written out inline, and a list where a green
+     card sits under a chip row reading "To do" is worse than no filter. */
+  const st = statusOf(subs);
 
   /* An "uploading" row has a path reserved but no bytes in Storage yet, so its
      URL would 404. Everything else is viewable. Newest first, matching the
@@ -837,8 +1050,16 @@ function TaskRow({
     [viewable]
   );
 
+  /* Green scored, amber with the judge, red needs redoing. Amber is the one
+     that had to be added: on a list of green and red cards an untinted card
+     reads as untouched, so a task already sent and waiting looked like work
+     still to do -- and the "waiting on judge" line explaining otherwise was
+     inside a card that gave every other signal that it was not. */
+  const tint =
+    st === "done" ? " card-done" : st === "waiting" ? " card-wait" : st === "rejected" ? " card-fail" : "";
+
   return (
-    <div className={`card card-flat${approved ? " card-done" : ""}`}>
+    <div className={`card card-flat${tint}`}>
       <div className="task-content">
         <div>
           <div className="row" style={{ alignItems: "flex-start" }}>
@@ -890,7 +1111,7 @@ function TaskRow({
                 {task.competition.team} won +{task.competition.bonus}
               </span>
             )}
-            {approved && (
+            {st === "done" && approved && (
               <Score
                 base={approved.basePoints ?? approved.points_awarded ?? 0}
                 bonus={approved.bonusPoints}
@@ -898,8 +1119,8 @@ function TaskRow({
                 check
               />
             )}
-            {!approved && pending && <span className="pill">waiting on judge</span>}
-            {!approved && !pending && rejected && (
+            {st === "waiting" && <span className="pill pill-warn">waiting on judge</span>}
+            {st === "rejected" && rejected && (
               <span className="pill pill-bad pill-wrap">
                 ✗ {rejected.reject_reason || "rejected"}
               </span>
@@ -916,7 +1137,7 @@ function TaskRow({
             disabled={disabled}
             onClick={onPick}
           >
-            {approved || pending ? "Redo" : "Upload"}
+            {st === "done" || st === "waiting" ? "Redo" : "Upload"}
           </button>
           {groups.length > 0 && (
             <button
@@ -1040,7 +1261,9 @@ function SubmissionView({
             push
           />
         ) : (
-          <span className={`pill pill-wrap push ${sub.status === "rejected" ? "pill-bad" : ""}`}>
+          <span
+            className={`pill pill-wrap push ${sub.status === "rejected" ? "pill-bad" : "pill-warn"}`}
+          >
             {sub.status === "rejected" ? `✗ ${sub.reject_reason || "rejected"}` : "waiting on judge"}
           </span>
         )}

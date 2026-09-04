@@ -43,6 +43,14 @@ export default function EvidenceEntryCard({
         <div className="byline name muted tiny">{entry.playerName}</div>
       </div>
 
+      {/* Above the media, not below it. A phone screen fits about one photo, so
+          a title underneath is only read after scrolling past the thing it
+          explains -- which on a long list means scrolling back up to find out
+          what you were looking at. */}
+      {showTask && entry.taskTitle && (
+        <div style={{ margin: "0 0 8px", fontSize: 15, lineHeight: 1.35 }}>{entry.taskTitle}</div>
+      )}
+
       <div style={{ display: "grid", gap: 8 }}>
         {shown.map((m) => (
           <div className="media-box" key={m.id}>
@@ -78,11 +86,8 @@ export default function EvidenceEntryCard({
         </button>
       )}
 
-      {showTask && entry.taskTitle && (
-        <div style={{ marginTop: 10, fontSize: 15, lineHeight: 1.35 }}>{entry.taskTitle}</div>
-      )}
       {entry.note && (
-        <div className="muted tiny" style={{ marginTop: 4, overflowWrap: "anywhere" }}>
+        <div className="muted tiny" style={{ marginTop: 8, overflowWrap: "anywhere" }}>
           “{entry.note}”
         </div>
       )}

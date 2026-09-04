@@ -74,11 +74,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
   const groupTaskIds = [...new Set(groups.map((files) => files[0].task_id))];
   const playerIds = [...new Set(groups.flatMap((files) => files.map((file) => file.player_id)))];
 
-  let tasks: Array<{ id: string; title: string; sort_order: number }> = [];
+  let tasks: Array<{ id: string; title: string }> = [];
   let players: Array<{ id: string; name: string }> = [];
   if (groups.length > 0) {
     const [{ data: taskRows, error: tasksError }, { data: playerRows, error: playersError }] = await Promise.all([
-      sb.from("tasks").select("id,title,sort_order").in("id", groupTaskIds),
+      sb.from("tasks").select("id,title").in("id", groupTaskIds),
       sb.from("players").select("id,name").in("id", playerIds),
     ]);
     if (tasksError || playersError) return fail("Couldn't load that team's entries right now. Try again.", 503);
@@ -88,6 +88,22 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
 
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const playerById = new Map(players.map((player) => [player.id, player]));
+  /* Recency, not the task list's own order. Expanding a team is "what have they
+     just done", and `sort_order` put a 1-pointer photographed at 2pm above a
+     10-pointer judged thirty seconds ago -- so the newest thing a team scored
+     was wherever its task happened to sit in a fifty-row list. The feed already
+     reads judged-newest-first; this is the same rule.
+     Read off the whole group rather than off `files[0]`, which is the OLDEST
+     file: the row that actually scored is the newest one in the group, so a
+     second angle added later is what makes the entry recent. */
+  const judgedAt = (files: SubmissionRow[]) =>
+    files.reduce(
+      (newest, file) => {
+        const at = `${file.judged_at ?? ""}|${file.created_at ?? ""}|${file.id}`;
+        return at > newest ? at : newest;
+      },
+      ""
+    );
   const entries = groups
     .map((files) => {
       const first = files[0];
@@ -96,7 +112,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
          inside a group scores, and `first` is the oldest. */
       const split = pointsById.get(groupKey(first)) ?? awardedBreakdown(first);
       return {
-        sortOrder: task?.sort_order ?? Number.MAX_SAFE_INTEGER,
+        judgedAt: judgedAt(files),
         entry: {
           id: first.id,
           taskTitle: task?.title ?? "(deleted task)",
@@ -115,7 +131,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
         },
       };
     })
-    .sort((a, b) => a.sortOrder - b.sortOrder || a.entry.taskTitle.localeCompare(b.entry.taskTitle))
+    .sort((a, b) => (a.judgedAt < b.judgedAt ? 1 : a.judgedAt > b.judgedAt ? -1 : 0))
     .map(({ entry }) => entry);
 
   return json({

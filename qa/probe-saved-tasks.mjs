@@ -33,6 +33,18 @@ const taskIds = {};
 const cardFor = (page, title) => page.locator(".card").filter({ hasText: title }).last();
 const starIn = (card) => card.getByRole("button", { name: "Save for later" });
 const filterChip = (page) => page.locator(".saved-filter");
+/* The saved chip now lives behind the Filters fold, so every driver has to make
+   the same tap a player makes. What did NOT move is the strand guarantee: the
+   fold's own button is always on screen and names whatever filter is inside it,
+   so a player is never looking at a short list with no visible cause. */
+const foldButton = (page) => page.locator(".filters-toggle");
+const openFold = async (page) => {
+  const button = foldButton(page);
+  if (await button.count() === 0) return;
+  if (await button.getAttribute("aria-expanded") === "true") return;
+  await button.click();
+  await page.waitForTimeout(250);
+};
 const visibleTitles = async (page) => {
   const out = [];
   for (const t of TITLES) {
@@ -73,6 +85,7 @@ try {
     String(await alphaStar.getAttribute("aria-pressed")));
 
   console.log("\n2. Nothing saved means no filter chip cluttering the list");
+  await openFold(page);
   check("the saved filter is absent while nothing is saved and the filter is off",
     await filterChip(page).count() === 0);
 
@@ -96,12 +109,16 @@ try {
     String(await starIn(cardFor(page, TITLES[0])).getAttribute("aria-pressed")));
 
   console.log("\n5. Filtering to saved only");
+  await openFold(page);
   await filterChip(page).click();
   await page.waitForTimeout(400);
   const shown = await visibleTitles(page);
   check("filtering shows only the saved task", shown.length === 1 && shown[0] === TITLES[0],
     JSON.stringify(shown));
   check("the filter chip stays on screen while filtering", await filterChip(page).count() > 0);
+  check("and the fold that holds it names the filter that is on",
+    /saved/i.test(await foldButton(page).innerText()),
+    `fold button reads ${JSON.stringify(await foldButton(page).innerText())} -- a player who folds it away has nothing on screen telling them why the list is short`);
 
   console.log("\n6. Un-saving the last task must not strand the player");
   await starIn(cardFor(page, TITLES[0])).click();
@@ -146,6 +163,7 @@ try {
   check("Bob sees no saved tasks on a device holding Alice's shortlist",
     await starIn(cardFor(bobPage, TITLES[1])).getAttribute("aria-pressed") === "false",
     String(await starIn(cardFor(bobPage, TITLES[1])).getAttribute("aria-pressed")));
+  await openFold(bobPage);
   check("and no saved filter is offered to Bob", await filterChip(bobPage).count() === 0);
 
   console.log("\n9. The same stored shortlist is Alice's when Alice is the player");
@@ -158,6 +176,7 @@ try {
   check("Alice sees her saved task on that same storage",
     await starIn(cardFor(alicePage, TITLES[1])).getAttribute("aria-pressed") === "true",
     String(await starIn(cardFor(alicePage, TITLES[1])).getAttribute("aria-pressed")));
+  await openFold(alicePage);
   check("and Alice is offered the saved filter", await filterChip(alicePage).count() > 0);
 
   console.log("\n10. A task cut mid-event drops out of the saved count, not just the list");
@@ -167,6 +186,7 @@ try {
   await alicePage.waitForTimeout(1500);
   check("the cut task is gone from the list",
     await alicePage.getByText(TITLES[1], { exact: false }).count() === 0);
+  await openFold(alicePage);
   check("and the stale id does not inflate the saved filter",
     await filterChip(alicePage).count() === 0,
     `chip still shown: ${await filterChip(alicePage).innerText().catch(() => "")}`);
@@ -182,6 +202,7 @@ try {
     id: taskIds[TITLES[1]], active: true }) });
   await alicePage.reload({ waitUntil: "networkidle" });
   await alicePage.waitForTimeout(1500);
+  await openFold(alicePage);
   await filterChip(alicePage).click();
   await alicePage.waitForTimeout(400);
   check("the player is filtered down to their one saved task",
@@ -197,6 +218,9 @@ try {
   check("the filter chip survives being emptied by someone else",
     await filterChip(alicePage).count() > 0,
     "chip vanished on a poll -- the player is stranded on an empty list they did not empty");
+  check("and the fold still names it, for a player who had folded it away",
+    /saved/i.test(await foldButton(alicePage).innerText()),
+    `fold button reads ${JSON.stringify(await foldButton(alicePage).innerText().catch(() => ""))}`);
   const strandedEscape = alicePage.getByRole("button", { name: "Show all tasks" });
   check("and the escape is still offered", await strandedEscape.count() > 0);
   const strandedText = await alicePage.locator(".empty").innerText().catch(() => "");
