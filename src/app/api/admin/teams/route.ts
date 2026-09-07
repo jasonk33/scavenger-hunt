@@ -30,8 +30,8 @@ export async function POST(req: Request) {
     .maybeSingle();
   const sort = Number(last?.sort_order ?? 0) + 10;
 
-  // Created in BOTH rounds. A team that exists in only one round is almost
-  // always a mistake, and the copy-roster-across-rounds tool matches by name.
+  // Start with a row in each round; their names and colours can then diverge.
+  // The copy-roster tool only applies while team names still match.
   const { error } = await sb
     .from("teams")
     .upsert(
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
   return json({ ok: true });
 }
 
-/** Rename or recolour. Applies to both rounds' rows so they stay in step. */
+/** Rename or recolour only the selected round's team. */
 export async function PATCH(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);
   const b = await req.json().catch(() => ({}));
@@ -53,7 +53,7 @@ export async function PATCH(req: Request) {
   if (!id) return fail("id required.");
 
   const sb = db();
-  const { data: team } = await sb.from("teams").select("id,name,round").eq("id", id).maybeSingle();
+  const { data: team } = await sb.from("teams").select("id").eq("id", id).maybeSingle();
   if (!team) return fail("Team not found.", 404);
 
   const patch: { name?: string; color?: string } = {};
@@ -61,33 +61,21 @@ export async function PATCH(req: Request) {
   if (typeof b.color === "string" && b.color.trim()) patch.color = b.color.trim();
   if (!Object.keys(patch).length) return fail("Nothing to update.");
 
-  // Update the matching row in the other round too, so the pair keeps the same
-  // identity and "copy roster from the other round" keeps working.
-  const { data: sibling } = await sb
-    .from("teams")
-    .select("id")
-    .eq("round", team.round === 1 ? 2 : 1)
-    .eq("name", team.name)
-    .maybeSingle();
-
-  const ids = [id, ...(sibling ? [sibling.id] : [])];
-  const { error } = await sb.from("teams").update(patch).in("id", ids);
+  const { error } = await sb.from("teams").update(patch).eq("id", id);
   if (error) {
     return fail(
       /duplicate|unique/i.test(error.message) ? "A team already has that name." : error.message,
       /duplicate|unique/i.test(error.message) ? 409 : 500
     );
   }
-  return json({ ok: true, updated: ids.length });
+  return json({ ok: true, updated: 1 });
 }
 
 /**
- * Deletes the team in BOTH rounds, matching POST and PATCH.
+ * Deletes the team wherever the same name appears, matching POST.
  *
- * Removing only the row whose id was passed would leave an invisible twin in
- * the other round -- still on that round's leaderboard, still in its roster
- * dropdown -- and would break the copy-roster tool, which pairs rounds by name
- * and silently drops players whose team has no twin.
+ * A still-matching pair is removed together. Teams renamed independently are
+ * no longer a pair and are deleted individually.
  */
 export async function DELETE(req: Request) {
   if (!(await isOrganizer())) return fail("Organizer PIN required.", 401);

@@ -115,7 +115,7 @@ export async function updateTeam(dbClient, teamId, input = {}) {
 
   const team = asRows(
     await rest(dbClient, {
-      path: `teams?select=id,name,round&id=${eq(id)}&limit=1`,
+      path: `teams?select=id&id=${eq(id)}&limit=1`,
     })
   )[0];
   if (!team) throw new Error("Team not found.");
@@ -125,19 +125,14 @@ export async function updateTeam(dbClient, teamId, input = {}) {
   if (typeof input.color === "string" && input.color.trim()) patch.color = input.color.trim();
   if (!Object.keys(patch).length) throw new Error("Nothing to update.");
 
-  const sibling = asRows(
-    await rest(dbClient, {
-      path: `teams?select=id&round=${eq(team.round === 1 ? 2 : 1)}&name=${eq(team.name)}&limit=1`,
-    })
-  )[0];
-  const ids = [id, ...(sibling ? [sibling.id] : [])];
   const updated = await rest(dbClient, {
     method: "PATCH",
-    path: `teams?id=${inList(ids)}&select=id,round,name,color`,
+    path: `teams?id=${eq(id)}&select=id,round,name,color`,
     body: patch,
     prefer: "return=representation",
   });
-  return { ok: true, updated: asRows(updated).length || ids.length };
+  if (!asRows(updated).length) throw new Error("Team not found.");
+  return { ok: true, updated: asRows(updated).length };
 }
 
 export async function deleteTeam(dbClient, teamId) {
@@ -248,8 +243,10 @@ export async function copyRoster(dbClient, fromValue, toValue) {
       round: to,
       player_id: row.player_id,
       team_id: destinationTeams.get(sourceTeams.get(row.team_id) ?? ""),
-    }))
-    .filter((row) => row.team_id);
+    }));
+  if (rows.some((row) => !row.team_id)) {
+    throw new Error("Copying requires matching team names across rounds. Assign players individually instead.");
+  }
 
   if (rows.length) {
     await rest(dbClient, {

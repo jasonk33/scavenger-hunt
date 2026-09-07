@@ -514,7 +514,7 @@ const assignPlayersAction = {
 
 const addTeamAction = {
   name: "add_team",
-  description: "Add a named team to both rounds so the roster remix can keep the two rounds paired.",
+  description: "Add a named team to both rounds. Each round's name and color can then be edited independently.",
   inputSchema: {
     type: "object",
     properties: { name: { type: "string" }, color: { type: "string" } },
@@ -530,7 +530,7 @@ const addTeamAction = {
 
 const updateTeamAction = {
   name: "update_team",
-  description: "Rename or recolor a team; the matching team row in the other round is updated atomically too.",
+  description: "Rename or recolor only this team's round. The other round keeps its own name and color.",
   inputSchema: {
     type: "object",
     properties: { teamId: { type: "string" }, name: { type: "string" }, color: { type: "string" } },
@@ -547,7 +547,7 @@ const updateTeamAction = {
 
 const deleteTeamAction = {
   name: "delete_team",
-  description: "Remove a team from both rounds only when it has no submissions; roster members become unassigned.",
+  description: "Remove this team and any same-named team in the other round, only when neither has submissions. Roster members become unassigned.",
   inputSchema: {
     type: "object",
     properties: { teamId: { type: "string" } },
@@ -563,7 +563,7 @@ const deleteTeamAction = {
 
 const copyRosterAction = {
   name: "copy_roster",
-  description: "Copy all assignments from one round to the other by paired team name.",
+  description: "Copy all assignments by matching team names across rounds. Refuses without changing anything if an assigned team has no matching name.",
   inputSchema: {
     type: "object",
     properties: {
@@ -588,7 +588,7 @@ await joinSession({
       id: "scavenger-tasks",
       displayName: "Scavenger hunt planner",
       description:
-        "Edit the live scavenger hunt: the task list, and the people, paired team names and Round 1/2 assignments.",
+        "Edit the live scavenger hunt: the task list, and the people, round-specific team names and Round 1/2 assignments.",
       actions: [
         listTasks,
         updateTaskAction,

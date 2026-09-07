@@ -61,12 +61,9 @@ async function rosterView() {
           failNext = false;
           return { ok: false, status: 500, json: async () => ({ error: "try again" }) };
         }
-        const name = state.teams.find((team) => team.id === patch.id).name;
         const fields = { ...patch };
         delete fields.id;
-        for (const team of state.teams.filter((team) => team.name === name)) {
-          Object.assign(team, fields);
-        }
+        Object.assign(state.teams.find((team) => team.id === patch.id), fields);
       } else {
         assert.equal(path, "/api/roster");
         assert.equal(init.method, "GET");
@@ -129,12 +126,14 @@ for (const poll of [false, true]) {
   });
 }
 
-test("roster combined edits remain a single paired-team request", async () => {
+test("roster combined edits remain a single round-specific team request", async () => {
   const view = await rosterView();
   view.edit("name", "Crimson");
   view.edit("color", "#123456");
   await view.blur("name");
   assert.deepEqual(view.writes, [{ id: "team-r1", name: "Crimson", color: "#123456" }]);
+  assert.equal(view.state.teams[1].name, "Red");
+  assert.equal(view.state.teams[1].color, "#dc2626");
 });
 
 test("roster untouched and whitespace-only blur do not write", async () => {

@@ -117,16 +117,13 @@ try {
   check("empty title, zero/negative points and bad rounds are all refused",
     validation.every((v) => v.status >= 400), JSON.stringify(validation.map((v) => v.status)));
 
-  console.log("\n3. Roster tab — assign, clear, copy between rounds");
+  console.log("\n3. Roster tab — assignments and round boundaries");
   const rosterTab = page.getByRole("button", { name: "roster", exact: true }).first();
   if (await rosterTab.count()) { await rosterTab.click(); await page.waitForTimeout(1200); }
   check("roster tab lists players", await page.getByText("__qa Alice", { exact: false }).count() > 0);
 
-  const copy = await call("/api/admin/roster", { method: "PUT", body: JSON.stringify({ from: 1, to: 2 }) });
-  check("copy roster between rounds works", copy.status === 200, JSON.stringify(copy.body));
-  const { data: r2row } = await admin.from("roster").select("team_id").eq("round", 2).eq("player_id", alice.id).maybeSingle();
-  check("copy landed Alice on the round-2 twin of her round-1 team",
-    r2row?.team_id === fx.teamOf("__qa Red", 2).id, JSON.stringify(r2row));
+  // Copy behavior is covered by scripts/admin-roster.test.mjs with a fake DB:
+  // copying here would also overwrite every real guest's Round 2 assignment.
 
   const crossRound = await call("/api/admin/roster", { method: "POST", body: JSON.stringify({
     round: 2, entries: [{ playerId: alice.id, teamId: red1.id }] }) });

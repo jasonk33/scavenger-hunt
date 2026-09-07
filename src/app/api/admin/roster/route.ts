@@ -86,6 +86,9 @@ export async function PUT(req: Request) {
     }))
     .filter((r): r is { round: number; player_id: string; team_id: string } => Boolean(r.team_id));
 
+  if (rows.length !== (src ?? []).length) {
+    return fail("Copying requires matching team names across rounds. Assign players individually instead.", 409);
+  }
   if (!rows.length) return json({ ok: true, copied: 0 });
 
   const { error } = await sb.from("roster").upsert(rows, { onConflict: "round,player_id" });

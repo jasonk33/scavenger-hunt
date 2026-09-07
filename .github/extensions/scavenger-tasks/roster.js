@@ -248,9 +248,6 @@ function renderTeams() {
         body: { id: team.id, ...patch },
       }), () => {
         teamDrafts.delete(team.id);
-        for (const sibling of roster.teams) {
-          if (sibling.name === team.name) teamDrafts.delete(sibling.id);
-        }
       });
     };
     const queueTeam = () => {
@@ -285,7 +282,7 @@ function renderTeams() {
     const remove = button("Remove", "ghost danger");
     remove.title = "Remove only if this team has no submissions";
     remove.addEventListener("click", () => {
-      if (!window.confirm(`Remove ${team.name} from both rounds? This is refused if it has submissions.`)) return;
+      if (!window.confirm(`Remove ${team.name}? Any same-named team in the other round is also removed. This is refused if it has submissions.`)) return;
       mutate(
         `Removing ${team.name}`,
         () => request(`/api/roster/teams?id=${encodeURIComponent(team.id)}`, { method: "DELETE" }),
@@ -308,6 +305,7 @@ function render() {
     buttonNode.classList.toggle("on", Number(buttonNode.dataset.round) === round);
   }
   el.copy.textContent = `Copy from Round ${round === 1 ? 2 : 1}`;
+  el.copy.title = "Requires matching team names across rounds.";
   el.copy.disabled = busy > 0 || !loaded;
   el.addPlayersButton.disabled = busy > 0 || !el.addPlayers.value.trim();
   el.addTeamButton.disabled = busy > 0 || !el.newTeam.value.trim();

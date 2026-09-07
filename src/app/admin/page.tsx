@@ -245,6 +245,7 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
           <button
             className="btn btn-sm"
             style={{ marginLeft: "auto" }}
+            title="Requires matching team names across rounds."
             onClick={() =>
               run(() =>
                 api("/api/admin/roster", {
@@ -394,8 +395,8 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
       <div className="card">
         <b>Teams</b>
         <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-          Renaming is safe at any time — submissions point at the team, not its name. A change
-          applies to both rounds so the two stay paired.
+          Renaming is safe at any time — submissions point at the team, not its name.
+          Names and colours apply only to the selected round.
         </p>
         <div style={{ display: "grid", gap: 6 }}>
           {teams.map((t) => (
@@ -405,7 +406,7 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
                 defaultValue={t.color}
                 title="Team colour"
                 // onBlur, not onChange: a colour input fires continuously while
-                // the picker is dragged, and each tick would PATCH both rounds.
+                // the picker is dragged, and each tick would write to the database.
                 onBlur={(e) => {
                   if (e.target.value !== t.color) {
                     run(() =>

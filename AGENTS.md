@@ -104,7 +104,8 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
   to), an awarded leader bonus, and a task anyone has already submitted — the judge queue,
   `/api/state` and the feed all resolve a submission's task out of the tasks for *that* round,
   so a moved row would show as `(deleted task)`.
-- `teams(round, name, color)` — R1 and R2 teams are **separate rows**. `players(name)`.
+- `teams(round, name, color)` — R1 and R2 teams are **separate rows**. Names and colours
+  are edited by team id, never mirrored across rounds. `players(name)`.
 - `roster(round, player_id, team_id)` — the remix lives here and nowhere else.
 - `tasks(round, slug, title, points, scoring_mode, is_secret, revealed_at, active)` plus
   planning-only columns (`doc_title`, `doc_order`, the five ratings, `prop`, `note`,

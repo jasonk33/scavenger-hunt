@@ -3,7 +3,7 @@
  *
  * The canvas shares the live event database with Admin, so these tests must never
  * use the real Supabase project. The fake records requests and applies just
- * enough table behaviour to prove the writes are scoped and paired correctly.
+ * enough table behaviour to prove the writes are scoped correctly.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -185,25 +185,29 @@ test("adding a team creates paired rows with one sort position", async () => {
   ]);
 });
 
-test("renaming or recolouring a team updates both round rows in one scoped write", async () => {
+test("renaming or recolouring a team changes only the selected round row", async () => {
   const db = fakeDb();
-  await updateTeam(db, "t-1a", { name: "Crimson", color: "#b91c1c" });
+  const result = await updateTeam(db, "t-1a", { name: "Crimson", color: "#b91c1c" });
   const writes = db.calls.filter((call) => call.table === "teams" && call.method === "PATCH");
   assert.equal(writes.length, 1);
-  assert.match(writes[0].url, /id=in\.\(/);
+  assert.match(writes[0].url, /id=eq\.t-1a/);
   assert.deepEqual(writes[0].body, { name: "Crimson", color: "#b91c1c" });
+  assert.equal(result.updated, 1);
+  assert.deepEqual(db.state.teams, TEAMS.map((team) =>
+    team.id === "t-1a" ? { ...team, name: "Crimson", color: "#b91c1c" } : team
+  ));
 });
 
 for (const patch of [{ name: "Crimson" }, { color: "#b91c1c" }]) {
-  test(`a ${Object.keys(patch)[0]}-only team patch leaves the other field alone in both rounds`, async () => {
+  test(`a ${Object.keys(patch)[0]}-only team patch preserves the other field and the other round`, async () => {
     const db = fakeDb();
     await updateTeam(db, "t-1a", patch);
     const writes = db.calls.filter((call) => call.method === "PATCH");
     assert.equal(writes.length, 1);
-    assert.match(writes[0].url, /id=in\.\(t-1a,t-1b\)/);
+    assert.match(writes[0].url, /id=eq\.t-1a/);
     assert.deepEqual(writes[0].body, patch);
     assert.deepEqual(db.state.teams, TEAMS.map((team) =>
-      team.name === "Red" ? { ...team, ...patch } : team
+      team.id === "t-1a" ? { ...team, ...patch } : team
     ));
   });
 }
@@ -271,3 +275,21 @@ test("copying a roster maps paired teams by name", async () => {
     { round: 2, player_id: "p-2", team_id: "t-2b" },
   ]);
 });
+
+for (const unmatched of [["t-1b"], ["t-1b", "t-2b"]]) {
+  test(`copying refuses ${unmatched.length} unmatched team names without changing any assignments`, async () => {
+    const db = fakeDb({
+      teams: TEAMS.map((team) => unmatched.includes(team.id) ? { ...team, name: `${team.name} remixed` } : team),
+      roster: [
+        { round: 1, player_id: "p-1", team_id: "t-1a" },
+        { round: 1, player_id: "p-2", team_id: "t-2a" },
+        { round: 2, player_id: "p-1", team_id: "t-2b" },
+        { round: 2, player_id: "p-2", team_id: "t-1b" },
+      ],
+    });
+    const before = structuredClone(db.state.roster);
+    await assert.rejects(() => copyRoster(db, 1, 2), /matching team names/);
+    assert.deepEqual(db.state.roster, before);
+    assert.equal(db.calls.some((call) => call.method !== "GET"), false);
+  });
+}

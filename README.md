@@ -116,8 +116,8 @@ a task to overtake someone.
 
 Both live in the Copilot canvas in `.github/extensions/scavenger-tasks/`. The
 Tasks tab edits titles, point tiers, which round a task runs in, which need a
-clip, the ratings, and which tasks are cut; the Roster tab edits people, paired
-team names and Round 1/2 assignments.
+clip, the ratings, and which tasks are cut; the Roster tab edits people,
+round-specific team names and Round 1/2 assignments.
 
 **Everything in it is live.** There is no publish step and nothing staged: the
 canvas writes the same `tasks` and `roster` rows the app reads, so a change is in
@@ -222,8 +222,9 @@ deployment; use Vercel's redeploy action or push a follow-up commit.
 **Before the day**
 
 1. Canvas → Roster → update the live guest list.
-2. Assign everyone to a Round 1 team there. Assign Round 2 too, or use
-   *Copy from Round 1* and adjust at the break.
+2. Assign everyone to a team in each round. Team names and colours are independent.
+   *Copy from Round 1* is only available when assigned teams have matching names
+   in both rounds; it refuses rather than copying a partial roster.
 3. Admin → health. Everything green.
 4. Share the app's normal homepage URL in the group text.
 
