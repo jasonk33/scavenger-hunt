@@ -688,7 +688,7 @@ export default function SubmitPage() {
           onClick={() => setSwitching(true)}
           title="Not you? Tap to switch"
         >
-          <h1 className="name" style={{ margin: 0 }}>{me.name}</h1>
+          <h1 className="name" style={{ margin: 0 }}>{data?.me?.name ?? me.name}</h1>
           <span className="pill muted">switch</span>
         </button>
         <div className="row" style={{ marginTop: 2 }}>
@@ -719,7 +719,7 @@ export default function SubmitPage() {
 
       {switching && (
         <div className="card card-accent">
-          <b>You&apos;re submitting as {me.name}</b>
+          <b>You&apos;re submitting as {data?.me?.name ?? me.name}</b>
           <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
             {s && s.submitted > 0
               ? `${s.submitted} submission${s.submitted === 1 ? "" : "s"} already went in under this name. Switching won't move those — ask an organizer if any of them are on the wrong team.`

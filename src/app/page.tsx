@@ -50,6 +50,8 @@ export default function JoinPage() {
     return list.filter((p) => p.name.toLowerCase().includes(needle));
   }, [data, q]);
 
+  const previousPlayer = data ? data.players.find((p) => p.id === previous?.id) : previous;
+
   const choose = (p: { id: string; name: string }) => {
     setBusy(true);
     setMe({ id: p.id, name: p.name });
@@ -69,13 +71,13 @@ export default function JoinPage() {
       <h1 style={{ marginTop: data?.eventName ? 4 : 22 }}>Who are you?</h1>
       <p className="lede">Tap your name. You can change it later if you tap the wrong one.</p>
 
-      {previous && (
+      {previousPlayer && (
         <div className="card card-accent">
           <div className="row">
             <span className="grow tiny">
-              You were just <b>{previous.name}</b>.
+              You were just <b>{previousPlayer.name}</b>.
             </span>
-            <button className="btn btn-sm" onClick={() => choose(previous)}>
+            <button className="btn btn-sm" onClick={() => choose(previousPlayer)}>
               Go back
             </button>
           </div>
