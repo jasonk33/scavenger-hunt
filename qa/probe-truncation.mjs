@@ -126,7 +126,10 @@ const SCREENS = [
     route: "/leaderboard",
     ready: ".card-flat .swatch",
     row: ".card-flat .row",
-    names: [{ sel: ".card-flat .name", what: "team name" }],
+    names: [
+      { sel: ".card-flat .name", what: "team name" },
+      { sel: ".card-flat .team-members", what: "team member names" },
+    ],
   },
   {
     route: "/submit",

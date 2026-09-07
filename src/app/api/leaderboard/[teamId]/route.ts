@@ -22,6 +22,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
   const settings = await getSettings();
   const round = Number(new URL(req.url).searchParams.get("round")) || settings.active_round;
   if (round !== 1 && round !== 2) return fail("Round must be 1 or 2.");
+  if (round > settings.active_round) return fail("That round hasn't started yet.", 404);
 
   const sb = db();
   const { data: team, error: teamError } = await sb

@@ -219,6 +219,10 @@ deployment; use Vercel's redeploy action or push a follow-up commit.
 
 ## Running the event
 
+Scores lists each team's members beneath its task count. Round 2 teams and members
+stay hidden there until Round 2 is activated; then guests can switch between the
+live round and Round 1's original roster and scores.
+
 **Before the day**
 
 1. Canvas → Roster → update the live guest list.

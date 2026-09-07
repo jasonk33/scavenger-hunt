@@ -579,7 +579,10 @@ async function main() {
   );
 
   const board2Before = (await call("/api/leaderboard?round=2")).body;
-  const rowBBefore = board2Before.rows.find((r) => r.teamId === teamB.id);
+  check("Scores does not reveal the next round's teams",
+    board2Before.round === 1 && !board2Before.rows.some((r) => r.teamId === teamB.id));
+  // The public board withholds future teams; read this fixture's baseline privately.
+  const { data: rowBBefore } = await admin.from("team_scores").select("points").eq("team_id", teamB.id).single();
 
   // --- THE regression test ------------------------------------------------
   // Flip to Round 2, where this player is on a DIFFERENT team. If submissions

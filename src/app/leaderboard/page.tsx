@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePoll } from "@/lib/client";
 import EvidenceEntryCard, { type EvidenceEntry } from "@/components/EvidenceEntry";
 
@@ -15,6 +15,7 @@ type Board = {
     points: number;
     tasksScored: number;
     pending: number;
+    members: Array<{ id: string; name: string }>;
   }>;
 };
 
@@ -26,18 +27,29 @@ type TeamDetail = {
 
 export default function LeaderboardPage() {
   const [round, setRound] = useState<number | null>(null);
+  const [knownActiveRound, setKnownActiveRound] = useState<number | null>(null);
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
   const { data, error } = usePoll<Board>(
     round ? `/api/leaderboard?round=${round}` : "/api/leaderboard",
     5000
   );
 
-  const shown = round ?? data?.activeRound ?? 1;
+  const reportedActiveRound = data?.activeRound;
+  useEffect(() => {
+    if (reportedActiveRound === undefined) return;
+    setKnownActiveRound(reportedActiveRound);
+    if (reportedActiveRound === 1) setRound(null);
+  }, [reportedActiveRound]);
+
+  // Keep the switcher usable while another round's request is loading.
+  const activeRound = reportedActiveRound ?? knownActiveRound;
+  const shown = data?.round ?? round ?? activeRound ?? 1;
+  const expandedTeam = data?.rows.find((team) => team.teamId === expandedTeamId);
   const {
     data: teamDetail,
     error: teamDetailError,
   } = usePoll<TeamDetail>(
-    expandedTeamId ? `/api/leaderboard/${expandedTeamId}?round=${shown}` : null,
+    expandedTeam && data ? `/api/leaderboard/${expandedTeam.teamId}?round=${data.round}` : null,
     5000
   );
   const rows = data?.rows ?? [];
@@ -47,29 +59,35 @@ export default function LeaderboardPage() {
     <>
       <h1>Scores</h1>
 
-      <div className="row" style={{ marginBottom: 10 }}>
-        <div className="seg">
-          {[1, 2].map((r) => (
-            <button
-              key={r}
-              className={shown === r ? "on" : ""}
-              onClick={() => {
-                setRound(r);
-                setExpandedTeamId(null);
-              }}
-            >
-              Round {r}
-            </button>
-          ))}
+      {activeRound !== null && (
+        <div className="row" style={{ marginBottom: 10 }}>
+          {activeRound === 2 ? (
+            <div className="seg">
+              {[1, 2].map((r) => (
+                <button
+                  key={r}
+                  className={shown === r ? "on" : ""}
+                  onClick={() => {
+                    setRound(r === activeRound ? null : r);
+                    setExpandedTeamId(null);
+                  }}
+                >
+                  Round {r}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className="pill">Round 1</span>
+          )}
+          {data && data.totalPending > 0 && (
+            // A team with a backlog is waiting, not losing. Saying so out loud stops
+            // the "we're getting robbed" conversation before it starts.
+            <span className="muted tiny push" style={{ textAlign: "right" }}>
+              {data.totalPending} still with the judge
+            </span>
+          )}
         </div>
-        {data && data.totalPending > 0 && (
-          // A team with a backlog is waiting, not losing. Saying so out loud stops
-          // the "we're getting robbed" conversation before it starts.
-          <span className="muted tiny push" style={{ textAlign: "right" }}>
-            {data.totalPending} still with the judge
-          </span>
-        )}
-      </div>
+      )}
 
       {error && <div className="card card-bad tiny bad">Connection hiccup — retrying.</div>}
 
@@ -108,6 +126,9 @@ export default function LeaderboardPage() {
                   <div className="muted tiny">
                     {r.tasksScored} task{r.tasksScored === 1 ? "" : "s"}
                     {r.pending > 0 && ` · ${r.pending} pending`}
+                  </div>
+                  <div className="name muted team-members" style={{ fontSize: 14, lineHeight: 1.4, marginTop: 4 }}>
+                    {r.members.length ? r.members.map((member) => member.name).join(", ") : "No players assigned"}
                   </div>
                 </div>
                 <span className="score">{r.points}</span>
