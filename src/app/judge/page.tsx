@@ -77,7 +77,7 @@ function JudgeQueue() {
   // and without this selector those submissions become invisible and never get
   // scored -- a silently wrong Round 1 result.
   const [round, setRound] = useState<number | null>(null);
-  const { data, error, reload } = usePoll<Queue>(
+  const { data, error, loading, reload } = usePoll<Queue>(
     round ? `/api/judge/queue?round=${round}` : "/api/judge/queue",
     5000
   );
@@ -96,6 +96,12 @@ function JudgeQueue() {
   // Judged locally but not yet reflected in a poll -- keeps the screen from
   // snapping backwards to an item that was already decided.
   const [done, setDone] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    // Only a successful, settled refresh replaces the old queue. Keep local
+    // decisions hidden through failures, but allow a later remote Undo to show.
+    if (data && !loading && !error) setDone((d) => d.size ? new Set() : d);
+  }, [data, loading, error]);
 
   const queue = useMemo(
     () => (data?.queue ?? []).filter((i) => !done.has(i.id)),
@@ -168,13 +174,6 @@ function JudgeQueue() {
       if (queue.some((i) => i.id === id)) setDone((d) => new Set(d).add(id));
       setPickedId((p) => (p === id ? null : p));
       await reload();
-      // Suppression lasts only through this refresh, not through a later Undo
-      // by the other organizer (including one before we ever saw the approval).
-      setDone((d) => {
-        const next = new Set(d);
-        next.delete(id);
-        return next;
-      });
     } catch (e) {
       setErr(errorMessage(e, "Failed"));
     } finally {

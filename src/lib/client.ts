@@ -140,9 +140,10 @@ export function usePoll<T>(url: string | null, ms = 5000) {
   const [loading, setLoading] = useState(true);
   const inflight = useRef<AbortController | null>(null);
   const generation = useRef(0);
+  const activeUrl = useRef<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!url || inflight.current) return;
+    if (!url || activeUrl.current !== url || inflight.current) return;
     const requestGeneration = generation.current;
     const controller = new AbortController();
     inflight.current = controller;
@@ -162,15 +163,19 @@ export function usePoll<T>(url: string | null, ms = 5000) {
     }
   }, [url]);
 
-  const reload = useCallback(() => {
+  const reload = useCallback(async () => {
+    // A mutation may finish after the user has selected a different round.
+    if (!url || activeUrl.current !== url) return;
     // A post-write refresh must supersede a poll started before the write.
     generation.current += 1;
     inflight.current?.abort();
     inflight.current = null;
+    setLoading(true);
     return load();
-  }, [load]);
+  }, [url, load]);
 
   useEffect(() => {
+    activeUrl.current = url;
     generation.current += 1;
     inflight.current?.abort();
     inflight.current = null;
@@ -192,6 +197,7 @@ export function usePoll<T>(url: string | null, ms = 5000) {
     };
     document.addEventListener("visibilitychange", onShow);
     return () => {
+      activeUrl.current = null;
       generation.current += 1;
       inflight.current?.abort();
       inflight.current = null;

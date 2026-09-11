@@ -59,8 +59,12 @@ let queueError = false;
 let adminError = false;
 let authorized = true;
 let holdNextQueue = false;
+let holdQueueRound = null;
 let releaseQueue = null;
+let holdNextDecision = false;
+let releaseDecision = null;
 let undoOnApprove = false;
+let failRefreshOnApprove = false;
 let healthError = false;
 let stateHeld = false;
 let queueReads = 0;
@@ -141,9 +145,12 @@ try {
         queueReads++;
         if (queueError) return respond({ error: "Queue temporarily unavailable" }, 503);
         if (!authorized) return respond({ error: "Organizer PIN required" }, 401);
-        const snapshot = structuredClone({ round: 1, teams, queue: items.filter((i) => i.status === "pending"),
-          recent: items.filter((i) => ["approved", "rejected"].includes(i.status)), otherRoundPending: 0 });
-        if (holdNextQueue) {
+        const round = Number(url.searchParams.get("round") || "1");
+        const snapshot = structuredClone({ round, teams,
+          queue: round === 2 ? [item("round2", 0, "pending", { taskTitle: "__qa Round 2 evidence" })]
+            : items.filter((i) => i.status === "pending"),
+          recent: round === 2 ? [] : items.filter((i) => ["approved", "rejected"].includes(i.status)), otherRoundPending: 0 });
+        if (holdNextQueue && (holdQueueRound === null || round === holdQueueRound)) {
           holdNextQueue = false;
           await new Promise((resolve) => { releaseQueue = resolve; });
         }
@@ -201,6 +208,11 @@ try {
         i.measurementValue = body.measurementValue ?? null;
         i.awardedBonus = i.scoringMode === "quantity" ? (i.measurementValue ?? 0) * i.pointsPerUnit : 0;
         if (undoOnApprove && body.action === "approve") i.status = "pending";
+        if (failRefreshOnApprove && body.action === "approve") queueError = true;
+        if (holdNextDecision) {
+          holdNextDecision = false;
+          await new Promise((resolve) => { releaseDecision = resolve; });
+        }
         return respond({ ok: true });
       }
       if (url.pathname === "/api/submissions") {
@@ -333,6 +345,69 @@ try {
       releaseQueue = null;
     }
   });
+  await check("A late Round 1 decision never replaces the selected Round 2 queue", async () => {
+    items[0].status = "pending";
+    await page.reload();
+    await page.getByRole("button", { name: "Round 1", exact: true }).click();
+    await expect(page.getByRole("spinbutton")).toBeVisible();
+    await page.getByRole("spinbutton").fill("3");
+    holdNextDecision = true;
+    const responsePromise = page.waitForResponse((r) => r.url().endsWith("/api/judge/s1") && r.request().method() === "POST");
+    try {
+      await page.getByRole("button", { name: "Approve", exact: true }).click();
+      await expect.poll(() => Boolean(releaseDecision)).toBe(true);
+      holdNextQueue = true;
+      holdQueueRound = 2;
+      await page.getByRole("button", { name: "Round 2", exact: true }).click();
+      await expect.poll(() => Boolean(releaseQueue)).toBe(true);
+      await page.evaluate((titles) => {
+        window.__wrongRound = [];
+        window.__roundObserver = new MutationObserver(() => {
+          const selected = document.querySelector(".wrap .seg button.on")?.textContent;
+          const card = document.querySelector(".cardhead")?.parentElement?.textContent;
+          if (selected?.startsWith("Round 2") && titles.some((title) => card?.includes(title))) {
+            window.__wrongRound.push(card);
+          }
+        });
+        window.__roundObserver.observe(document.querySelector(".wrap"), { subtree: true, childList: true, attributes: true });
+      }, tasks.map((t) => t.title));
+      releaseDecision();
+      await (await responsePromise).finished();
+      releaseQueue();
+      const reads = queueReads;
+      await expect.poll(() => queueReads).toBeGreaterThan(reads + 3);
+      await expect(page.getByText("__qa Round 2 evidence", { exact: true }).first()).toBeVisible();
+      assert.deepEqual(await page.evaluate(() => window.__wrongRound), [], "Round 1 evidence appeared beneath the Round 2 selector");
+    } finally {
+      releaseDecision?.();
+      releaseDecision = null;
+      releaseQueue?.();
+      releaseQueue = null;
+      holdQueueRound = null;
+      await page.evaluate(() => window.__roundObserver?.disconnect());
+    }
+  });
+  await check("A failed post-decision refresh never resurrects the judged item", async () => {
+    items[0].status = "pending";
+    await page.goto(`${BASE}/judge`);
+    await expect(page.getByRole("spinbutton")).toBeVisible();
+    await page.getByRole("spinbutton").fill("3");
+    failRefreshOnApprove = true;
+    try {
+      await page.getByRole("button", { name: "Approve", exact: true }).click();
+      await expect(page.getByRole("alert").filter({ hasText: "Couldn't refresh the queue" })).toBeVisible();
+      await expect(page.getByRole("spinbutton")).toHaveCount(0);
+      assert.equal(items[0].status, "approved");
+      queueError = false;
+      await expect(page.getByRole("alert").filter({ hasText: "Couldn't refresh the queue" })).toHaveCount(0);
+      await expect(page.getByRole("spinbutton")).toHaveCount(0);
+      items[0].status = "pending";
+      await expect(page.getByRole("spinbutton")).toBeVisible();
+    } finally {
+      failRefreshOnApprove = false;
+      queueError = false;
+    }
+  });
   await check("Judge exposes failed refreshes instead of a stale all-clear", async () => {
     queueError = true;
     const reads = queueReads;
@@ -443,6 +518,8 @@ try {
   });
 } finally {
   stateHeld = false;
+  releaseQueue?.();
+  releaseDecision?.();
   clearTimeout(deadline);
   await browser.close();
 }
