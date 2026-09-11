@@ -241,6 +241,16 @@ export default function SubmitPage() {
     5000
   );
 
+  const noteAnchor = job?.anchorId;
+  const savedJobNote = data?.submissions.find((s) => s.id === noteAnchor)?.note;
+  useEffect(() => {
+    // Notes can also be saved through See, or against another file in the group.
+    if (!noteAnchor || savedJobNote === undefined) return;
+    const note = savedJobNote ?? "";
+    setJob((current) => current?.anchorId === noteAnchor && current.note !== note
+      ? { ...current, note } : current);
+  }, [noteAnchor, savedJobNote]);
+
   // The server is the authority on who exists. If a player row was deleted or
   // this device has stale identity, send them back rather than letting every
   // submission fail with a confusing error.
@@ -594,6 +604,7 @@ export default function SubmitPage() {
 
   const saveJobNote = (anchorId: string, note: string) => {
     setJob((current) => current?.anchorId === anchorId ? { ...current, note } : current);
+    void reload();
   };
 
   if (!me) return <p className="muted" style={{ marginTop: 24 }}>Loading…</p>;

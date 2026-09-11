@@ -691,6 +691,60 @@ try {
       noteError = false;
     }
   });
+  await check("Saving a note through See updates the open upload card and its fallback", async () => {
+    const row = page.locator(".card-flat").filter({ hasText: tasks[0].title });
+    try {
+      await row.getByRole("button", { name: /^See(?: \d+)?$/ }).click();
+      const entry = row.locator("div").filter({ has: page.getByText("2 files", { exact: true }) })
+        .filter({ has: page.getByRole("button", { name: "Add another file to this", exact: true }) }).last();
+      const note = entry.getByPlaceholder("Add a note for the judge (optional)");
+      await note.fill("Saved through the expanded submission.");
+      await note.blur();
+      await expect(entry.getByText("Note saved.", { exact: true })).toBeVisible();
+      await expect(row.locator(".card-good").getByPlaceholder("Add a note for the judge (optional)"))
+        .toHaveValue("Saved through the expanded submission.");
+      await page.getByPlaceholder("Search tasks").fill("no-such-task");
+      await expect(page.getByPlaceholder("Add a note for the judge (optional)"))
+        .toHaveValue("Saved through the expanded submission.");
+    } finally {
+      await page.getByPlaceholder("Search tasks").fill("");
+      if (await row.getByRole("button", { name: "Hide", exact: true }).count()) {
+        await row.getByRole("button", { name: "Hide", exact: true }).click();
+      }
+    }
+  });
+  await check("A newly reopened upload follows notes saved on the group's original file", async () => {
+    const row = page.locator(".card-flat").filter({ hasText: tasks[0].title });
+    try {
+      await row.getByRole("button", { name: "OK", exact: true }).click();
+      await row.getByRole("button", { name: /^See(?: \d+)?$/ }).click();
+      const entry = (count) => row.locator("div").filter({ has: page.getByText(`${count} files`, { exact: true }) })
+        .filter({ has: page.getByRole("button", { name: "Add another file to this", exact: true }) }).last();
+      await entry(2).getByRole("button", { name: "Add another file to this", exact: true }).click();
+      await page.locator('input[type="file"]').setInputFiles({ name: "third-angle.jpg", mimeType: "image/jpeg", buffer: photo });
+      await expect(page.getByText("It's in the judge's queue", { exact: false })).toBeVisible();
+      const note = entry(3).getByPlaceholder("Add a note for the judge (optional)");
+      await note.fill("All three angles show the stranger.");
+      await note.blur();
+      await expect(entry(3).getByText("Note saved.", { exact: true })).toBeVisible();
+      const uploadNote = row.locator(".card-good").getByPlaceholder("Add a note for the judge (optional)");
+      await expect(uploadNote).toHaveValue("All three angles show the stranger.");
+      await uploadNote.fill("Updated through the upload card too.");
+      await uploadNote.blur();
+      await expect(note).toHaveValue("Updated through the upload card too.");
+      await note.fill("An unsaved local draft.");
+      const groupId = items.at(-1).groupId;
+      for (const sibling of items.filter((i) => (i.groupId ?? i.id) === groupId)) {
+        sibling.note = "A teammate saved another note.";
+      }
+      await expect(uploadNote).toHaveValue("A teammate saved another note.");
+      await expect(note).toHaveValue("An unsaved local draft.");
+    } finally {
+      if (await row.getByRole("button", { name: "Hide", exact: true }).count()) {
+        await row.getByRole("button", { name: "Hide", exact: true }).click();
+      }
+    }
+  });
   await check("An upload that reached Storage is not labelled as never sent", async () => {
     promotionError = true;
     try {
