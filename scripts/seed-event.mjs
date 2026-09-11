@@ -10,7 +10,7 @@
  * this replaces those live decisions with the initial allocations and clears
  * every submission and its linked media. Never run it once the party has started.
  *
- * It leaves task content alone, but re-hides revealed secrets and reopens Round 1.
+ * It leaves task content alone, but re-hides revealed secrets and restores the welcome stage.
  * A task edit never requires running something that deletes every submission.
  */
 
@@ -142,7 +142,7 @@ async function confirmDestructive() {
   }
 }
 
-/** Clears every submission and its media, re-hides the secrets, reopens Round 1. */
+/** Clears every submission and its media, re-hides secrets, restores the welcome stage. */
 async function clearScoring() {
   const { data: subs } = await db.from("submissions").select("id,object_name");
   const objects = (subs ?? []).map((s) => s.object_name).filter(Boolean);
@@ -155,7 +155,8 @@ async function clearScoring() {
   await db.from("settings").upsert(
     [
       { key: "active_round", value: "1" },
-      { key: "submissions_open", value: "true" },
+      { key: "started_round", value: "0" },
+      { key: "submissions_open", value: "false" },
       { key: "notice", value: "" },
     ],
     { onConflict: "key" }
@@ -231,7 +232,7 @@ async function seed() {
     `\n${GUESTS.length} players across ${ROUND_1.length} teams, remixed at the break.` +
       (staleIds.length ? `\nRemoved ${staleIds.length} player(s) no longer on the guest list.` : "") +
       `\nCleared ${cleared.submissions} submission(s) and ${cleared.objects} media file(s).` +
-      `\n${taskCount} tasks live. Secrets hidden, submissions open, Round 1.` +
+      `\n${taskCount} tasks live. Secrets hidden, welcome page ready. Start Round 1 from Admin.` +
       `\n\nStart over with:  npm run seed:reset`
   );
 }

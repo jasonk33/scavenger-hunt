@@ -1,5 +1,6 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { eventState } from "@/lib/event";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { groupKey } from "@/lib/groups";
 import { winningGroups } from "@/lib/scored-entries.mjs";
@@ -20,9 +21,11 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request, ctx: { params: Promise<{ teamId: string }> }) {
   const { teamId } = await ctx.params;
   const settings = await getSettings();
-  const round = Number(new URL(req.url).searchParams.get("round")) || settings.active_round;
+  const { startedRound } = eventState(settings);
+  if (!startedRound) return fail("The event hasn't started yet. Head to Home to meet your team.", 409);
+  const round = Number(new URL(req.url).searchParams.get("round")) || startedRound;
   if (round !== 1 && round !== 2) return fail("Round must be 1 or 2.");
-  if (round > settings.active_round) return fail("That round hasn't started yet.", 404);
+  if (round > startedRound) return fail("That round hasn't started yet.", 404);
 
   const sb = db();
   const { data: team, error: teamError } = await sb

@@ -52,6 +52,7 @@ function editor(initial = task()) {
       };
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
       if (name === "@/lib/client") return {};
+      if (name === "@/lib/event" || name === "@/components/EventShell") return {};
       throw new Error(`Unexpected import: ${name}`);
     },
   });

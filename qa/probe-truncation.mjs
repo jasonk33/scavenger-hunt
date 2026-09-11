@@ -5,7 +5,7 @@
  * its full content width first and left the player name whatever remained --
  * which on a 390px phone collapsed "Emerson Reid" to "E." on /submit and laid
  * the player name out at zero width on /feed and /judge. Every screen that shows
- * a name is covered here, including /, which is where the QR code lands.
+ * a name is covered here, including /, where guests choose a name and meet their team.
  *
  * The other drivers never caught it because they assert on text CONTENT, and the
  * DOM still holds the whole name after CSS has ellipsised it away. So this probe
@@ -37,6 +37,7 @@ const LONG_TEAM = "__qa The Pigeon Intelligence Agency";
 const MID_TEAM = "__qa The Birthday Bureau";
 const SHORT_TEAM = "__qa Red";
 const PLAYER = "__qa Quinn Barrett";
+const TEAMMATE = "__qa Alexandria Montgomery-Wellington";
 
 // Every name above breaks at a space, so wrapping alone rescues them. A name
 // with no spaces cannot wrap, and a flex item's automatic minimum size is its
@@ -60,8 +61,9 @@ const before = await snapshot();
 await teardown();
 await teardownTasks();
 
-const fx = await setup({ players: [PLAYER], teams: [LONG_TEAM, MID_TEAM, SHORT_TEAM, UNBROKEN_TEAM] });
+const fx = await setup({ players: [PLAYER, TEAMMATE], teams: [LONG_TEAM, MID_TEAM, SHORT_TEAM, UNBROKEN_TEAM] });
 const player = fx.player(PLAYER);
+const teammate = fx.player(TEAMMATE);
 
 /* A quantity task on purpose. A scored entry renders as TWO pills -- what the
    task was worth and what the team earned on top -- and that pair shares the
@@ -87,7 +89,7 @@ async function putOnTeam(teamName) {
     method: "POST",
     body: JSON.stringify({
       round: 1,
-      entries: [{ playerId: player.id, teamId: fx.teamOf(teamName, 1).id }],
+      entries: [player, teammate].map((p) => ({ playerId: p.id, teamId: fx.teamOf(teamName, 1).id })),
     }),
   });
   // team_id is denormalized onto a submission at insert, so the rows have to be
@@ -112,14 +114,29 @@ async function putOnTeam(teamName) {
    named by their route in every assertion. */
 const SCREENS = [
   {
-    // The QR code points here, so it is the first thing every guest sees.
+    label: "/ name picker",
     route: "/",
-    ready: ".btn-wide .pill",
-    row: ".btn-wide",
-    stacked: { first: ".btn-wide .name", second: ".btn-wide .pill" },
+    searchName: PLAYER,
+    ready: 'section[aria-label="Choose your name"] .stack .name',
+    row: 'section[aria-label="Choose your name"] .stack .btn-wide',
     names: [
-      { sel: ".btn-wide .name", what: "player name" },
-      { sel: ".btn-wide .pill", what: "team name" },
+      { sel: 'section[aria-label="Choose your name"] .stack .name', what: "player name" },
+    ],
+  },
+  {
+    label: "/ own team",
+    route: "/",
+    player: true,
+    ready: 'section[aria-labelledby="your-team"] li.name',
+    row: ".wrap",
+    stacked: {
+      first: ".wrap > .row > b.name",
+      second: 'section[aria-labelledby="your-team"] .pill-wrap',
+    },
+    names: [
+      { sel: ".wrap > .row > b.name", what: "selected player name" },
+      { sel: 'section[aria-labelledby="your-team"] .pill-wrap', what: "team name" },
+      { sel: 'section[aria-labelledby="your-team"] li.name', what: "teammate name" },
     ],
   },
   {
@@ -186,6 +203,7 @@ try {
       if (s.player) await asPlayer(ctx, player);
       const page = await ctx.newPage();
       await page.goto(`${BASE}${s.route}`);
+      if (s.searchName) await page.getByPlaceholder("Search your name").fill(s.searchName);
 
       const shown = await page.waitForSelector(s.ready, { timeout: 30000 }).then(() => true).catch(() => false);
       check(`${c.label} ${s.label ?? s.route} renders its name row`, shown);

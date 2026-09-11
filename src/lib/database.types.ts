@@ -173,7 +173,19 @@ export type Database = {
     Views: {
       team_scores: { Row: TeamScoreRow; Relationships: [] };
     };
-    Functions: Record<never, never>;
+    Functions: {
+      transition_event: {
+        Args: {
+          expected_active_round: number;
+          expected_started_round: number;
+          expected_submissions_open: boolean;
+          next_active_round: number;
+          next_started_round: number;
+          next_submissions_open: boolean;
+        };
+        Returns: string;
+      };
+    };
     Enums: Record<never, never>;
     CompositeTypes: Record<never, never>;
   };

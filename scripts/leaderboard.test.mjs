@@ -23,6 +23,7 @@ function compile(path, imports = {}) {
 }
 
 const groups = compile("../src/lib/groups.ts");
+const event = compile("../src/lib/event.ts");
 const TEAMS = [
   { id: "r1-a", round: 1, name: "First Round Red", color: "#dc2626" },
   { id: "r1-b", round: 1, name: "First Round Blue", color: "#2563eb" },
@@ -45,7 +46,7 @@ const ROSTER = [
   { round: 2, team_id: "r2-b", player_id: "c" },
 ];
 
-function api({ activeRound = 1, errorTable, players = PLAYERS, roster = ROSTER, detail = false } = {}) {
+function api({ activeRound = 1, startedRound = activeRound, errorTable, players = PLAYERS, roster = ROSTER, detail = false } = {}) {
   const calls = [];
   const tables = {
     players, roster, teams: TEAMS,
@@ -87,7 +88,8 @@ function api({ activeRound = 1, errorTable, players = PLAYERS, roster = ROSTER, 
         },
       }),
     },
-    "@/lib/settings": { getSettings: async () => ({ active_round: activeRound }) },
+    "@/lib/settings": { getSettings: async () => ({ active_round: activeRound, started_round: startedRound, submissions_open: true }) },
+    "@/lib/event": event,
     "@/lib/http": {
       json: (body) => ({ status: 200, body }),
       fail: (error, status = 400) => ({ status, body: { error } }),
@@ -105,6 +107,16 @@ function api({ activeRound = 1, errorTable, players = PLAYERS, roster = ROSTER, 
     )),
   };
 }
+
+test("revealing the remix keeps Scores on Round 1 until Round 2 actually starts", async () => {
+  for (const query of ["", "?round=2"]) {
+    const { status, body } = await api({ activeRound: 2, startedRound: 1 }).get(query);
+    assert.equal(status, 200);
+    assert.equal(body.round, 1);
+    assert.equal(body.activeRound, 1);
+    assert.doesNotMatch(JSON.stringify(body), /Secret Remix|Future Only Guest/);
+  }
+});
 
 for (const [activeRound, query, expected] of [
   [1, "", 1], [1, "?round=1", 1], [1, "?round=2", 1],

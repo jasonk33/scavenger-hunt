@@ -13,6 +13,11 @@ const settingsBefore = await captureSettings();
 let browser;
 
 try {
+  const opened = await call("/api/admin/settings", {
+    method: "POST",
+    body: JSON.stringify({ active_round: 1, started_round: 1, submissions_open: true }),
+  });
+  if (opened.status !== 200) throw new Error(`Could not open the fixture round: ${JSON.stringify(opened.body)}`);
   await teardown();
   const fx = await setup();
   const alice = fx.player("__qa Alice");

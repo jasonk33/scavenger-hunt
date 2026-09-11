@@ -1,137 +1,184 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getMe, inkOn, setMe, usePoll } from "@/lib/client";
+import { errorMessage, getMe, inkOn, setMe, usePoll } from "@/lib/client";
+import type { EventState } from "@/lib/event";
+import { useEvent } from "@/components/EventShell";
 
 type PlayersResponse = {
   eventName: string;
-  players: Array<{ id: string; name: string; team: { name: string; color: string } | null }>;
+  event: EventState;
+  players: Array<{ id: string; name: string; team: { id: string; name: string; color: string } | null }>;
 };
 
-/**
- * Join screen. Identity is "which name are you", stored in localStorage. There is
- * no password because there is no cheating threat -- the only failure this needs
- * to prevent is a submission landing on the wrong team's scoreboard.
- *
- * Note what is NOT here: no team picker. Team is resolved server-side from the
- * roster for whichever round is active, so the 3:30pm remix requires nobody to
- * re-join, re-scan, or reload anything.
- */
-export default function JoinPage() {
-  const router = useRouter();
+const PHASE_COPY = {
+  welcome: ["Welcome to the hunt", "Meet your team and read the rules. Tasks will appear when the organizer starts Round 1."],
+  round1: ["Round 1 is on", "Stay together, pick a task and send your evidence."],
+  break: ["Round 1 is over", "Uploads are closed. Check your scores and photos while the organizers get the new teams ready."],
+  remix: ["Meet your Round 2 team", "Your new teammates are below. Round 2 tasks will appear when the organizer starts the round."],
+  round2: ["Round 2 is on", "New team, new tasks, separate scores. Go make it count."],
+  finished: ["The hunt is over", "Uploads are closed. Check the final tasks, scores and photos while the judges finish up."],
+};
+
+export default function HomePage() {
+  const [meId, setMeId] = useState<string | null | undefined>(undefined);
   const [q, setQ] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [previous, setPrevious] = useState<{ id: string; name: string } | null>(null);
-  const { data, error } = usePoll<PlayersResponse>("/api/players", 10000);
-
-  // Arriving here with an identity already stored means one of two things: a
-  // returning player (bounce them straight to Submit) or someone who just tapped
-  // "switch" (Submit clears the identity first, so there is nothing to bounce).
-  // Either way, remember who they were so a mis-tap is one tap to undo.
-  useEffect(() => {
-    const me = getMe();
-    if (me) router.replace("/submit");
-  }, [router]);
+  const [previousId, setPreviousId] = useState<string | null>(null);
+  const [identityError, setIdentityError] = useState("");
+  const { data, error, reload } = usePoll<PlayersResponse>("/api/players", 10000);
+  const { data: event } = useEvent();
+  const activeRound = event?.activeRound;
 
   useEffect(() => {
+    setMeId(getMe()?.id ?? null);
     try {
       const raw = sessionStorage.getItem("sh.previous");
-      if (raw) setPrevious(JSON.parse(raw));
+      if (raw) setPreviousId(JSON.parse(raw).id);
     } catch {
-      /* ignore */
+      /* A previous name is only a convenience. */
     }
   }, []);
 
+  useEffect(() => {
+    if (activeRound !== undefined) void reload();
+  }, [activeRound, reload]);
+
   const matches = useMemo(() => {
-    const list = data?.players ?? [];
     const needle = q.trim().toLowerCase();
-    if (!needle) return list;
-    return list.filter((p) => p.name.toLowerCase().includes(needle));
+    return (data?.players ?? []).filter((p) => p.name.toLowerCase().includes(needle));
   }, [data, q]);
+  const player = data?.players.find((p) => p.id === meId);
+  const previous = data?.players.find((p) => p.id === previousId);
+  const picking = meId !== undefined && (!meId || Boolean(data && !player));
+  // The roster and its round are one response. Never put an old team under a
+  // new-round heading while the independent event poll is ahead of the roster.
+  const currentRoster = data && (!event || data.event.activeRound === event.activeRound);
+  const team = player?.team;
+  const teammates = team ? data?.players.filter((p) => p.id !== player.id && p.team?.id === team.id) : [];
+  const phaseCopy = event ? PHASE_COPY[event.phase] : null;
 
-  const previousPlayer = data ? data.players.find((p) => p.id === previous?.id) : previous;
-
-  const choose = (p: { id: string; name: string }) => {
-    setBusy(true);
-    setMe({ id: p.id, name: p.name });
+  const choose = (p: { id: string; name: string } | null) => {
+    setIdentityError("");
+    const identity = p ? { id: p.id, name: p.name } : null;
     try {
-      sessionStorage.setItem("sh.previous", JSON.stringify({ id: p.id, name: p.name }));
-    } catch {
-      /* ignore */
+      setMe(identity);
+      setMeId(p?.id ?? null);
+      setQ("");
+    } catch (e) {
+      setIdentityError(errorMessage(e, "Couldn't remember your name. Please try again."));
+      return;
     }
-    router.replace("/submit");
+    if (p) {
+      setPreviousId(p.id);
+      try {
+        sessionStorage.setItem("sh.previous", JSON.stringify(identity));
+      } catch {
+        /* The selected name already lives in localStorage. */
+      }
+    }
   };
 
   return (
     <>
-      {/* Falsy until the first poll lands, so the h1 keeps its full top margin
-          while loading rather than hugging the nav. */}
       {data?.eventName && <div className="eyebrow" style={{ margin: "22px 0 0" }}>{data.eventName}</div>}
-      <h1 style={{ marginTop: data?.eventName ? 4 : 22 }}>Who are you?</h1>
-      <p className="lede">Tap your name. You can change it later if you tap the wrong one.</p>
+      <h1 style={{ marginTop: data?.eventName ? 4 : 22 }}>{picking ? "Who are you?" : "Home"}</h1>
+      {error && <div className="card card-bad" role="alert">Couldn&apos;t load the player list: {error}. Retrying.</div>}
+      {identityError && <div className="card card-bad" role="alert">{identityError}</div>}
+      {(!data || meId === undefined) && !error && <p className="muted">Loading your team…</p>}
 
-      {previousPlayer && (
-        <div className="card card-accent">
-          <div className="row">
-            <span className="grow tiny">
-              You were just <b>{previousPlayer.name}</b>.
-            </span>
-            <button className="btn btn-sm" onClick={() => choose(previousPlayer)}>
-              Go back
+      {picking && (
+        <section aria-label="Choose your name">
+          <p className="lede">Tap your name to find your team. You can change it any time.</p>
+          {previous && (
+            <button className="btn btn-wide" style={{ marginBottom: 10, padding: "10px 18px" }} onClick={() => choose(previous)}>
+              <span className="name">Go back to {previous.name}</span>
             </button>
+          )}
+          <input
+            className="field"
+            placeholder="Search your name"
+            aria-label="Search your name"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            autoComplete="off"
+            style={{ marginBottom: 10 }}
+          />
+          {data && !error && matches.length === 0 && (
+            <div className="empty">
+              <b>{q.trim() ? "No name matches that" : "No names yet"}</b>
+              Ask an organizer to add you.
+            </div>
+          )}
+          <div className="stack">
+            {matches.map((p) => (
+              <button key={p.id} className="btn btn-wide" onClick={() => choose(p)} style={{ padding: "10px 18px" }}>
+                <span className="name" style={{ maxWidth: "100%" }}>{p.name}</span>
+              </button>
+            ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {error && <div className="card card-bad">Couldn&apos;t load the player list: {error}</div>}
-
-      <input
-        className="field"
-        placeholder="Search your name"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        autoComplete="off"
-        style={{ marginBottom: 10 }}
-      />
-
-      {!data && !error && <p className="muted">Loading…</p>}
-
-      {data && matches.length === 0 && (
-        <div className="empty">
-          <b>No name matches that</b>
-          Ask an organizer to add you — takes them five seconds on the Admin screen.
-        </div>
+      {player && (
+        <>
+          <div className="row" style={{ flexWrap: "wrap", marginBottom: 14 }}>
+            <b className="name grow" style={{ flexBasis: 180 }}>{player.name}</b>
+            <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => choose(null)}>Change name</button>
+          </div>
+          {!currentRoster ? <p className="muted">Updating your team…</p> : (
+            <section className="card card-accent" aria-labelledby="your-team">
+              <h2 id="your-team" style={{ margin: "0 0 10px" }}>Your Round {data.event.activeRound} team</h2>
+              {team ? (
+                <>
+                  <div className="pill pill-wrap" style={{ background: team.color, borderColor: team.color, color: inkOn(team.color), maxWidth: "100%" }}>
+                    {team.name}
+                  </div>
+                  <p className="muted tiny" style={{ margin: "12px 0 6px" }}>Your teammates</p>
+                  <ul className="stack" style={{ paddingLeft: 20, margin: 0 }}>
+                    {teammates?.map((p) => <li className="name" key={p.id}>{p.name}</li>)}
+                  </ul>
+                  {!teammates?.length && <p className="muted tiny">No other teammates assigned yet.</p>}
+                </>
+              ) : (
+                <p className="muted">You haven&apos;t been assigned a team yet. Ask an organizer.</p>
+              )}
+            </section>
+          )}
+        </>
       )}
 
-      <div className="stack">
-        {matches.map((p) => (
-          <button
-            key={p.id}
-            className="btn btn-wide"
-            disabled={busy}
-            onClick={() => choose(p)}
-            style={{ alignItems: "flex-start", flexDirection: "column", gap: 6, padding: "10px 18px" }}
-          >
-            <span className="name" style={{ maxWidth: "100%" }}>{p.name}</span>
-            {p.team ? (
-              <span
-                className="pill pill-wrap"
-                style={{
-                  background: p.team.color,
-                  borderColor: p.team.color,
-                  color: inkOn(p.team.color),
-                  maxWidth: "100%",
-                }}
-              >
-                {p.team.name}
-              </span>
-            ) : (
-              <span className="pill muted">no team yet</span>
+      <section className="card" aria-label="Event status">
+        {phaseCopy ? (
+          <>
+            <h2 style={{ margin: "0 0 6px" }}>{phaseCopy[0]}</h2>
+            <p style={{ margin: 0 }}>{phaseCopy[1]}</p>
+            {event?.tasksVisible && player && (
+              <Link className="btn btn-primary btn-wide" href="/submit" style={{ marginTop: 14 }}>
+                View tasks
+              </Link>
             )}
-          </button>
-        ))}
-      </div>
+          </>
+        ) : <p className="muted" style={{ margin: 0 }}>Waiting for event status…</p>}
+      </section>
+
+      <section className="card" aria-labelledby="rules">
+        <h2 id="rules" style={{ margin: "0 0 8px" }}>Rules</h2>
+        <ul className="stack" style={{ margin: 0, paddingLeft: 20 }}>
+          <li><b>Stay together.</b></li>
+          <li>The same stranger can help with a maximum of <b>3 tasks per team per round.</b></li>
+        </ul>
+      </section>
+      <section className="card" aria-labelledby="how-to">
+        <h2 id="how-to" style={{ margin: "0 0 8px" }}>How it works</h2>
+        <ul className="stack" style={{ margin: 0, paddingLeft: 20 }}>
+          <li><b>Tasks:</b> pick a task and upload photos or video as evidence. Each task scores once per team.</li>
+          <li><b>Waiting:</b> your evidence is with the judges. Points appear when it&apos;s approved.</li>
+          <li><b>Rejected:</b> read the reason on Tasks, then try again and upload new evidence while the round is open.</li>
+          <li><b>Scores:</b> check the team standings for each round.</li>
+          <li><b>Feed:</b> see everyone&apos;s judged photos and videos.</li>
+        </ul>
+      </section>
     </>
   );
 }

@@ -275,8 +275,14 @@ export async function captureSettings() {
 
 export async function restoreSettings(before) {
   if (!before) return;
-  for (const [key, value] of Object.entries(before)) {
-    await admin.from("settings").upsert({ key, value }, { onConflict: "key" });
+  const { error } = await admin.from("settings").upsert(
+    Object.entries(before).map(([key, value]) => ({ key, value })), { onConflict: "key" },
+  );
+  if (error) throw new Error(`Could not restore event settings: ${error.message}`);
+  // A checkout can run before the additive welcome migration has arrived.
+  if (!Object.hasOwn(before, "started_round")) {
+    const { error: removeError } = await admin.from("settings").delete().eq("key", "started_round");
+    if (removeError) throw new Error(`Could not restore the missing start marker: ${removeError.message}`);
   }
 }
 

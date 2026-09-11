@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Topbar from "@/components/Topbar";
+import EventShell from "@/components/EventShell";
 import { THEME_SCRIPT } from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
@@ -29,8 +30,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
-        <Topbar />
-        <div className="wrap">{children}</div>
+        <EventShell header={<Topbar />}>{children}</EventShell>
       </body>
     </html>
   );

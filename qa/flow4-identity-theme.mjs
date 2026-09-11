@@ -35,6 +35,7 @@ try {
   const page = await ctx.newPage();
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "__qa Alice", exact: false }).first().click();
+  await page.getByRole("link", { name: "View tasks", exact: true }).click();
   await page.waitForURL("**/submit");
   check("joined as Alice", (await page.locator("h1").first().innerText()).includes("__qa Alice"));
 
@@ -53,6 +54,7 @@ try {
   check("'go back to Alice' is offered", await backBtn.count() > 0,
     (await page.locator("button").allInnerTexts()).slice(0, 8).join("|"));
   await page.getByRole("button", { name: "__qa Bob", exact: false }).first().click();
+  await page.getByRole("link", { name: "View tasks", exact: true }).click();
   await page.waitForURL("**/submit");
   check("can join as a different player", (await page.locator("h1").first().innerText()).includes("__qa Bob"));
 

@@ -9,6 +9,9 @@ const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 assert.match(BASE, /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/);
 const cached = { id: "__qa-player", name: "__qa Jessica Formal" };
 const team = { id: "__qa-team", name: "__qa Red", color: "#dc2626" };
+const event = {
+  phase: "round1", activeRound: 1, startedRound: 1, submissionsOpen: true, tasksVisible: true,
+};
 let name = "__qa Jess";
 let exists = true;
 const unexpected = [];
@@ -44,12 +47,14 @@ try {
       body: JSON.stringify(body),
     });
     if (url.pathname === "/api/notice") return send({ notice: "" });
+    if (url.pathname === "/api/event") return send(event);
     if (url.pathname === "/api/players") {
-      return send({ eventName: "__qa Event", players: exists ? [{ id: cached.id, name, team }] : [] });
+      return send({ eventName: "__qa Event", event, players: exists ? [{ id: cached.id, name, team }] : [] });
     }
     if (url.pathname === "/api/state") {
       assert.equal(url.searchParams.get("playerId"), cached.id);
       return send({
+        event,
         settings: { round: 1, submissions_open: true, saved_epoch: "" },
         me: exists ? { id: cached.id, name } : null,
         team: exists ? team : null,
@@ -84,22 +89,27 @@ try {
   await expect(page.getByText(`You're submitting as ${name}`, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Pick a different name", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Who are you?", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(name) })).toBeVisible();
-  await expect(page.getByText(`You were just ${name}.`, { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: `Go back to ${name}`, exact: true })).toBeVisible();
   await expect(page.locator(".wrap")).not.toContainText(cached.name);
-  await page.getByRole("button", { name: "Go back", exact: true }).click();
-  await expect(page.locator("header h1")).toHaveText(name);
+  await page.getByRole("button", { name: `Go back to ${name}`, exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible();
+  await expect(page.locator(".wrap > .row > b.name")).toHaveText(name);
+  await expect(page.locator(".wrap")).not.toContainText(cached.name);
+  assert.equal(new URL(page.url()).pathname, "/");
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("sh.player")));
   assert.deepEqual(stored, { id: cached.id, name });
+  await page.getByRole("link", { name: "View tasks", exact: true }).click();
+  await expect(page.locator("header h1")).toHaveText(name);
 
   exists = false;
   await page.evaluate(() => localStorage.removeItem("sh.player"));
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
-  await expect(page.getByText("No name matches that", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Go back", exact: true })).toHaveCount(0);
+  await expect(page.getByText("No names yet", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Go back to / })).toHaveCount(0);
   assert.deepEqual(errors, []);
   assert.deepEqual(unexpected, []);
-  console.log("Current names reach Submit, its switch confirmation, and the previous-player shortcut.");
+  console.log("Current names reach Submit, its switch confirmation, the previous-player shortcut, and Home.");
   console.log("real data intact: true (every API response mocked; no database connection)");
 } finally {
   clearTimeout(deadline);

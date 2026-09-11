@@ -1,8 +1,10 @@
 import { cookies } from "next/headers";
 import { db } from "./db";
+import { eventState } from "./event";
 
 type Settings = {
   active_round: number;
+  started_round: number;
   submissions_open: boolean;
   event_name: string;
   /** Free-text banner shown on every screen. The organizer's broadcast channel. */
@@ -18,6 +20,7 @@ type Settings = {
 
 const DEFAULTS: Settings = {
   active_round: 1,
+  started_round: 0,
   submissions_open: true,
   event_name: "Scavenger Hunt",
   notice: "",
@@ -25,19 +28,26 @@ const DEFAULTS: Settings = {
 };
 
 export async function getSettings(): Promise<Settings> {
-  const { data } = await db().from("settings").select("key,value");
+  const { data, error } = await db().from("settings").select("key,value");
+  if (error) throw new Error("Couldn't load event settings. Try again.");
   const map = new Map((data ?? []).map((r) => [r.key, r.value]));
-  return {
+  const startedRound = Number(map.get("started_round") ?? DEFAULTS.started_round);
+  if (![0, 1, 2].includes(startedRound)) throw new Error("Invalid event start setting.");
+  const settings = {
     active_round: Number(map.get("active_round") ?? DEFAULTS.active_round) === 2 ? 2 : 1,
+    started_round: startedRound,
     submissions_open: (map.get("submissions_open") ?? "true") !== "false",
     event_name: String(map.get("event_name") || DEFAULTS.event_name),
     notice: String(map.get("notice") ?? ""),
     saved_epoch: String(map.get("saved_epoch") ?? ""),
   };
+  const state = eventState(settings);
+  return { ...settings, active_round: state.activeRound, submissions_open: state.submissionsOpen };
 }
 
 export async function setSetting(key: string, value: string) {
-  await db().from("settings").upsert({ key, value }, { onConflict: "key" });
+  const { error } = await db().from("settings").upsert({ key, value }, { onConflict: "key" });
+  if (error) throw new Error(`Couldn't save ${key}. Try again.`);
 }
 
 /**

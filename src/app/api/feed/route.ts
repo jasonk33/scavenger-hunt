@@ -1,7 +1,8 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { eventState } from "@/lib/event";
 import { groupBy, groupKey } from "@/lib/groups";
-import { json, isVideoObject } from "@/lib/http";
+import { json, fail, isVideoObject } from "@/lib/http";
 import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,11 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const settings = await getSettings();
-  const round = Number(url.searchParams.get("round")) || settings.active_round;
+  const { startedRound } = eventState(settings);
+  if (!startedRound) return fail("The event hasn't started yet. Head to Home to meet your team.", 409);
+  const requestedRound = Number(url.searchParams.get("round")) || startedRound;
+  if (requestedRound !== 1 && requestedRound !== 2) return fail("Round must be 1 or 2.");
+  const round = Math.min(requestedRound, startedRound);
   /*
    * The cap has to clear a whole round's judged submissions, or the feed
    * silently stops showing the oldest ones with nothing on screen to say so.
@@ -67,6 +72,7 @@ export async function GET(req: Request) {
 
   return json({
     round,
+    activeRound: startedRound,
     items: groupBy(subs ?? [], groupKey).map((group) => {
       // Oldest first: judged_at is identical across a group, so it says nothing
       // about the order the files were shot in.

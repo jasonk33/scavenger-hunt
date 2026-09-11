@@ -368,7 +368,7 @@ try {
     });
     r2TaskIds.push(made.body.id);
   }
-  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ active_round: 2 }) });
+  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ active_round: 2, started_round: 2, submissions_open: true }) });
 
   const keptSub = await seed({ playerId: alice.id, taskId: r2TaskIds[0] });
   const tossedSub = await seed({ playerId: alice.id, taskId: r2TaskIds[1] });

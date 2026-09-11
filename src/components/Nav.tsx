@@ -4,16 +4,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import ThemeToggle from "./ThemeToggle";
-
-const PLAYER_LINKS = [
-  { href: "/submit", label: "Submit" },
-  { href: "/leaderboard", label: "Scores" },
-  { href: "/feed", label: "Feed" },
-];
+import { useEvent } from "./EventShell";
 
 export default function Nav() {
   const path = usePathname() ?? "/";
+  const { data: event } = useEvent();
   const [organizer, setOrganizer] = useState(false);
+  const links = [
+    { href: "/", label: "Home" },
+    ...(event?.tasksVisible ? [{ href: "/submit", label: "Tasks" }] : []),
+    ...(event && event.startedRound > 0 ? [
+      { href: "/leaderboard", label: "Scores" },
+      { href: "/feed", label: "Feed" },
+    ] : []),
+  ];
 
   // The organizer cookie is intentionally readable from JS -- it is a
   // convenience flag, not a credential.
@@ -31,8 +35,8 @@ export default function Nav() {
 
   return (
     <nav className="nav">
-      {PLAYER_LINKS.map((l) => (
-        <Link key={l.href} href={l.href} className={path.startsWith(l.href) ? "on" : ""}>
+      {links.map((l) => (
+        <Link key={l.href} href={l.href} className={(l.href === "/" ? path === "/" : path.startsWith(l.href)) ? "on" : ""}>
           {l.label}
         </Link>
       ))}

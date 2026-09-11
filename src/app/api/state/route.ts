@@ -1,7 +1,8 @@
 import { db, mediaUrl, uploadConfig } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { groupKey } from "@/lib/groups";
-import { json, isVideoObject } from "@/lib/http";
+import { json, fail, isVideoObject } from "@/lib/http";
+import { eventState } from "@/lib/event";
 import { awardedBreakdown, competitionWinners, scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export async function GET(req: Request) {
   const playerId = url.searchParams.get("playerId");
 
   const settings = await getSettings();
+  if (!eventState(settings).tasksVisible) return fail("That round hasn't started yet. Head to Home to meet your team.", 409);
   const round = settings.active_round;
   const sb = db();
 

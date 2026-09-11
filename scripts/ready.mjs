@@ -6,9 +6,8 @@
  *
  * The QA and smoke suites prove the app works. This proves YOUR EVENT is set up,
  * which is a different question and the one that actually bites on the day. It
- * exists because a crashed test run once left `submissions_open` false, and
- * nothing about the app looks broken in that state -- every player just sees
- * "Submissions are closed right now" and assumes it's them.
+ * Before the first start, closed uploads are intentional: guests meet their
+ * teams on Home. The check distinguishes that welcome stage from a running round.
  */
 import { createAdminClient, loadEnv } from "./task-store.mjs";
 
@@ -32,10 +31,20 @@ const [{ data: settings }, { data: players }, { data: teams }, { data: roster },
   ]);
 
 const s = Object.fromEntries((settings ?? []).map((r) => [r.key, r.value]));
-const round = Number(s.active_round) === 2 ? 2 : 1;
+const started = Number(s.started_round ?? 0);
+const round = started > 0 && Number(s.active_round) === 2 ? 2 : 1;
 
-check(s.submissions_open !== "false", "submissions are open",
-  "SUBMISSIONS ARE CLOSED — every player will see \"Submissions are closed right now\". Admin → event → tap the toggle.");
+check([0, 1, 2].includes(started), "event start setting is valid", "started_round must be 0, 1 or 2");
+if (started === 0) {
+  ok.push("welcome page is ready; Admin → event → Start Round 1 unlocks the hunt");
+} else if (started < round) {
+  ok.push("remixed teams are revealed; Round 2 tasks stay hidden until Start Round 2");
+} else {
+  check(s.submissions_open !== "false", `Round ${round} uploads are open`,
+    round === 1
+      ? "Round 1 is closed for the break; reveal the Round 2 teams when ready, then start Round 2."
+      : "Round 2 has ended; results and media remain available.", false);
+}
 check(!s.notice, "no stale broadcast banner",
   `a banner is still showing: "${s.notice}" — Admin → event → Clear`, false);
 check(Boolean(s.event_name), "event name set", "no event name set", false);

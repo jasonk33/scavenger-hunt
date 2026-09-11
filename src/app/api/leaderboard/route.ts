@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { eventState } from "@/lib/event";
 import { groupKey } from "@/lib/groups";
 import { json, fail } from "@/lib/http";
 
@@ -7,10 +8,12 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const settings = await getSettings();
-  const requestedRound = Number(new URL(req.url).searchParams.get("round")) || settings.active_round;
+  const { startedRound } = eventState(settings);
+  if (!startedRound) return fail("The event hasn't started yet. Head to Home to meet your team.", 409);
+  const requestedRound = Number(new URL(req.url).searchParams.get("round")) || startedRound;
   if (requestedRound !== 1 && requestedRound !== 2) return fail("Round must be 1 or 2.");
   // A stale selection must not reveal the remix before that round starts.
-  const round = Math.min(requestedRound, settings.active_round);
+  const round = Math.min(requestedRound, startedRound);
   const sb = db();
 
   const [
@@ -65,7 +68,7 @@ export async function GET(req: Request) {
 
   return json({
     round,
-    activeRound: settings.active_round,
+    activeRound: startedRound,
     totalPending: new Set((pending ?? []).map(groupKey)).size,
     rows,
   });

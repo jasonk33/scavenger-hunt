@@ -90,7 +90,7 @@ RSVPs, team names and assignments. Do not re-run the seed to update the roster:
 it replaces those live decisions with its initial allocations.
 
 Both commands delete **every submission and its linked media**, re-hide secrets
-and reopen Round 1. They do not sweep orphaned files from the bucket. Both are destructive,
+and return to the pre-event welcome page. They do not sweep orphaned files from the bucket. Both are destructive,
 so they refuse to run once anyone outside that guest list has submitted
 something; that refusal does not protect submissions from guests on the list.
 **Never run either once the party has started.**
@@ -167,7 +167,9 @@ single driver and normally finishes in seconds; there is no full browser-suite c
 
 For a focused UI change, run exactly one standalone driver with `node qa/<driver>.mjs`;
 do not chain drivers or recreate a serial runner. No driver may take over one minute.
-The standalone drivers need Round 1 active.
+The standalone drivers need Round 1 started, not just its teams revealed.
+`node qa/probe-welcome.mjs` instead mocks every API request and covers the welcome
+page and all round transitions without connecting to the event database.
 
 On a fresh clone, download the browser binary once first:
 
@@ -185,11 +187,10 @@ npm run ready     # no dev server needed
 ```
 
 `ready` is the one to run on the morning of. It doesn't test the app — it checks
-that *your event* is set up: submissions open, no stale banner, every player on a
-team, secret challenges still hidden, no test fixtures left behind, upload key
-valid. A crashed test run once left submissions closed, and nothing about the app
-looks broken in that state — every player just sees "Submissions are closed" and
-assumes it's them.
+that *your event* is set up: a valid welcome/round stage, no stale banner, every
+player on a team, secret challenges still hidden, no test fixtures left behind,
+and a valid upload key. Closed uploads are expected before the first start and
+while the remixed teams are meeting; these are not readiness failures.
 
 Open **Admin → health** for the same checks from the browser.
 
@@ -219,9 +220,15 @@ deployment; use Vercel's redeploy action or push a follow-up commit.
 
 ## Running the event
 
-Scores lists each team's members beneath its task count. Round 2 teams and members
-stay hidden there until Round 2 is activated; then guests can switch between the
-live round and Round 1's original roster and scores.
+Home is the shared entry page throughout the event. Guests choose their name once,
+see their own team and teammates, and read the short rules and website guide.
+Before the first start, Tasks, Scores and Feed are hidden; old links also lead
+back to Home. Starting a round reveals the available tabs and a **View tasks**
+button without navigating anyone away from the instructions.
+
+Scores lists each team's members beneath its task count. Round 2 stays hidden
+there until it starts, even after its teams are revealed on Home. During the
+break, Round 1 scores and the feed remain available.
 
 **Before the day**
 
@@ -234,7 +241,8 @@ live round and Round 1's original roster and scores.
 
 **Round 1 (1:00–2:30)**
 
-- Players open the link, tap their name once, and upload against tasks.
+- Players open the link, tap their name once, and meet their team on Home.
+- Admin → Event → **Start Round 1** reveals the tasks and opens uploads.
 - You sit in Judge. One tap approves at the task's value — that is the whole
   decision, there is nothing to top up or flag. Rejecting asks why: tap one of
   the four common reasons or type your own, and the team reads it and redoes it.
@@ -243,9 +251,17 @@ live round and Round 1's original roster and scores.
 
 **The break (2:30–3:30)**
 
-1. Admin → Event → close submissions. Let the queue drain.
+1. Admin → Event → **End Round 1**. New uploads close; uploads already in progress
+   can finish, and you can keep judging the queue.
 2. Canvas → Roster → make the Round 2 swaps.
-3. Admin → Event → active round = 2, reopen submissions.
+3. Admin → Event → **Reveal Round 2 teams**. Home shows the new teammates while
+   Round 2 tasks stay hidden. This refuses while a Round 1 upload is still moving;
+   let it finish, or recover a stuck upload in Health.
+4. When everyone is ready, **Start Round 2** reveals its tasks and opens uploads.
+
+Finish with **End Round 2**. Scores and media remain available. An accidental end
+can be undone with **Reopen Round 1** (before the remix reveal) or **Reopen Round 2**;
+neither action deletes or resets any data.
 
 Nobody re-scans or re-joins anything. Round 1 scores cannot move: every
 submission stored its team when it was created.

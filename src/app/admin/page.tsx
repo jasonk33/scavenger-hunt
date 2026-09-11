@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, usePoll } from "@/lib/client";
+import { eventState, type EventPhase } from "@/lib/event";
+import { useEvent } from "@/components/EventShell";
 
 type AdminData = {
   settings: {
     active_round: number;
+    started_round: number;
     submissions_open: boolean;
     event_name: string;
     notice: string;
@@ -92,7 +95,7 @@ export default function AdminPage() {
 }
 
 function Admin() {
-  const { data, reload } = usePoll<AdminData>("/api/admin/data", 8000);
+  const { data, error, reload } = usePoll<AdminData>("/api/admin/data", 8000);
   const [tab, setTab] = useState<"event" | "roster" | "tasks" | "health">("event");
   const [err, setErr] = useState("");
 
@@ -106,7 +109,7 @@ function Admin() {
     }
   };
 
-  if (!data) return <p className="muted" style={{ marginTop: 24 }}>Loading…</p>;
+  if (!data) return <p className={error ? "bad" : "muted"} style={{ marginTop: 24 }}>{error || "Loading…"}</p>;
 
   return (
     <>
@@ -125,6 +128,7 @@ function Admin() {
       </div>
 
       {err && <div className="card bad tiny">{err}</div>}
+      {error && <div className="card card-bad tiny">Couldn&apos;t refresh event settings: {error}. Retrying.</div>}
 
       {tab === "event" && <EventTab data={data} run={run} />}
       {tab === "roster" && <RosterTab data={data} run={run} />}
@@ -134,9 +138,53 @@ function Admin() {
   );
 }
 
-function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => void }) {
+function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => Promise<void> }) {
   const s = data.settings;
   const [notice, setNotice] = useState(s.notice);
+  const [busy, setBusy] = useState(false);
+  const [awaitingPhase, setAwaitingPhase] = useState<EventPhase | null>(null);
+  const acting = useRef(false);
+  const { reload: reloadEvent } = useEvent();
+  const { phase } = eventState(s);
+  const disabled = busy || awaitingPhase === phase;
+  useEffect(() => {
+    if (awaitingPhase !== null && awaitingPhase !== phase) setAwaitingPhase(null);
+  }, [awaitingPhase, phase]);
+  const steps = {
+    welcome: { title: "Before Round 1", action: "start_round_1", label: "Start Round 1", help: "Reveals Round 1 tasks and opens uploads. Guests stay on Home until they choose Tasks." },
+    round1: { title: "Round 1 in progress", action: "end_round_1", label: "End Round 1", help: "Closes new uploads. Round 1 tasks, scores and photos stay available, and judging can continue." },
+    break: { title: "Break — Round 1 uploads closed", action: "reveal_round_2", label: "Reveal Round 2 teams", help: "Shows the remixed teams on Home, but keeps Round 2 tasks hidden. Wait for any Round 1 uploads still in progress." },
+    remix: { title: "Round 2 teams revealed", action: "start_round_2", label: "Start Round 2", help: "Reveals Round 2 tasks and opens uploads when everyone has found their new team." },
+    round2: { title: "Round 2 in progress", action: "end_round_2", label: "End Round 2", help: "Closes new uploads. Final tasks, scores and photos stay available, and judging can continue." },
+    finished: { title: "Event finished", action: null, label: "", help: "Uploads are closed. Keep judging the remaining evidence and pick the leader-bonus winners below in Tasks." },
+  };
+  const step = steps[phase];
+  const reopen = phase === "break" ? { action: "reopen_round_1", label: "Reopen Round 1" }
+    : phase === "finished" ? { action: "reopen_round_2", label: "Reopen Round 2" } : null;
+  const advance = async (action: string | null) => {
+    if (acting.current || disabled || !action) return;
+    if (action.startsWith("end_") && !window.confirm(`End Round ${s.active_round} and close new uploads?`)) return;
+    acting.current = true;
+    setBusy(true);
+    setAwaitingPhase(phase);
+    let saved = false;
+    try {
+      await run(async () => {
+        await api("/api/admin/settings", {
+          method: "POST",
+          body: JSON.stringify({ event_action: action, expected_phase: phase }),
+        });
+        saved = true;
+        await reloadEvent();
+      });
+    } finally {
+      // reload() can return early while an older poll is still in flight.
+      // Keep the old action disabled until the polled phase really changes.
+      if (!saved) setAwaitingPhase(null);
+      acting.current = false;
+      setBusy(false);
+    }
+  };
 
   const save = (patch: Record<string, unknown>) =>
     run(() => api("/api/admin/settings", { method: "POST", body: JSON.stringify(patch) }));
@@ -144,36 +192,24 @@ function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   return (
     <>
       <div className="card">
-        <b>Active round</b>
-        <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-          Switching this changes which task list players see and which roster their submissions are
-          attributed to. Do it at the break, after Round 1 uploads have drained.
-        </p>
-        <div style={{ display: "flex", gap: 8 }}>
-          {[1, 2].map((r) => (
-            <button
-              key={r}
-              className={`btn ${s.active_round === r ? "btn-primary" : ""}`}
-              style={{ flex: 1 }}
-              onClick={() => save({ active_round: r })}
-            >
-              Round {r}
+        <h2 style={{ margin: "0 0 8px" }}>{step.title}</h2>
+        <p className="muted" style={{ margin: "0 0 12px" }}>{step.help}</p>
+        {step.action && (
+          <button className="btn btn-primary btn-wide" disabled={disabled} onClick={() => void advance(step.action)}>
+            {step.label}
+          </button>
+        )}
+        {reopen && (
+          <div style={{ marginTop: 14 }}>
+            <p className="muted tiny" style={{ margin: "0 0 8px" }}>
+              Ended by mistake? Reopen uploads without changing teams, tasks or scores.
+            </p>
+            <button className="btn btn-wide" disabled={disabled} onClick={() => void advance(reopen.action)}>
+              {reopen.label}
             </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="card">
-        <b>Submissions</b>
-        <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-          Close this during the break so stragglers don&apos;t land Round 1 evidence in Round 2.
-        </p>
-        <button
-          className={`btn btn-wide ${s.submissions_open ? "btn-good" : "btn-bad"}`}
-          onClick={() => save({ submissions_open: String(!s.submissions_open) })}
-        >
-          {s.submissions_open ? "Open — tap to close" : "Closed — tap to open"}
-        </button>
+          </div>
+        )}
+        {awaitingPhase === phase && !busy && <p className="muted tiny">Waiting for refreshed event status…</p>}
       </div>
 
       <div className="card">

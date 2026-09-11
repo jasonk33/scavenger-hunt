@@ -42,8 +42,11 @@ try {
   const aliceBtn = page.getByRole("button", { name: "__qa Alice", exact: false }).first();
   check("player appears on join screen", await aliceBtn.count() > 0);
   await aliceBtn.click();
+  await page.getByRole("button", { name: "Change name", exact: true }).waitFor();
+  check("tapping a name stays on Home", new URL(page.url()).pathname === "/", page.url());
+  await page.getByRole("link", { name: "View tasks", exact: true }).click();
   await page.waitForURL("**/submit", { timeout: 10000 }).catch(() => {});
-  check("tapping a name lands on /submit", page.url().includes("/submit"), page.url());
+  check("View tasks opens /submit", page.url().includes("/submit"), page.url());
   const stored = await page.evaluate(() => localStorage.getItem("sh.player"));
   check("identity persisted to localStorage", stored?.includes("__qa Alice"), String(stored));
 

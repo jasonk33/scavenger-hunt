@@ -1,5 +1,6 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { eventState } from "@/lib/event";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { groupKey } from "@/lib/groups";
 import { winningGroups } from "@/lib/scored-entries.mjs";
@@ -23,6 +24,7 @@ export async function GET(req: Request) {
   if (!taskId || !playerId) return fail("taskId and playerId are required.");
 
   const settings = await getSettings();
+  if (!eventState(settings).tasksVisible) return fail("That round hasn't started yet. Head to Home to meet your team.", 409);
   const round = settings.active_round;
   const sb = db();
 

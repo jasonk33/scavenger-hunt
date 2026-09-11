@@ -128,9 +128,16 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
   `REASON_MAX`), `note`, `group_id`. There is deliberately no discretionary bonus
   and no award star: a task is approved or rejected, and an approved one is worth
   exactly what the task is worth.
-- `settings` is key/value, read via `getSettings()`: `active_round`, `submissions_open`,
+- `settings` is key/value, read via `getSettings()`: `active_round`, `started_round`, `submissions_open`,
   `event_name`, `notice`, plus `tier_model` (the canvas's tier weights and
   thresholds, as JSON — the planner's model, not the app's).
+- **Revealing a roster is not starting its round.** `started_round` starts at 0;
+  `src/lib/event.ts` derives the six welcome/play/break stages. Home uses the
+  revealed `active_round`, but Tasks and all media/score APIs must respect
+  `started_round`. Closing uploads must still let already-reserved uploads finish.
+  Never infer "pre-event" merely from `submissions_open = false`.
+  Lifecycle compare-and-write belongs inside the locked `transition_event` RPC,
+  not a route-side check followed by an unconditional settings write.
 - **Groups**: several files can be one piece of evidence via `group_id`. It is nullable and
   every read goes through `groupKey()`/`groupBy()` (`src/lib/groups.ts`) — a row without one
   is a group of one. The judge decides a group as a unit. Notes cap at `NOTE_MAX` (280).
@@ -219,7 +226,8 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
   browser-suite command.**
 - For a focused UI change, run exactly one standalone driver with `node qa/<driver>.mjs`.
   Do not chain drivers or recreate a serial runner; no driver may take over one minute.
-  Standalone drivers assume **Round 1 is active**.
+  Standalone drivers assume **Round 1 has started**. `qa/probe-welcome.mjs` is
+  offline: every API response is mocked, with no database connection.
 
 - `npm run smoke` — API-level suite; self-contained, doesn't import `qa/lib.mjs`.
 - `npm test` — `node --test` over `scripts/*.test.mjs` and the canvas's own tests. **No DB, no
@@ -356,7 +364,7 @@ the confident wrong answer.
 ## Sharp edges
 
 - `npm run seed` **and** `npm run seed:reset` both delete every submission and its linked
-  media (not orphaned bucket objects), re-hide secrets and reopen Round 1.
+  media (not orphaned bucket objects), re-hide secrets and restore the pre-event welcome page.
   They refuse if submissions exist from anyone outside the initial guest list in
   `scripts/seed-event.mjs` (`--force` overrides). **Never run either once the party has
   started.** The guest list, `ROUND_1` split and `PAIRS` arrays are initial bootstrap

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { eventState } from "@/lib/event";
 import { groupKey } from "@/lib/groups";
 import { json, fail, slug, playableType, extOf } from "@/lib/http";
 
@@ -35,6 +36,7 @@ export async function POST(req: Request) {
   if (!playerId || !taskId) return fail("playerId and taskId are required.");
 
   const settings = await getSettings();
+  if (!eventState(settings).tasksVisible) return fail("That round hasn't started yet. Head to Home to meet your team.", 409);
   if (!settings.submissions_open) {
     return fail("Submissions are closed right now. Check with an organizer.", 409);
   }

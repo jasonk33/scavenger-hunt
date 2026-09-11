@@ -79,25 +79,29 @@ let contestTaskId, contestSubmissionId;
 // Captured before the test mutates anything, so the restore in `finally` always
 // has something to put back even if main() throws on its first statement.
 let settingsBefore = null;
+let lifecycleBefore = null;
+const lifecycleKeys = ["active_round", "started_round", "submissions_open"];
 
 async function restoreSettings() {
-  if (!settingsBefore) return;
+  if (!settingsBefore || !lifecycleBefore) return;
   try {
-    await call("/api/admin/settings", {
-      method: "POST",
-      body: JSON.stringify({
-        active_round: settingsBefore.active_round,
-        submissions_open: String(settingsBefore.submissions_open),
-      }),
-    });
+    if (lifecycleBefore.length) {
+      const { error } = await admin.from("settings").upsert(lifecycleBefore, { onConflict: "key" });
+      if (error) throw new Error(error.message);
+    }
+    const missing = lifecycleKeys.filter((key) => !lifecycleBefore.some((row) => row.key === key));
+    if (missing.length) {
+      const { error } = await admin.from("settings").delete().in("key", missing);
+      if (error) throw new Error(error.message);
+    }
     console.log(
-      `  (restored active_round=${settingsBefore.active_round} submissions_open=${settingsBefore.submissions_open})`
+      `  (restored active_round=${settingsBefore.active_round} started_round=${settingsBefore.started_round} submissions_open=${settingsBefore.submissions_open})`
     );
   } catch (e) {
     console.error(
       `\n  !! COULD NOT RESTORE SETTINGS: ${e.message}\n` +
         `  !! Set active_round=${settingsBefore.active_round} and ` +
-        `submissions_open=${settingsBefore.submissions_open} by hand in Admin.\n`
+        `started_round=${settingsBefore.started_round} and submissions_open=${settingsBefore.submissions_open} before the event.\n`
     );
   }
 }
@@ -168,9 +172,12 @@ async function main() {
 
   const settingsBackup = data.settings;
   settingsBefore = settingsBackup;
+  const { data: lifecycleRows, error: lifecycleError } = await admin.from("settings").select("key,value").in("key", lifecycleKeys);
+  if (lifecycleError) throw new Error(`Could not capture event settings: ${lifecycleError.message}`);
+  lifecycleBefore = lifecycleRows ?? [];
   await call("/api/admin/settings", {
     method: "POST",
-    body: JSON.stringify({ active_round: 1, submissions_open: "true" }),
+    body: JSON.stringify({ active_round: 1, started_round: 2, submissions_open: "true" }),
   });
 
   const created = await admin.from("players").insert({ name: NAME }).select("id").single();

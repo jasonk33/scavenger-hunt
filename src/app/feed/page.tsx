@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { usePoll } from "@/lib/client";
 import Score from "@/components/Score";
+import { useEvent } from "@/components/EventShell";
 
 type Feed = {
   round: number;
@@ -30,6 +31,7 @@ const FILTERS = [
 ] as const;
 
 export default function FeedPage() {
+  const { data: event } = useEvent();
   const [round, setRound] = useState(0);
   const [filterPref, setFilterPref] = useState<(typeof FILTERS)[number]["key"]>("all");
   const { data, error } = usePoll<Feed>(round ? `/api/feed?round=${round}` : "/api/feed", 8000);
@@ -52,7 +54,7 @@ export default function FeedPage() {
 
       <div className="row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
         <div className="seg">
-          {[1, 2].map((r) => (
+          {[1, 2].filter((r) => r <= (event?.startedRound ?? 0)).map((r) => (
             <button key={r} className={shown === r ? "on" : ""} onClick={() => setRound(r)}>
               Round {r}
             </button>
