@@ -34,6 +34,8 @@ let holdEvent = false;
 let holdPlayers = false;
 let holdAdmin = false;
 let refuseReveal = false;
+let refuseWelcome = false;
+let dismissConfirmation = false;
 const refused = [];
 const sentActions = [];
 let stateRequests = 0;
@@ -121,6 +123,12 @@ try {
     if (url.pathname === "/api/admin/settings" && req.method() === "POST") {
       const body = req.postDataJSON();
       assert.equal(body.expected_phase, event().phase);
+      if (body.event_action === "return_to_welcome") {
+        if (refuseWelcome) return respond({ error: "An upload is still in progress. Let it finish before returning to welcome." }, 409);
+        sentActions.push(body.event_action);
+        stage = 0;
+        return respond({ ok: true });
+      }
       if (body.event_action === "reopen_round_2") {
         assert.equal(stage, 5);
         sentActions.push(body.event_action);
@@ -192,7 +200,7 @@ try {
   await expect(direct.getByText(/Offline event status/)).toBeVisible();
   assert.equal(stateRequests, 0, "Failed status must not mount protected child");
   const admin = await ctx.newPage();
-  admin.on("dialog", (dialog) => dialog.accept());
+  admin.on("dialog", (dialog) => dismissConfirmation ? dialog.dismiss() : dialog.accept());
   await admin.goto(`${BASE}/admin`);
   await expect(admin.getByRole("button", { name: labels[0], exact: true })).toBeVisible();
   await direct.goto(BASE);
@@ -300,8 +308,35 @@ try {
   await expect(tasks.getByRole("button", { name: "Upload", exact: true })).toBeEnabled();
   await expect(tasks.getByText("__qa Round 2 task", { exact: true })).toBeVisible();
   assert.deepEqual(sentActions, [...actions, "reopen_round_2"]);
+  const backToWelcome = admin.getByRole("button", { name: "Return to welcome", exact: true });
+  await expect(backToWelcome).toBeVisible();
+  dismissConfirmation = true;
+  await backToWelcome.click();
+  assert.equal(stage, 4, "Dismissing confirmation must leave the event running");
+  assert.deepEqual(sentActions, [...actions, "reopen_round_2"]);
+  dismissConfirmation = false;
+  refuseWelcome = true;
+  await backToWelcome.click();
+  await expect(admin.getByText(/before returning to welcome/)).toBeVisible();
+  assert.equal(stage, 4, "In-progress uploads must prevent the return");
+  await expect(tasks.getByText("__qa Round 2 task", { exact: true })).toBeVisible();
+  refuseWelcome = false;
+  await backToWelcome.click();
+  await expect(admin.getByRole("button", { name: "Start Round 1", exact: true })).toBeEnabled();
+  await expect(backToWelcome).toHaveCount(0);
+  for (const page of [tasks, feed, scores]) await expect(page).toHaveURL(`${BASE}/`);
+  await expect(home.getByRole("heading", { name: "Your Round 1 team", exact: true })).toBeVisible();
+  await expect(home.getByText(teammate.name, { exact: true })).toBeVisible();
+  await expect(home.getByText(me.name, { exact: true }).first()).toBeVisible();
+  for (const name of ["Tasks", "Scores", "Feed"]) await expect(navLink(home, name)).toHaveCount(0);
+  await expect(home.getByRole("link", { name: "View tasks", exact: true })).toHaveCount(0);
+  assert.equal(await home.evaluate(() => window.__welcomeDocument), documentId);
+  await admin.getByRole("button", { name: "Start Round 1", exact: true }).click();
+  await expect(home.getByRole("link", { name: "View tasks", exact: true })).toBeVisible();
+  assert.deepEqual(sentActions, [...actions, "reopen_round_2", "return_to_welcome", "start_round_1"]);
   assert.deepEqual(refused, [], "Every API and external request must be explicitly mocked");
   console.log("PASS Round 2 start/end/reopen, historical Feed, all five actions, no reloads");
+  console.log("PASS return to welcome, confirmation, upload refusal and rehearsal restart");
   console.log("real data intact: true (all API requests mocked; no database credentials)");
 } finally {
   holdEvent = holdPlayers = holdAdmin = false;

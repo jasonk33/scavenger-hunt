@@ -410,6 +410,11 @@ begin
     return 'stale';
   end if;
 
+  if next_started_round = 0
+    and exists (select 1 from public.submissions where status = 'uploading') then
+    return 'uploading';
+  end if;
+
   if next_active_round = 2 and current_round = 1
     and exists (select 1 from public.submissions where round = 1 and status = 'uploading') then
     return 'uploading';

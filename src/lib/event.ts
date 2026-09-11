@@ -37,8 +37,12 @@ const TRANSITIONS: Record<string, { from: EventPhase; settings: EventSettings }>
 };
 
 export function eventTransition(settings: EventSettings, action: string): EventSettings {
+  const phase = eventState(settings).phase;
+  if (action === "return_to_welcome" && phase !== "welcome") {
+    return { active_round: 1, started_round: 0, submissions_open: false };
+  }
   const transition = Object.hasOwn(TRANSITIONS, action) ? TRANSITIONS[action] : undefined;
-  if (!transition || transition.from !== eventState(settings).phase) {
+  if (!transition || transition.from !== phase) {
     throw new Error("That action isn't available at this stage. Refresh and try again.");
   }
   return { ...transition.settings };

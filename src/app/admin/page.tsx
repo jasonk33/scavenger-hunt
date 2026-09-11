@@ -164,6 +164,9 @@ function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   const advance = async (action: string | null) => {
     if (acting.current || disabled || !action) return;
     if (action.startsWith("end_") && !window.confirm(`End Round ${s.active_round} and close new uploads?`)) return;
+    if (action === "return_to_welcome" && !window.confirm(
+      "Return everyone to the welcome page before Round 1? Uploads will close and player tabs will hide. All submissions, scores, teams and tasks are kept.",
+    )) return;
     acting.current = true;
     setBusy(true);
     setAwaitingPhase(phase);
@@ -206,6 +209,17 @@ function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
             </p>
             <button className="btn btn-wide" disabled={disabled} onClick={() => void advance(reopen.action)}>
               {reopen.label}
+            </button>
+          </div>
+        )}
+        {phase !== "welcome" && (
+          <div style={{ marginTop: 18 }}>
+            <p className="muted tiny" style={{ margin: "0 0 8px" }}>
+              Finished a rehearsal? Return to before Round 1 without deleting anything.
+              Submissions, scores, teams, tasks and revealed secrets are kept.
+            </p>
+            <button className="btn btn-wide" disabled={disabled} onClick={() => void advance("return_to_welcome")}>
+              Return to welcome
             </button>
           </div>
         )}

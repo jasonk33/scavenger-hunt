@@ -263,6 +263,12 @@ Finish with **End Round 2**. Scores and media remain available. An accidental en
 can be undone with **Reopen Round 1** (before the remix reveal) or **Reopen Round 2**;
 neither action deletes or resets any data.
 
+After a rehearsal, use **Admin → Event → Return to welcome** and confirm. It
+returns everyone to the pre-Round-1 homepage and hides the player tabs, without
+deleting submissions or changing scores, assignments, tasks or revealed secrets.
+Uploads already in progress must finish first. This is separate from the
+destructive **Health → Reset submissions** action.
+
 Nobody re-scans or re-joins anything. Round 1 scores cannot move: every
 submission stored its team when it was created.
 

@@ -141,6 +141,39 @@ for (const [closed, open, action] of [[2, 1, "reopen_round_1"], [5, 4, "reopen_r
   });
 }
 
+for (const [phase, settings] of phases.slice(1)) {
+  test(`return_to_welcome from ${phase} changes only the three lifecycle settings`, async () => {
+    const original = structuredClone(settings);
+    const next = event().eventTransition(settings, "return_to_welcome");
+    assert.deepEqual(structuredClone(next), { active_round: 1, started_round: 0, submissions_open: false });
+    assert.deepEqual(settings, original);
+    const api = settingsRoute({ settings });
+    assert.equal((await api.post({ event_action: "return_to_welcome", expected_phase: phase })).status, 200);
+    assert.equal(api.writes.length, 1);
+    assert.deepEqual(api.writes[0], [
+      { key: "active_round", value: "1" },
+      { key: "started_round", value: "0" },
+      { key: "submissions_open", value: "false" },
+    ]);
+  });
+}
+
+test("return_to_welcome is protected against wrong PIN, stale state and in-progress uploads", async () => {
+  const body = { event_action: "return_to_welcome", expected_phase: "round2" };
+  for (const [options, expected] of [
+    [{ organizer: false }, 401],
+    [{ settings: phases[0][1] }, 409],
+    [{ uploading: true }, 409],
+    [{ writeError: true }, 503],
+  ]) {
+    const api = settingsRoute({ settings: phases[4][1], ...options });
+    const response = await api.post(body);
+    assert.equal(response.status, expected);
+    assert.deepEqual(api.writes, []);
+    if (options.uploading) assert.match(response.body.error, /before returning to welcome/i);
+  }
+});
+
 function settingsRoute({ settings = phases[0][1], organizer = true, uploading = false, readError = false, writeError = false } = {}) {
   const writes = [];
   const rpcCalls = [];
@@ -153,7 +186,7 @@ function settingsRoute({ settings = phases[0][1], organizer = true, uploading = 
           assert.equal(name, "transition_event");
           rpcCalls.push(structuredClone(args));
           if (writeError || readError) return { data: null, error: { message: "database unavailable" } };
-          if (uploading && args.expected_active_round === 1 && args.next_active_round === 2) {
+          if (uploading && (args.next_started_round === 0 || (args.expected_active_round === 1 && args.next_active_round === 2))) {
             return { data: "uploading", error: null };
           }
           writes.push(["active_round", "started_round", "submissions_open"].map((key) => ({
@@ -280,14 +313,15 @@ for (const option of ["uploading", "readError"]) {
     assert.equal(api.rpcCalls[0].next_active_round, 2);
   });
 
-  test("setup and the migration install the same atomic lifecycle function", () => {
-    const migration = readFileSync(new URL("../supabase/migrations/20260911043000_event_welcome.sql", import.meta.url), "utf8");
-    const setup = readFileSync(new URL("../supabase/setup.sql", import.meta.url), "utf8");
-    const start = migration.indexOf("create or replace function public.transition_event(");
-    assert.ok(start >= 0);
-    assert.ok(setup.includes(migration.slice(start).trim()));
-  });
 }
+
+test("setup and the latest migration install the same atomic lifecycle function", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260911044000_return_to_welcome.sql", import.meta.url), "utf8");
+  const setup = readFileSync(new URL("../supabase/setup.sql", import.meta.url), "utf8");
+  const start = migration.indexOf("create or replace function public.transition_event(");
+  assert.ok(start >= 0);
+  assert.ok(setup.includes(migration.slice(start).trim()));
+});
 
 test("a failed settings write reports failure, not a successful start", async () => {
   const api = settingsRoute({ writeError: true });

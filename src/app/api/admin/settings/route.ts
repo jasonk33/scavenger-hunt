@@ -42,6 +42,9 @@ export async function POST(req: Request) {
     if (error) return fail("Couldn't change the event stage. Try again.", 503);
     if (data === "stale") return fail("The event has moved on. Refresh and try again.", 409);
     if (data === "uploading") {
+      if (next.started_round === 0) {
+        return fail("An upload is still in progress. Let it finish or recover it in Health before returning to welcome.", 409);
+      }
       return fail("Round 1 still has an upload in progress. Let it finish or recover it in Health before revealing the new teams.", 409);
     }
     if (data !== "ok") return fail("Couldn't confirm the event stage. Refresh and try again.", 503);
