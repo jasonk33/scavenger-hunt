@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePoll } from "@/lib/client";
 import EvidenceEntryCard, { type EvidenceEntry } from "@/components/EvidenceEntry";
+import { VideoScope } from "@/components/EvidenceVideo";
 
 type Board = {
   round: number;
@@ -56,7 +57,7 @@ export default function LeaderboardPage() {
   const lead = rows[0]?.points ?? 0;
 
   return (
-    <>
+    <VideoScope key={shown}>
       <h1>Scores</h1>
 
       {activeRound !== null && (
@@ -168,6 +169,6 @@ export default function LeaderboardPage() {
           Round {shown} hasn&apos;t been set up. An organizer can add teams on the Admin screen.
         </div>
       )}
-    </>
+    </VideoScope>
   );
 }

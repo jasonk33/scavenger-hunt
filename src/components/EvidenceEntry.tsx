@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Score from "./Score";
+import EvidenceVideo from "./EvidenceVideo";
 
 export type EvidenceEntry = {
   id: string;
@@ -19,7 +20,8 @@ export type EvidenceEntry = {
 
 /**
  * Read-only view of one approved piece of evidence. A group can contain several
- * files, but only its first file loads until someone asks to see the rest.
+ * files, but only its first file is shown until someone asks to see the rest.
+ * Videos wait for a separate tap before loading.
  */
 export default function EvidenceEntryCard({
   entry,
@@ -55,13 +57,7 @@ export default function EvidenceEntryCard({
         {shown.map((m) => (
           <div className="media-box" key={m.id}>
             {m.isVideo ? (
-              <video
-                className="media"
-                controls
-                playsInline
-                preload="auto"
-                src={`${m.url}#t=0.1`}
-              />
+              <EvidenceVideo url={m.url} />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img

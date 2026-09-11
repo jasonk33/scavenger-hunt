@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePoll } from "@/lib/client";
 import Score from "@/components/Score";
 import { useEvent } from "@/components/EventShell";
+import EvidenceVideo, { VideoScope } from "@/components/EvidenceVideo";
 
 type Feed = {
   round: number;
@@ -43,13 +44,11 @@ export default function FeedPage() {
   // a judge undoing the round's only rejection, would otherwise unmount the
   // control and leave the screen filtered to nothing with no way back.
   const filter = rejectedCount > 0 ? filterPref : "all";
-  // Filtered here rather than at the API so switching is instant and doesn't
-  // re-download anything. It also cuts what renders, which is what actually
-  // costs bandwidth -- videos load eagerly.
+  // Filter locally so switching doesn't need another request.
   const items = filter === "all" ? all : all.filter((it) => it.status === filter);
 
   return (
-    <>
+    <VideoScope key={`${shown}:${filter}`}>
       <h1>Feed</h1>
 
       <div className="row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
@@ -94,17 +93,14 @@ export default function FeedPage() {
           <Post key={it.id} item={it} />
         ))}
       </div>
-    </>
+    </VideoScope>
   );
 }
 
 /** One judged submission. Several files are one post, because they were one
     thing the team did and one decision the judge made. */
 function Post({ item: it }: { item: Feed["items"][number] }) {
-  // Only the first file renders up front. Videos in this feed load eagerly --
-  // preload="auto" is required or iOS shows an untappable black box -- so a
-  // three-clip post that expanded on its own would cost three fetches from
-  // every phone that merely scrolled past it.
+  // Keep extra files behind a tap; each video is separately tap-to-load.
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? it.media : it.media.slice(0, 1);
   const hidden = it.media.length - shown.length;
@@ -136,16 +132,7 @@ function Post({ item: it }: { item: Feed["items"][number] }) {
               {shown.map((m) => (
                 <div className="media-box" key={m.id}>
                   {m.isVideo ? (
-                    /* preload="auto" plus the #t=0.1 fragment forces iOS Safari
-                       to render a real first frame instead of an untappable
-                       black box. */
-                    <video
-                      className="media"
-                      controls
-                      playsInline
-                      preload="auto"
-                      src={`${m.url}#t=0.1`}
-                    />
+                    <EvidenceVideo url={m.url} />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img className="media" src={m.url} alt={it.taskTitle} loading="lazy" />

@@ -357,6 +357,8 @@ try {
     await expect(page.getByText("5 pts", { exact: true })).toBeVisible();
     await expect(page.getByText("+7 bonus", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Show 1 more file", exact: true }).click();
+    await expect(page.locator("video")).toHaveCount(0);
+    await page.getByRole("button", { name: "View video", exact: true }).click();
     await expect(page.locator("video")).toHaveAttribute("preload", "auto");
     await expect(page.locator("video")).toHaveAttribute("src", /#t=0.1$/);
     await expect.poll(() => page.locator("video").evaluate((v) => v.readyState)).toBeGreaterThan(0);

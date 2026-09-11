@@ -229,6 +229,11 @@ Scores lists each team's members beneath its task count. Round 2 stays hidden
 there until it starts, even after its teams are revealed on Home. During the
 break, Round 1 scores and the feed remain available.
 
+In Feed, expanded Scores and task evidence, tap **View video** to load a clip.
+Opening another closes the previous player; **Close video** stops it loading.
+Browsing does not preload the video collection, and no history is removed.
+The judge's current evidence and local upload previews still load directly.
+
 **Before the day**
 
 1. Canvas → Roster → update the live guest list.

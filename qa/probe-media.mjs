@@ -84,6 +84,9 @@ try {
   const feed = await ctx.newPage();
   await feed.goto(`${BASE}/feed`, { waitUntil: "networkidle" });
   await feed.waitForTimeout(2500);
+  check("feed videos wait for a tap", await feed.locator("video").count() === 0);
+  await feed.getByRole("button", { name: "View video", exact: true }).first().click();
+  await feed.waitForFunction(() => document.querySelector("video")?.readyState >= 1, undefined, { timeout: 15000 });
   const feedImgs = await feed.evaluate(() =>
     [...document.querySelectorAll(".media-box img, .media-box video")].map((el) =>
       el.tagName === "IMG"

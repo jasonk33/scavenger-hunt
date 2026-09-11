@@ -152,7 +152,9 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
    is deliberate. Without it Chrome **downloads** every iPhone video instead of playing it and
    judging stops working.
 2. `<video>` needs `preload="auto"` **and** a `#t=0.1` URL fragment, or iOS renders an
-   untappable black box instead of a first frame. This is why the feed cannot lazy-load video.
+   untappable black box instead of a first frame. Browsing uses `EvidenceVideo` to mount
+   a player only after a tap; do not remove those attributes from the opened player.
+   The judge's current evidence and local upload previews deliberately still load directly.
 3. The file input must **never** gain a `capture` attribute — players shoot first and upload
    later, and `capture` forces the camera.
 4. Inputs stay **≥16px** (`globals.css` uses 17px) or iOS auto-zooms on focus.
@@ -371,8 +373,10 @@ the confident wrong answer.
 - `api()` in `src/lib/client.ts` bounds JSON requests to **15 seconds**, including reading
   the response body, so stalled polls can recover. Keep caller cancellation wired through.
   This deadline must never apply to the direct tus media upload.
-- `/api/feed` clamps to `limit=400` (max 500) and renders video with `preload="auto"`, so a
-  feed open eagerly fetches every clip on the page. A cost question, not a correctness one.
+- `/api/feed` keeps its `limit=400` (max 500) history. Feed, Scores and task evidence share
+  one `VideoScope` per page: only the selected `EvidenceVideo` mounts a player. Keep this
+  scope above individual cards, preserve it across polls, and release the old video's
+  source on close/collapse/replacement so it stops buffering. Do not cap history to save bandwidth.
 - Two recurring bug classes, both of which have produced every serious bug so far:
   **a screen asserting a result during its pre-load window** (`qa/probe-loading.mjs` holds each
   data endpoint open and asserts screens never claim a result they don't have — don't weaken

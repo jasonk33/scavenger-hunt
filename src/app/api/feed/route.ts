@@ -25,13 +25,11 @@ export async function GET(req: Request) {
    * Five teams working through 79 tasks can produce a few hundred, and every
    * rejection now counts against this too.
    *
-   * Photos are lazy-loaded so extra rows are nearly free, but videos render with
-   * preload="auto" (required, or iOS shows an untappable black box), so each one
-   * starts fetching as soon as it is rendered.
+   * Photos are lazy-loaded and videos are tap-to-load, so keeping the history
+   * available does not start a download for every clip.
    *
    * The cap counts FILES, while the feed shows one post per group. Multi-file
-   * submissions therefore make it show fewer posts, never more -- which is the
-   * direction that protects the egress budget rather than spending it.
+   * submissions therefore make it show fewer posts, never more.
    */
   const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 400));
   const sb = db();
@@ -90,10 +88,7 @@ export async function GET(req: Request) {
       return {
         id: s.id,
         status: s.status,
-        // Only the first is rendered up front; the rest sit behind a tap. Every
-        // video in a feed post fetches eagerly the moment it renders, so a
-        // three-clip submission that auto-expanded would cost three fetches
-        // from every phone that scrolled past it.
+        // Extra files stay behind a tap; videos also need an explicit load.
         media: files.map((f) => ({
           id: f.id,
           url: mediaUrl(f.object_name),

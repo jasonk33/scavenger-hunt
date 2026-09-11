@@ -6,6 +6,7 @@ import { api, errorMessage, fmtBytes, getMe, getSaved, inkOn, setMe, setSaved, s
 import { groupBy, NOTE_MAX } from "@/lib/groups";
 import { isJwt, isVideoFile, playableType, uploadFile, createWakeLock, type UploadHandle } from "@/lib/upload";
 import EvidenceEntryCard, { type EvidenceEntry } from "@/components/EvidenceEntry";
+import EvidenceVideo, { VideoScope } from "@/components/EvidenceVideo";
 import Score from "@/components/Score";
 
 type Task = {
@@ -671,7 +672,7 @@ export default function SubmitPage() {
   const blameOtherFilters = bucketInRound && alsoNarrowing.length > 0;
 
   return (
-    <>
+    <VideoScope key={`${me.id}:${data?.settings.round}`}>
       <input
         ref={fileInput}
         type="file"
@@ -1055,7 +1056,7 @@ export default function SubmitPage() {
         </section>
       ))}
 
-    </>
+    </VideoScope>
   );
 }
 
@@ -1347,9 +1348,7 @@ function SubmissionView({
         {files.map((f) => (
           <div className="media-box" key={f.id}>
             {f.isVideo ? (
-              /* Same iOS rule as the feed: preload="auto" and the #t=0.1
-                 fragment, or Safari renders an untappable black box. */
-              <video className="media" controls playsInline preload="auto" src={`${f.mediaUrl}#t=0.1`} />
+              <EvidenceVideo url={f.mediaUrl} />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img className="media" src={f.mediaUrl} alt="Your submission" />

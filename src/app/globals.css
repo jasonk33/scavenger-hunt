@@ -796,6 +796,33 @@ h2 {
   background: #000;
 }
 
+.video-load {
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.video-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.video-error {
+  position: absolute;
+  top: 40%;
+  left: 12px;
+  right: 12px;
+  padding: 10px;
+  color: #fff;
+  background: #000;
+  text-align: center;
+}
+
 /* The check-what-you-picked preview on the upload card. Shorter than a media box
    anywhere else on purpose: at full height it pushed the note field -- the whole
    reason the card is here rather than at the top of the page -- off the bottom
