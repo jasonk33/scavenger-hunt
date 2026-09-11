@@ -38,23 +38,12 @@ create table if not exists roster (
   primary key (round, player_id)
 );
 
--- ONE task list. `tasks` is both what players see and where tasks are planned:
--- the canvas in .github/extensions/scavenger-tasks edits these rows directly and
--- every edit is live at once, exactly like the roster.
---
--- There used to be a second `task_board` table holding wording, points and cuts
--- back until someone published. It bought nothing -- Admin already edited tasks
--- live and mirrored the same fields back onto the board, and the columns the
--- board added on top (the ratings, the notes) are never shown to a player at
--- all. supabase/migrate-tasks-one-table.sql folds it in and explains the rest.
+-- The canvas and Admin edit this one live task list, field by field.
 create table if not exists tasks (
   id             uuid primary key default gen_random_uuid(),
   round          int  not null check (round in (1, 2)),
 
-  -- The stable key. A secret challenge is offered in BOTH halves of the event,
-  -- and `round` is 1 or 2, so it is two rows sharing one slug -- the only thing
-  -- the canvas has to group by. The default means an insert that has no opinion
-  -- (Admin, a QA fixture) still gets a unique one.
+  -- Stable identity. Historical cut secret pairs retain a shared slug.
   slug           text not null default gen_random_uuid()::text,
 
   -- What a player reads. The planning doc's original wording is kept beside it
@@ -65,17 +54,13 @@ create table if not exists tasks (
   doc_title      text not null default '',
 
   points         int  not null check (points > 0),
+  -- The trigger below normalizes legacy competition writes to fixed.
   scoring_mode   text not null default 'fixed'
                  check (scoring_mode in ('fixed', 'quantity', 'competition')),
   measurement_label     text not null default '',
   points_per_unit       int not null default 0 check (points_per_unit >= 0),
   competition_bonus     int not null default 0 check (competition_bonus >= 0),
-  -- Which team won this task's competition bonus, or null while it is still
-  -- undecided. Picked by an organizer once the round is over rather than raced
-  -- for live: see supabase/migrations/20260826170000_round_end_competition_winner.sql.
-  -- A task row belongs to one round, so a secret offered in both halves has two
-  -- rows and two independent winners. The API checks the team is in the task's
-  -- round, which a foreign key cannot express.
+  -- Dormant compatibility columns: old routes must survive either deploy order.
   winner_team_id uuid references teams(id) on delete set null,
   requires_video boolean not null default false,
   is_secret      boolean not null default false,
@@ -86,25 +71,21 @@ create table if not exists tasks (
   -- order, and the tie-break within a tier below.
   doc_order      int  not null default 999,
 
-  -- The player's order, derived rather than maintained. Tier ascending with the
-  -- secrets last, which is what the old publish step used to compute and then
-  -- renumber densely on every cut.
+  -- Assigned points, then document order. The legacy offset only affects cut rows.
   sort_order     int generated always as
                    ((case when is_secret then 500000 else 0 end) + points * 1000 + doc_order) stored,
 
-  -- Planning only, never shown to a player. difficulty/guts/luck drive the
-  -- suggested tier; payoff and risk are the keep/cut axes.
+  -- Retired ratings remain unread compatibility storage.
   difficulty     int  not null default 3 check (difficulty between 1 and 5),
   guts           int  not null default 3 check (guts       between 1 and 5),
   luck           int  not null default 3 check (luck       between 1 and 5),
   payoff         int  not null default 3 check (payoff     between 1 and 5),
   risk           int  not null default 1 check (risk       between 1 and 5),
+  -- The planner still edits props, notes, and wording follow-up.
   prop           text not null default '',
   note           text not null default '',
   rewrite        boolean not null default false,
-  -- The tier suggestion this task's owner rejected, or null for "never
-  -- dismissed". A number rather than a flag so that changing a rating -- which
-  -- moves the suggestion -- re-raises it. See the canvas's tier.mjs.
+  -- Retired point-suggestion state.
   tier_ok        int check (tier_ok in (1, 3, 5, 7, 10)),
 
   created_at     timestamptz not null default now(),
@@ -222,9 +203,7 @@ end $$;
 create unique index if not exists tasks_round_slug_idx on tasks (round, slug);
 drop index if exists tasks_round_board_id_idx;
 
--- Only a secret challenge may repeat a slug, and only once per round. Two
--- unrelated tasks sharing one would be merged into a single entry by the canvas,
--- which patches every row with a given slug at once.
+-- Preserve historical paired slugs without allowing duplicates in the live list.
 create unique index if not exists tasks_slug_solo_idx on tasks (slug) where not is_secret;
 
 -- sort_order was a plain column the old publish step recomputed and renumbered.
@@ -269,72 +248,91 @@ create table if not exists settings (
   value text
 );
 
--- Scoring lives in one place so the leaderboard, the export and the team's own
--- progress view can never disagree.
---
--- "A task only counts once" is enforced here rather than with a unique constraint:
--- two teammates racing to submit the same task should not produce a hard error in
--- the field. Duplicates are allowed to exist; only one of them is counted.
---
--- The one counted is the one judged MOST RECENTLY, not the highest-scoring one.
--- Every duplicate normally carries the same value, so this only bites when a
--- task's points were edited between two approvals -- and there the judge's
--- latest ruling is the one that should stand. Picking the maximum instead meant
--- re-approving a re-submission at a lower value silently kept the old, higher
--- score, which looked exactly like the decision had been ignored.
---
--- Rejections are excluded rather than counted as "latest", so rejecting a
--- duplicate cannot un-score a task the team already got right.
---
--- A competition task adds its bonus to exactly one team: the one an organizer
--- named after the round ended. It used to go to whoever held the highest
--- measured value, recomputed on every read, which meant a finished task lost
--- points when somebody else was judged.
+-- BEGIN task feature retirement
+-- These compatibility guards accept old payloads without restoring features.
+-- Keep the old scoring checks and tier_model setting: rejecting a stale write
+-- or loading an old planner's defaults during deployment would be worse.
+create or replace function public.retire_task_features()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.requires_video := false;
+  new.competition_bonus := 0;
+  new.winner_team_id := null;
+  if new.scoring_mode = 'competition' then
+    new.scoring_mode := 'fixed';
+  end if;
+  -- Historical pairs share a slug; removing their marker breaks uniqueness.
+  if tg_op = 'UPDATE' and old.is_secret then
+    new.is_secret := true;
+  end if;
+  if new.is_secret then
+    new.active := false;
+  end if;
+  return new;
+end $$;
+
+create or replace trigger retire_task_features
+before insert or update on public.tasks
+for each row execute function public.retire_task_features();
+
+create or replace function public.retire_submission_features()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.scoring_mode_snapshot = 'competition' then
+    new.scoring_mode_snapshot := 'fixed';
+  end if;
+  new.competition_bonus_snapshot := 0;
+  return new;
+end $$;
+
+create or replace trigger retire_submission_features
+before insert or update on public.submissions
+for each row execute function public.retire_submission_features();
+
+-- No rows, identities, evidence, assigned points or quantity counts are removed.
+-- Cut rows stay cut, and old secret markers/reveal timestamps remain opaque.
+update public.tasks set active = false where is_secret and active;
+update public.tasks set requires_video = false, competition_bonus = 0, winner_team_id = null
+where requires_video or competition_bonus <> 0 or winner_team_id is not null;
+update public.tasks set scoring_mode = 'fixed' where scoring_mode = 'competition';
+update public.submissions set competition_bonus_snapshot = 0
+where competition_bonus_snapshot <> 0;
+update public.submissions set scoring_mode_snapshot = 'fixed' where scoring_mode_snapshot = 'competition';
+-- END task feature retirement
+
+-- One latest approved decision per denormalized team/round/task, not per file.
+-- Do not filter cut tasks: their already-approved evidence still scores.
+-- Fixed/legacy approvals keep their stored award; quantity uses its snapshots.
 create or replace view team_scores as
 with best as (
   select distinct on (s.round, s.team_id, s.task_id)
-         s.round,
-         s.team_id,
-         s.task_id,
-         s.task_points,
-         s.measurement_value,
-         s.points_awarded,
+         s.round, s.team_id, s.task_id, s.task_points, s.measurement_value, s.points_awarded,
          coalesce(s.scoring_mode_snapshot, t.scoring_mode) as scoring_mode,
-         coalesce(s.points_per_unit_snapshot, t.points_per_unit) as points_per_unit,
-         coalesce(s.competition_bonus_snapshot, t.competition_bonus) as competition_bonus,
-         -- Not snapshotted, and cannot be: the winner is picked after the round,
-         -- long after these rows were judged.
-         t.winner_team_id
+         coalesce(s.points_per_unit_snapshot, t.points_per_unit) as points_per_unit
   from submissions s
   join tasks t on t.id = s.task_id
-  where s.status = 'approved'
-    and s.points_awarded is not null
+  where s.status = 'approved' and s.points_awarded is not null
   order by s.round, s.team_id, s.task_id,
            s.judged_at desc nulls last, s.created_at desc, s.id desc
 ),
 scored as (
   select *,
-    (case
-      when scoring_mode = 'quantity' then
-        task_points + coalesce(measurement_value, 0) * points_per_unit
-      else task_points
-    end
-    + case
-        when scoring_mode = 'competition' and winner_team_id = team_id
-        then competition_bonus
-        else 0
-      end)::int as pts
+    (case when scoring_mode = 'quantity' then
+      task_points + coalesce(measurement_value, 0) * points_per_unit
+    else points_awarded end)::int as pts
   from best
 )
-select t.id                                 as team_id,
-       t.round,
-       t.name,
-       t.color,
-       t.sort_order,
-       coalesce(sum(b.pts), 0)::int         as points,
-       count(b.task_id)::int                as tasks_scored
+select t.id as team_id, t.round, t.name, t.color, t.sort_order,
+       coalesce(sum(s.pts), 0)::int as points,
+       count(s.task_id)::int as tasks_scored
 from teams t
-left join scored b on b.team_id = t.id and b.round = t.round
+left join scored s on s.team_id = t.id and s.round = t.round
 group by t.id, t.round, t.name, t.color, t.sort_order;
 
 -- A discretionary 0-2 "creativity" bonus and an award-candidate star used to
