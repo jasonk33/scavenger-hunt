@@ -19,7 +19,8 @@ export async function GET() {
       sb.from("roster").select("round,player_id,team_id"),
       sb
         .from("tasks")
-        .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,winner_team_id,requires_video,is_secret,revealed_at,sort_order,active")
+        .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,sort_order,active")
+        .eq("is_secret", false)
         .order("round")
         .order("sort_order")
         .order("id"),
@@ -63,7 +64,7 @@ export async function GET() {
     players: players ?? [],
     teams: teams ?? [],
     roster: roster ?? [],
-    tasks: tasks ?? [],
+    tasks: (tasks ?? []).map((task) => ({ ...task, scoring_mode: task.scoring_mode === "quantity" ? "quantity" : "fixed" })),
     stuck,
     counts: { 1: counts(1), 2: counts(2) },
     // Whether /api/admin/reset would answer at all. The route checks this for

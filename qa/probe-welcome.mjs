@@ -112,8 +112,7 @@ try {
           event: event(), me, team: roster()[0].team,
           tasks: [{
             id: `task-${event().activeRound}`, title: `__qa Round ${event().activeRound} task`, points: 3,
-            scoring_mode: "fixed", measurement_label: "", points_per_unit: 0, competition_bonus: 0,
-            competition: null, requires_video: false, is_secret: false,
+            scoring_mode: "fixed", measurement_label: "", points_per_unit: 0,
           }],
           submissions: [], stats: { submitted: 0, pending: 0, approved: 0, rejected: 0, points: 0 },
           rejections: [], upload: { endpoint: "", anonKey: "", bucket: "" },

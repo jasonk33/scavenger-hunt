@@ -22,13 +22,12 @@ const teams = [
 const tasks = [
   { id: "task1", title: "__qa A photo with a stranger", points: 3 },
   { id: "task2", title: "__qa Gather extra pigeons", points: 5, scoring_mode: "quantity", measurement_label: "extra pigeon", points_per_unit: 1 },
-  { id: "task3", title: "__qa Rejected performance", points: 10, requires_video: true },
-  { id: "task4", title: "__qa Best birthday picture", points: 5, scoring_mode: "competition", competition_bonus: 7, winner_team_id: "t1" },
-  { id: "task5", title: "__qa A secret challenge", points: 5, is_secret: true },
+  { id: "task3", title: "__qa Rejected performance", points: 10 },
+  { id: "task4", title: "__qa Collect birthday signatures", points: 5, scoring_mode: "quantity", measurement_label: "extra signature", points_per_unit: 1 },
+  { id: "task5", title: "__qa Another birthday photo", points: 5 },
 ].map((t) => ({
   round: 1, active: true, scoring_mode: "fixed", measurement_label: "", points_per_unit: 0,
-  competition_bonus: 0, winner_team_id: null, requires_video: false, is_secret: false,
-  revealed_at: null, competition: null, ...t,
+  ...t,
 }));
 let phase = "round1";
 const event = () => ({
@@ -39,11 +38,10 @@ const media = (id, video = false) => ({ id, url: `${BASE}/__qa/${video ? "clip.m
 const item = (id, taskIndex, status, extra = {}) => {
   const task = tasks[taskIndex];
   return {
-    id, taskId: task.id, status, media: [media(id)], isVideo: false, sizeBytes: 12345,
+    id, taskId: task.id, status, media: [media(id)], sizeBytes: 12345,
     note: "Look at the pigeon on the left.", taskTitle: task.title, taskPoints: task.points,
     scoringMode: task.scoring_mode, measurementLabel: task.measurement_label,
     measurementValue: null, pointsPerUnit: task.points_per_unit,
-    competitionBonus: task.competition_bonus, requiresVideo: task.requires_video, isSecret: false,
     teamId: teams[0].id, teamName: teams[0].name, teamColor: teams[0].color, playerName: me.name,
     duplicate: false, pointsAwarded: status === "approved" ? task.points : null,
     awardedBase: task.points, awardedBonus: 0, rejectReason: null, ...extra,
@@ -53,7 +51,7 @@ let items = [
   item("s1", 1, "pending"),
   item("s2", 0, "pending"),
   item("s3", 2, "rejected", { rejectReason: "The stranger is out of frame. Please include everyone." }),
-  item("s4", 3, "approved", { awardedBonus: 7, media: [media("s4"), media("s4b", true)] }),
+  item("s4", 3, "approved", { awardedBonus: 7, pointsAwarded: 12, measurementValue: 7, media: [media("s4"), media("s4b", true)] }),
 ];
 let queueError = false;
 let adminError = false;
@@ -79,6 +77,10 @@ let uploads = 0;
 let holdTaskWrite = false;
 let releaseTaskWrite = null;
 let stuck = [];
+// Old responses may finish after deployment. Inject retired metadata only into
+// reads so the absence checks would fail against the former rendering paths.
+let legacyPlayerPayload = true;
+let legacyJudgePayload = true;
 const refused = [];
 const pageErrors = [];
 const mutations = [];
@@ -89,7 +91,11 @@ const entries = () => items.filter((i) => i.status === "approved").map((i) => ({
 }));
 const state = () => ({
   settings: { round: 1, submissions_open: event().submissionsOpen, saved_epoch: "" },
-  event: event(), me, team: teams[0], tasks: tasks.filter((t) => t.active && (!t.is_secret || t.revealed_at)),
+  event: event(), me, team: teams[0], tasks: tasks.filter((t) => t.active).map((t) =>
+    legacyPlayerPayload && t.id === "task1" ? {
+      ...t, requires_video: true, is_secret: true, scoring_mode: "competition",
+      competition_bonus: 99, competition: { team: "__qa Retired winner", bonus: 99 },
+    } : t),
   submissions: items.flatMap((i) => i.media.map((m, index) => ({
     id: m.id, task_id: i.taskId, player_id: me.id, status: i.status,
     points_awarded: i.pointsAwarded, basePoints: i.awardedBase, bonusPoints: i.awardedBonus,
@@ -159,7 +165,10 @@ try {
         const round = Number(url.searchParams.get("round") || "1");
         const snapshot = structuredClone({ round, teams,
           queue: round === 2 ? [item("round2", 0, "pending", { taskTitle: "__qa Round 2 evidence" })]
-            : items.filter((i) => i.status === "pending"),
+            : items.filter((i) => i.status === "pending").map((i) =>
+              legacyJudgePayload && i.id === "s1" ? {
+                ...i, requiresVideo: true, isSecret: true, scoringMode: "competition", competitionBonus: 99,
+              } : i),
           recent: round === 2 ? [] : items.filter((i) => ["approved", "rejected"].includes(i.status)), otherRoundPending: 0 });
         if (holdNextQueue && (holdQueueRound === null || round === holdQueueRound)) {
           holdNextQueue = false;
@@ -213,7 +222,6 @@ try {
         if (taskSaveError) return respond({ error: "Task changes could not be saved" }, 503);
         const t = tasks.find((t) => t.id === body.id);
         if (body.title !== undefined) t.title = body.title;
-        if (body.revealed !== undefined) t.revealed_at = body.revealed ? "2026-09-11" : null;
         if (body.active !== undefined) t.active = body.active;
         return respond({ ok: true });
       }
@@ -225,7 +233,8 @@ try {
       }
       if (url.pathname === "/api/admin/tasks" && req.method() === "POST") {
         const t = { ...tasks[0], id: `created-${tasks.length}`, title: body.title,
-          points: body.points, round: body.round, is_secret: body.isSecret };
+          points: body.points, round: body.round, scoring_mode: body.scoringMode ?? "fixed",
+          measurement_label: body.measurementLabel ?? "", points_per_unit: body.pointsPerUnit ?? 0 };
         tasks.push(t);
         return respond({ id: t.id });
       }
@@ -240,10 +249,10 @@ try {
           return respond({ error: "Enter the measured amount before approving." }, 400);
         }
         i.status = body.action === "reset" ? "pending" : body.action === "approve" ? "approved" : "rejected";
-        i.pointsAwarded = i.status === "approved" ? i.taskPoints : null;
         i.rejectReason = body.reason ?? null;
         i.measurementValue = body.measurementValue ?? null;
         i.awardedBonus = i.scoringMode === "quantity" ? (i.measurementValue ?? 0) * i.pointsPerUnit : 0;
+        i.pointsAwarded = i.status === "approved" ? i.taskPoints + i.awardedBonus : null;
         if (undoOnApprove && body.action === "approve") i.status = "pending";
         if (failRefreshOnApprove && body.action === "approve") queueError = true;
         if (holdNextDecision) {
@@ -314,6 +323,15 @@ try {
   await shot("home");
   await page.goto(`${BASE}/submit`);
   await expect(page.getByText(tasks[0].title, { exact: true })).toBeVisible();
+  await check("Player ignores retired badges in an old API response", async () => {
+    try {
+      await expect(page.locator(".pill").filter({ hasText: /video[- ]only|secret|best one wins|won \+99/i })).toHaveCount(0);
+      await expect(page.getByText(/leader bonus|competition winner/i)).toHaveCount(0);
+      await expect(page.getByText("+1 pt per extra pigeon", { exact: true })).toBeVisible();
+    } finally {
+      legacyPlayerPayload = false;
+    }
+  });
   await check("Task filters and saved tasks remain recoverable", async () => {
     await page.getByRole("button", { name: "Save for later", exact: true }).first().click();
     await page.getByRole("button", { name: /Filters/ }).click();
@@ -336,6 +354,7 @@ try {
   await page.goto(`${BASE}/feed`);
   await expect(page.getByText(tasks[3].title, { exact: true })).toBeVisible();
   await check("Grouped feed shows baseline, bonus and playable clip", async () => {
+    await expect(page.getByText("5 pts", { exact: true })).toBeVisible();
     await expect(page.getByText("+7 bonus", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Show 1 more file", exact: true }).click();
     await expect(page.locator("video")).toHaveAttribute("preload", "auto");
@@ -360,11 +379,29 @@ try {
 
   await page.goto(`${BASE}/judge`);
   await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+  await check("Judge ignores retired badges and leader guidance in an old API response", async () => {
+    try {
+      await expect(page.getByText(tasks[1].title, { exact: true }).first()).toBeVisible();
+      await expect(page.locator(".pill").filter({ hasText: /video[- ]only|secret/i })).toHaveCount(0);
+      await expect(page.getByText("Leader bonus", { exact: true })).toHaveCount(0);
+      await expect(page.getByText(/whichever team you and Anna pick/i)).toHaveCount(0);
+      await expect(page.getByRole("spinbutton")).toHaveCount(0);
+    } finally {
+      legacyJudgePayload = false;
+    }
+  });
   await check("Quantity judging sends the count, not discretionary points", async () => {
+    await expect(page.getByRole("spinbutton")).toBeVisible();
+    await expect(page.getByText("+1 pt per extra pigeon, on top of the 5 above", { exact: true })).toBeVisible();
     await page.getByRole("spinbutton").fill("3");
     await page.getByRole("button", { name: "Approve", exact: true }).click();
     await expect.poll(() => items[0].status).toBe("approved");
     assert.equal(items[0].measurementValue, 3);
+    const decision = mutations.filter((m) => m.path === "/api/judge/s1").at(-1).body;
+    assert.deepEqual(Object.keys(decision).sort(), ["action", "expectedStatus", "measurementValue"]);
+    assert.equal(items[0].pointsAwarded, 8);
+    const reviewed = page.locator(".stack .card-flat").filter({ hasText: tasks[1].title });
+    await expect(reviewed.getByText("+3 bonus", { exact: true })).toBeVisible();
     await expect(page.getByText("Judged this round", { exact: false })).toBeVisible();
   });
   await check("Another organizer's Undo restores an item in this judge's queue", async () => {
@@ -490,9 +527,11 @@ try {
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "tasks", exact: true }).click();
-  await check("Secret reveal is independent of its five-point tier", async () => {
-    await page.getByRole("button", { name: "Reveal", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Live", exact: true })).toBeVisible();
+  await check("Admin has no task reveal or leader controls", async () => {
+    await expect(page.getByText("Secret challenges", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Leader bonuses", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^(?:Reveal|Live|video only|secret)$/i })).toHaveCount(0);
+    await expect(page.getByPlaceholder("Leader bonus", { exact: true })).toHaveCount(0);
   });
   await shot("admin-tasks");
   await page.getByRole("button", { name: "health", exact: true }).click();
@@ -571,6 +610,9 @@ try {
     taskSaveError = true;
     try {
       await page.getByRole("button", { name: new RegExp(`${title}.*edit`) }).click();
+      const editor = page.locator(".card").filter({ has: page.getByRole("button", { name: "Save", exact: true }) }).last();
+      await expect(editor.getByRole("button", { name: /^(?:video only|secret)$/i })).toHaveCount(0);
+      assert.deepEqual(await editor.locator("select option").allTextContents(), ["Fixed score", "Extra per item"]);
       const draft = page.locator("textarea");
       await draft.fill("__qa Corrected task wording");
       await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -587,23 +629,36 @@ try {
       await page.getByRole("button", { name: "tasks", exact: true }).click();
     }
   });
-  await check("A normal seven-point task is not silently made secret", async () => {
+  await check("Assigned seven-point tasks have no retired feature controls or payloads", async () => {
     const form = page.locator(".card").filter({ has: page.getByText("Add a task", { exact: true }) });
+    await expect(page.getByText("Secret challenges", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Leader bonuses", { exact: true })).toHaveCount(0);
+    await expect(form.getByRole("button", { name: /video only|secret/i })).toHaveCount(0);
+    assert.deepEqual(await form.locator("select option").allTextContents(), ["Fixed score", "Extra per item"]);
     await form.getByPlaceholder("Task description").fill("__qa Public seven-point task");
     await form.getByRole("button", { name: "7", exact: true }).click();
     await form.getByRole("button", { name: "Add to Round 1", exact: true }).click();
     await expect.poll(() => tasks.at(-1).title).toBe("__qa Public seven-point task");
-    assert.equal(tasks.at(-1).is_secret, false);
+    assert.equal(tasks.at(-1).points, 7);
+    assert.equal(tasks.at(-1).scoring_mode, "fixed");
+    const body = mutations.filter((m) => m.path === "/api/admin/tasks" && m.method === "POST").at(-1).body;
+    for (const key of ["isSecret", "requiresVideo", "competitionBonus", "winnerTeamId"]) {
+      assert.equal(Object.hasOwn(body, key), false);
+    }
   });
-  await check("A five-point secret is an explicit choice independent of its tier", async () => {
+  await check("Per-item tasks keep their assigned points and unit rate", async () => {
     const form = page.locator(".card").filter({ has: page.getByText("Add a task", { exact: true }) });
-    await form.getByPlaceholder("Task description").fill("__qa Explicit five-point secret");
+    await form.getByPlaceholder("Task description").fill("__qa Count extra stickers");
     await form.getByRole("button", { name: "5", exact: true }).click();
-    await form.getByRole("button", { name: "secret", exact: true }).click();
+    await form.locator("select").selectOption("quantity");
+    await form.getByPlaceholder(/One unit/).fill("extra sticker");
+    await form.getByPlaceholder("Extra points per item", { exact: true }).fill("2");
     await form.getByRole("button", { name: "Add to Round 1", exact: true }).click();
-    await expect.poll(() => tasks.at(-1).title).toBe("__qa Explicit five-point secret");
+    await expect.poll(() => tasks.at(-1).title).toBe("__qa Count extra stickers");
     assert.equal(tasks.at(-1).points, 5);
-    assert.equal(tasks.at(-1).is_secret, true);
+    assert.equal(tasks.at(-1).scoring_mode, "quantity");
+    assert.equal(tasks.at(-1).measurement_label, "extra sticker");
+    assert.equal(tasks.at(-1).points_per_unit, 2);
   });
   await check("A task being saved cannot accept edits that its response would discard", async () => {
     await page.getByRole("button", { name: new RegExp(`${tasks[0].title}.*edit`) }).click();

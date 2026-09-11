@@ -39,9 +39,8 @@ they are not the location for new changes.
   before deploying the matching code**, and expect Admin's task editor to be the
   only thing broken in between — no player-facing query reads a column that
   changes. It is one transaction, so a failure leaves nothing half-applied.
-- `supabase/migrate-competitive-scoring.sql` — adds fixed, measurable, and
-  competition scoring modes. Existing tasks stay fixed-value tasks. Run it before
-  configuring a task with a measurement or a leader bonus.
+- `supabase/migrate-competitive-scoring.sql` — historical introduction of
+  per-item and competition scoring. Competition scoring has since been retired.
 - `supabase/migrate-simple-scoring.sql` — simplifies measurable scoring to
   baseline plus points for every counted item. Run this after the earlier
   competitive-scoring migration.
@@ -89,7 +88,7 @@ not the current guest list. After setup, use the canvas's **Roster** tab for
 RSVPs, team names and assignments. Do not re-run the seed to update the roster:
 it replaces those live decisions with its initial allocations.
 
-Both commands delete **every submission and its linked media**, re-hide secrets
+Both commands delete **every submission and its linked media**
 and return to the pre-event welcome page. They do not sweep orphaned files from the bucket. Both are destructive,
 so they refuse to run once anyone outside that guest list has submitted
 something; that refusal does not protect submissions from guests on the list.
@@ -98,35 +97,33 @@ something; that refusal does not protect submissions from guests on the list.
 To clear only the testing — the submissions and their media, keeping the guest
 list, teams and tasks — set `ALLOW_RESET=1` and use **Admin → health → Reset
 submissions**. It asks you to type `RESET`, then deletes every submission, the
-media each one uploaded and every awarded leader bonus, and clears the tasks
+media each one uploaded, and clears the tasks
 players have starred on their phones. There is no undo. Leave
 `ALLOW_RESET` unset in Vercel on the day and the button is not rendered and the
 route refuses, so a mis-tap cannot destroy the afternoon's photos.
 
-Task scoring starts at the normal point tier. In Admin or the planner, choose
-`Extra per item` for values such as shirts or signatures, or `Leader bonus`
-for a task where the best entry earns extra. Judges only ever enter the number of
-extra items, never arbitrary points — a leader-bonus task is approved or rejected
-at face value. Once a round is over, pick the winning team for each leader bonus
-in Admin; nothing is awarded until you do, and Admin counts how many are still
-undecided. Players never see a running leader, so nobody spends the round redoing
-a task to overtake someone.
+Task scoring starts at the assigned points. In Admin or the planner, choose
+`Extra per item` when a task awards more for a count such as signatures.
+Judges only enter the number of extra items, never arbitrary points.
+Photos and clips are accepted for every task; the judge decides whether they
+show enough evidence. There are no video-only tags, secrets, leader bonuses
+or rating-based point suggestions.
 
 ### 4. Edit the tasks and the roster
 
 Both live in the Copilot canvas in `.github/extensions/scavenger-tasks/`. The
-Tasks tab edits titles, point tiers, which round a task runs in, which need a
-clip, the ratings, and which tasks are cut; the Roster tab edits people,
+Tasks tab edits titles, points, per-item scoring, props, notes, which round a task
+runs in, and which tasks are cut; the Roster tab edits people,
 round-specific team names and Round 1/2 assignments.
 
 **Everything in it is live.** There is no publish step and nothing staged: the
 canvas writes the same `tasks` and `roster` rows the app reads, so a change is in
-front of players on their next poll. Editing a task's rating or its note is
-invisible to players either way — those columns are planning-only — but wording,
-points, round, video-only and cut are not, and they land immediately.
+front of players on their next poll. Editing a task's prop or note is invisible
+to players — those columns are planning-only — but wording, points, scoring,
+round and cut are not, and they land immediately.
 
 That is safe during the event, which is the point. Nothing here touches
-submissions, media or any revealed secret. Cutting a task hides it
+submissions or media. Cutting a task hides it
 (`active = false`) and never deletes it, so points already awarded against it
 still stand and anything already in the judge's queue can still be decided.
 Admin's task editor writes the same rows, so the two can never disagree.
@@ -181,9 +178,8 @@ npx playwright install chromium
 ```
 
 Each driver creates its own `__qa`-prefixed fixtures, restores every setting in a
-`finally`, and then diffs a snapshot of the real event data — including which
-secret challenges are revealed — so a run that quietly changes your event fails
-instead of passing.
+`finally`, and then diffs a snapshot of the real event data, so a run that quietly
+changes your event fails instead of passing.
 
 ```bash
 npm run ready     # no dev server needed
@@ -191,7 +187,7 @@ npm run ready     # no dev server needed
 
 `ready` is the one to run on the morning of. It doesn't test the app — it checks
 that *your event* is set up: a valid welcome/round stage, no stale banner, every
-player on a team, secret challenges still hidden, no test fixtures left behind,
+player on a team, no test fixtures left behind,
 and a valid upload key. Closed uploads are expected before the first start and
 while the remixed teams are meeting; these are not readiness failures.
 
@@ -268,17 +264,12 @@ neither action deletes or resets any data.
 
 After a rehearsal, use **Admin → Event → Return to welcome** and confirm. It
 returns everyone to the pre-Round-1 homepage and hides the player tabs, without
-deleting submissions or changing scores, assignments, tasks or revealed secrets.
+deleting submissions or changing scores, assignments or tasks.
 Uploads already in progress must finish first. This is separate from the
 destructive **Health → Reset submissions** action.
 
 Nobody re-scans or re-joins anything. Round 1 scores cannot move: every
 submission stored its team when it was created.
-
-**Secret challenges**
-
-Admin → Tasks → Reveal. Manual, not on a timer — the timer would fire while the
-round is running late.
 
 ---
 

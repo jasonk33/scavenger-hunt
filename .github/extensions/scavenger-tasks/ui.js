@@ -1,10 +1,10 @@
 /**
  * Task renderer. Talks to the extension over plain HTTP on the same origin:
- * GET /api/tasks, PATCH /api/task/:slug, PATCH /api/model, and an SSE stream at
+ * GET /api/tasks, PATCH /api/task/:slug, and an SSE stream at
  * /events. The Roster tab is rendered by roster.js and shares that stream.
  *
  * Every edit here is LIVE. These rows are the `tasks` table the app itself
- * reads, so moving a slider, retitling a task or cutting one is in front of
+ * reads, so changing points, retitling a task or cutting one is in front of
  * players on their next poll. There is no draft and no publish step; there used
  * to be, and supabase/migrate-tasks-one-table.sql says why there is not.
  *
@@ -14,19 +14,7 @@
  * current" at the bottom.
  */
 
-import { scoreOf as rawScore, tierAdvice } from "/tier.mjs";
-
-const RATINGS = [
-  ["difficulty", "Difficulty", "How hard the thing is to actually pull off"],
-  ["guts", "Guts", "Social courage required to start it"],
-  ["luck", "Luck", "Dependence on finding the right target or opportunity"],
-  ["payoff", "Payoff", "How funny or good the resulting photo is"],
-  ["risk", "Risk", "Chance of real trouble: thrown out, ticketed, someone upset"],
-];
-
-const ROUND_LABELS = { 1: "Round 1 · Madison Square Park", 2: "Round 2 · NoMad & Flatiron", 0: "Secret challenges" };
-/** Secret challenges are round 0 but the doc lists them last, so rank rather than sort numerically. */
-const ROUND_RANK = { 1: 0, 2: 1, 0: 2 };
+const ROUND_LABELS = { 1: "Round 1 · Madison Square Park", 2: "Round 2 · NoMad & Flatiron" };
 
 const el = {
   list: document.getElementById("list"),
@@ -37,11 +25,9 @@ const el = {
   rosterView: document.getElementById("roster-view"),
   balance: document.getElementById("balance"),
   search: document.getElementById("search"),
-  sort: document.getElementById("sort"),
   onlyFlagged: document.getElementById("only-flagged"),
   newTask: document.getElementById("new-task"),
   newTaskRound: document.getElementById("new-task-round"),
-  newTaskSecret: document.getElementById("new-task-secret"),
   newTaskPoints: document.getElementById("new-task-points"),
   newTaskScoringMode: document.getElementById("new-task-scoring-mode"),
   newTaskDetails: document.getElementById("new-task-details"),
@@ -49,21 +35,14 @@ const el = {
   newTaskMeasurementLabelField: document.getElementById("new-task-measurement-label-field"),
   newTaskPointsPerUnit: document.getElementById("new-task-points-per-unit"),
   newTaskPointsPerUnitField: document.getElementById("new-task-points-per-unit-field"),
-  newTaskCompetitionBonus: document.getElementById("new-task-competition-bonus"),
-  newTaskCompetitionBonusField: document.getElementById("new-task-competition-bonus-field"),
   newTaskProp: document.getElementById("new-task-prop"),
-  newTaskRequiresVideo: document.getElementById("new-task-requires-video"),
   newTaskNote: document.getElementById("new-task-note"),
   addTaskButton: document.getElementById("add-task-button"),
   taskError: document.getElementById("task-error"),
   saveStatus: document.getElementById("save-status"),
 };
 
-const NEW_TASK_RATINGS = ["difficulty", "guts", "luck", "payoff", "risk"];
-const NEW_TASK_RATING_DEFAULTS = { difficulty: 3, guts: 3, luck: 3, payoff: 3, risk: 1 };
-const newTaskRating = (key) => document.getElementById(`new-task-${key}`);
-const newTaskRatingValue = (key) => document.getElementById(`new-task-${key}-value`);
-const filters = { round: "all", shown: "live", q: "", sort: "doc", flagged: false };
+const filters = { round: "all", shown: "live", q: "", flagged: false };
 
 function setView(view) {
   const roster = view === "roster";
@@ -81,7 +60,7 @@ el.tasksTab.addEventListener("click", () => setView("tasks"));
 el.rosterTab.addEventListener("click", () => setView("roster"));
 setView("tasks");
 
-let data = { tasks: [], model: { weights: {}, thresholds: {} } };
+const data = { tasks: [] };
 /**
  * Whether a task list has ever actually arrived, and why the last attempt did
  * not. The empty list above is a placeholder, not a result: without these two
@@ -93,7 +72,6 @@ let loadError = null;
 const rows = new Map();
 /** Unacknowledged fields, including in-flight and failed writes. */
 const pending = new Map();
-const MODEL_SAVE = Symbol("model");
 /** Slugs with a round change in flight. Not in `pending`: a move is not debounced. */
 const moving = new Set();
 /**
@@ -106,17 +84,10 @@ const moving = new Set();
  */
 let localWrites = 0;
 
-// ── Model ────────────────────────────────────────────────────────────────────
-
-const scoreOf = (t) => rawScore(t, data.model.weights);
-
-/** The single rule for "does this task disagree with its ratings". */
-const advice = (t) => tierAdvice(t, data.model);
-
 // ── Persistence ──────────────────────────────────────────────────────────────
 
 /**
- * Coalesces rapid edits (slider drags, typing) into one request per task, and
+ * Coalesces rapid edits into one request per task, and
  * applies the patch locally first so the UI never waits on the round trip.
  * The timer is held alongside the patch rather than inside it, so what gets
  * sent is exactly the patch and nothing has to be stripped back out.
@@ -129,24 +100,15 @@ function save(task, patch) {
   queueSave(task.slug, patch);
 }
 
-function mergeModel(base, patch) {
-  const merged = { ...base };
-  for (const group of ["weights", "thresholds"]) {
-    if (patch[group]) merged[group] = { ...base[group], ...patch[group] };
-  }
-  return merged;
-}
-
-const mergeSave = (key, base, patch) => key === MODEL_SAVE ? mergeModel(base, patch) : { ...base, ...patch };
 const unsaved = (key) => {
   const entry = pending.get(key);
-  return entry ? mergeSave(key, entry.inFlight ?? {}, entry.patch) : {};
+  return entry ? { ...entry.inFlight, ...entry.patch } : {};
 };
 
 function queueSave(key, patch) {
   localWrites += 1;
   const entry = pending.get(key) ?? { patch: {}, timer: 0, inFlight: null, error: null };
-  entry.patch = mergeSave(key, entry.patch, patch);
+  entry.patch = { ...entry.patch, ...patch };
   entry.error = null;
   pending.set(key, entry);
   clearTimeout(entry.timer);
@@ -164,29 +126,24 @@ async function flushSave(key) {
   entry.error = null;
   renderSaveStatus();
   try {
-    const res = await fetch(key === MODEL_SAVE ? "/api/model" : `/api/task/${key}`, {
+    const res = await fetch(`/api/task/${key}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
     const body = await res.json().catch(() => null);
-    const valid = key === MODEL_SAVE ? body?.weights && body?.thresholds : body?.slug === key;
+    const valid = body?.slug === key;
     if (!res.ok || !valid) throw new Error(body?.error || `save failed (HTTP ${res.status})`);
     localWrites += 1;
     if (!Object.keys(entry.patch).length) pending.delete(key);
   } catch (e) {
-    entry.patch = mergeSave(key, patch, entry.patch);
+    entry.patch = { ...patch, ...entry.patch };
     entry.error = String(e?.message ?? e);
   } finally {
     entry.inFlight = null;
     renderSaveStatus();
   }
   if (pending.has(key) && !entry.error) void flushSave(key);
-}
-
-function saveModel(patch) {
-  data.model = mergeModel(data.model, patch);
-  queueSave(MODEL_SAVE, patch);
 }
 
 function renderSaveStatus() {
@@ -196,7 +153,7 @@ function renderSaveStatus() {
   if (!pending.size) return;
   const text = document.createElement("span");
   text.textContent = failed.length
-    ? `Not saved — ${failed.map(([key, entry]) => `${key === MODEL_SAVE ? "Tier model" : key}: ${entry.error}`).join("; ")}. Edits are kept here. `
+    ? `Not saved — ${failed.map(([key, entry]) => `${key}: ${entry.error}`).join("; ")}. Edits are kept here. `
     : "Saving changes\u2026";
   el.saveStatus.append(text);
   if (failed.length) {
@@ -235,61 +192,25 @@ function visibleTasks() {
     return true;
   });
 
-  const by = {
-    doc: (a, b) => ROUND_RANK[a.round] - ROUND_RANK[b.round] || a.points - b.points || a.docOrder - b.docOrder,
-    score: (a, b) => scoreOf(b) - scoreOf(a),
-    // Dismissed tiers sort as agreeing, so the sort matches the header count.
-    mismatch: (a, b) =>
-      (advice(b).show ? Math.abs(b.points - advice(b).suggested) : 0) -
-      (advice(a).show ? Math.abs(a.points - advice(a).suggested) : 0) || scoreOf(b) - scoreOf(a),
-    payoff: (a, b) => a.payoff - b.payoff || b.risk - a.risk,
-    risk: (a, b) => b.risk - a.risk || a.payoff - b.payoff,
-    luck: (a, b) => b.luck - a.luck,
-  };
-  return list.sort(by[filters.sort] ?? by.doc);
+  return list.sort((a, b) => a.round - b.round || a.points - b.points || a.docOrder - b.docOrder);
 }
 
 // ── Row rendering ────────────────────────────────────────────────────────────
 
 function chipsFor(task) {
   const chips = [];
-  if (task.scoringMode === "quantity") chips.push(["per measure", ""]);
-  if (task.scoringMode === "competition") chips.push(["competition", "warn"]);
-  if (task.requiresVideo) chips.push(["clip", ""]);
+  if (task.scoringMode === "quantity") chips.push(["per item", ""]);
   if (task.prop) chips.push(["prop", ""]);
-  if (task.luck >= 4) chips.push(["luck", "warn"]);
-  if (task.risk >= 4) chips.push(["risk", "alert"]);
-  if (task.payoff <= 2) chips.push(["flat", "warn"]);
   if (task.rewrite) chips.push(["rewrite", "warn"]);
   return chips;
 }
 
 function paint(row, task) {
-  const { suggested, show } = advice(task);
-
   row.classList.toggle("is-cut", !task.active);
 
-  const tier = row.querySelector(".tier:not(.suggested)");
+  const tier = row.querySelector(".tier");
   tier.textContent = task.points;
   tier.className = `tier t${task.points}`;
-
-  const sug = row.querySelector(".tier.suggested");
-  const arrow = row.querySelector(".arrow");
-  const dismiss = row.querySelector(".tier-dismiss");
-  sug.hidden = !show;
-  arrow.hidden = !show;
-  dismiss.hidden = !show;
-  if (show) {
-    sug.textContent = suggested;
-    sug.className = `tier suggested t${suggested}`;
-    sug.title =
-      `Suggestion, not a pending change: this task is ${task.points}pt, ` +
-      `but its ratings score ${scoreOf(task).toFixed(1)}, which lands in the ${suggested}pt tier. ` +
-      `Click to move it to ${suggested}pt.`;
-    dismiss.title =
-      `Keep this task at ${task.points}pt and stop suggesting ${suggested}pt. ` +
-      `If you re-rate it into a different tier the suggestion comes back.`;
-  }
 
   const title = row.querySelector(".title");
   if (document.activeElement !== title && title.textContent !== task.title) title.textContent = task.title;
@@ -307,28 +228,15 @@ function paint(row, task) {
     b.classList.toggle("on", (b.dataset.active === "true") === Boolean(task.active));
   }
 
-  // Which half of the event the task is offered in. A secret is offered in both,
-  // so it has no round to move to and says so instead of showing a live control.
-  const secret = task.round === 0;
   const busy = moving.has(task.slug);
   for (const b of row.querySelectorAll(".seg.round button[data-round]")) {
     const to = Number(b.dataset.round);
-    b.hidden = secret;
     b.disabled = busy;
-    b.classList.toggle("on", !secret && to === task.round);
+    b.classList.toggle("on", to === task.round);
     b.title =
       to === task.round
         ? `Players see this task in Round ${to}.`
-        : `Move to Round ${to}. It lands last in its tier there, and anything already scored on it stands.`;
-  }
-  row.querySelector(".round-both").hidden = !secret;
-
-  for (const [key] of RATINGS) {
-    const slider = row.querySelector(`.slider.${key}`);
-    if (!slider) continue;
-    const input = slider.querySelector("input");
-    if (document.activeElement !== input) input.value = task[key];
-    slider.querySelector(".val").textContent = task[key];
+        : `Move to Round ${to}. It lands last in its tier there. Tasks with submissions cannot move.`;
   }
 
   const points = row.querySelector(".points");
@@ -336,10 +244,10 @@ function paint(row, task) {
 
   const mode = row.querySelector(".scoring-mode");
   if (document.activeElement !== mode) mode.value = task.scoringMode || "fixed";
+  for (const field of row.querySelectorAll(".quantity-field")) field.hidden = task.scoringMode !== "quantity";
   for (const [selector, key] of [
     [".measurement-label", "measurementLabel"],
     [".points-per-unit", "pointsPerUnit"],
-    [".competition-bonus", "competitionBonus"],
   ]) {
     const input = row.querySelector(selector);
     if (!input || document.activeElement === input) continue;
@@ -352,7 +260,6 @@ function paint(row, task) {
   const note = row.querySelector(".note");
   if (document.activeElement !== note) note.value = task.note;
 
-  row.querySelector(".clip").checked = task.requiresVideo;
   row.querySelector(".rewrite").checked = task.rewrite;
 
   const docTitle = row.querySelector(".doc-title");
@@ -365,50 +272,9 @@ function buildRow(task) {
   const row = document.getElementById("row-tpl").content.firstElementChild.cloneNode(true);
   row.dataset.slug = task.slug;
 
-  const sliders = row.querySelector(".sliders");
-  for (const [key, label, hint] of RATINGS) {
-    const wrap = document.createElement("label");
-    wrap.className = `slider ${key}`;
-    wrap.title = hint;
-    wrap.innerHTML = `<span>${label}</span><input type="range" min="1" max="5" step="1" /><span class="val"></span>`;
-    const input = wrap.querySelector("input");
-    input.addEventListener("input", () => {
-      save(task, { [key]: Number(input.value) });
-      paint(row, task);
-      renderSummary();
-    });
-    sliders.append(wrap);
-  }
-
   row.querySelector(".caret").addEventListener("click", () => {
     row.classList.toggle("open");
     row.querySelector(".body").hidden = !row.classList.contains("open");
-  });
-
-  // Accept: take the suggested tier. Clearing tierOk matters -- a tier the user
-  // has just agreed to is not a tier they have rejected, and leaving a stale
-  // rejection behind would silence the next genuine disagreement.
-  const acceptTier = () => {
-    const { suggested, show } = advice(task);
-    if (!show) return;
-    save(task, { points: suggested, tierOk: null });
-    paint(row, task);
-    renderSummary();
-  };
-  const sug = row.querySelector(".tier.suggested");
-  sug.addEventListener("click", acceptTier);
-  sug.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); acceptTier(); }
-  });
-
-  // Dismiss: record which suggestion was rejected, so re-rating into a
-  // different tier resurfaces it. See tier.mjs.
-  row.querySelector(".tier-dismiss").addEventListener("click", () => {
-    const { suggested, show } = advice(task);
-    if (!show) return;
-    save(task, { tierOk: suggested });
-    paint(row, task);
-    renderSummary();
   });
 
   const title = row.querySelector(".title");
@@ -458,7 +324,6 @@ function buildRow(task) {
   for (const [selector, key, read] of [
     [".measurement-label", "measurementLabel", (node) => node.value.trim()],
     [".points-per-unit", "pointsPerUnit", (node) => Number(node.value)],
-    [".competition-bonus", "competitionBonus", (node) => Number(node.value)],
   ]) {
     const input = row.querySelector(selector);
     input.addEventListener("change", () => {
@@ -474,7 +339,6 @@ function buildRow(task) {
   for (const [sel, key, read] of [
     [".prop", "prop", (n) => n.value],
     [".note", "note", (n) => n.value],
-    [".clip", "requiresVideo", (n) => n.checked],
     [".rewrite", "rewrite", (n) => n.checked],
   ]) {
     const node = row.querySelector(sel);
@@ -513,7 +377,7 @@ function renderList() {
   const headings = new Map([...el.list.querySelectorAll(".group")].map((h) => [h.textContent, h]));
   let lastGroup = null;
   for (const task of tasks) {
-    const group = filters.sort === "doc" ? ROUND_LABELS[task.round] : null;
+    const group = ROUND_LABELS[task.round];
     if (group && group !== lastGroup) {
       const h = headings.get(group) ?? document.createElement("h2");
       h.className = "group";
@@ -581,9 +445,7 @@ function followTask(task) {
  * Moves a task to the other half of the event, live.
  *
  * Deliberately not `save()`. A move is not an optimistic field edit: the server can
- * REFUSE a move -- a secret challenge runs in both rounds, a task whose leader
- * bonus has been awarded would take the bonus out of that round's standings,
- * and a task someone has already submitted would strand that evidence in a
+ * REFUSE a move -- a task someone has already submitted would strand that evidence in a
  * round its task had left -- and a swallowed refusal would leave the panel
  * showing a round the database does not have, until a poll silently yanked it
  * back.
@@ -625,11 +487,9 @@ async function moveToRound(task, round) {
 
 function renderSummary() {
   const live = data.tasks.filter((t) => t.active);
-  const mismatched = live.filter((t) => advice(t).show).length;
   const flagged = data.tasks.filter((t) => t.rewrite).length;
   el.stats.innerHTML =
-    `<b>${live.length}</b> live · <b>${data.tasks.length - live.length}</b> cut · ` +
-    `<b>${mismatched}</b> tier disagreements` +
+    `<b>${live.length}</b> live · <b>${data.tasks.length - live.length}</b> cut` +
     (flagged ? ` · <b>${flagged}</b> flagged` : "");
   // What is on screen was real when it was fetched, so it is not withdrawn. But
   // any session can edit these rows, so a page that has stopped refreshing must
@@ -645,62 +505,30 @@ function renderSummary() {
 }
 
 function renderBalance() {
-  const tiers = [1, 3, 5, 10];
-  const rowsHtml = [1, 2, 0]
+  const tiers = [1, 3, 5, 7, 10];
+  const rowsHtml = [1, 2]
     .map((round) => {
       const inRound = data.tasks.filter((t) => t.round === round && t.active);
       if (!inRound.length) return "";
-      const cells = round === 0
-        ? `<td colspan="4">${inRound.length} @ 7</td>`
-        : tiers.map((tier) => `<td>${inRound.filter((t) => t.points === tier).length}</td>`).join("");
-      const avg = (inRound.reduce((s, t) => s + t.payoff, 0) / inRound.length).toFixed(1);
+      const cells = tiers.map((tier) => `<td>${inRound.filter((t) => t.points === tier).length}</td>`).join("");
       return `<tr>
-        <td>${round === 0 ? "Secret" : `R${round}`}</td>
+        <td>R${round}</td>
         ${cells}
         <td>${inRound.reduce((s, t) => s + t.points, 0)}</td>
-        <td>${avg}</td>
-        <td>${inRound.filter((t) => t.risk >= 4).length}</td>
-        <td>${inRound.filter((t) => t.luck >= 4).length}</td>
         <td>${inRound.filter((t) => t.prop).length}</td>
       </tr>`;
     })
     .join("");
 
-  const w = data.model.weights;
-  const th = data.model.thresholds;
-  const created = !el.balance.querySelector(".model");
-  if (created) el.balance.innerHTML = `
+  el.balance.innerHTML = `
     <table>
       <thead><tr>
-        <th></th><th>1</th><th>3</th><th>5</th><th>10</th>
-        <th>Max</th><th title="Average payoff rating">Pay</th>
-        <th title="Tasks rated 4+ on risk">Risk</th>
-        <th title="Tasks rated 4+ on luck">Luck</th>
+        <th></th><th>1</th><th>3</th><th>5</th><th>7</th><th>10</th>
+        <th title="Assigned points before per-item extras">Baseline</th>
         <th title="Tasks needing a prop">Prop</th>
       </tr></thead>
       <tbody>${rowsHtml}</tbody>
-    </table>
-    <div class="model">
-      <span>Weights</span>
-      ${["difficulty", "guts", "luck"].map((k) => `<label>${k.slice(0, 4)}<input type="number" step="0.1" min="0" data-weight="${k}" value="${w[k]}" /></label>`).join("")}
-      <span>Tier caps</span>
-      ${["t1", "t3", "t5"].map((k) => `<label>&le;${k.slice(1)}<input type="number" step="0.1" min="0" data-threshold="${k}" value="${th[k]}" /></label>`).join("")}
-    </div>`;
-  else el.balance.querySelector("tbody").innerHTML = rowsHtml;
-
-  for (const input of el.balance.querySelectorAll("input")) {
-    const group = input.dataset.weight ? "weights" : "thresholds";
-    const key = input.dataset.weight || input.dataset.threshold;
-    if (document.activeElement !== input) input.value = data.model[group][key];
-    if (!created) continue;
-    input.addEventListener("change", () => {
-      const value = Number(input.value);
-      if (!Number.isFinite(value)) return;
-      saveModel({ [group]: { [key]: value } });
-      renderList();
-      renderSummary();
-    });
-  }
+    </table>`;
 }
 
 // ── Wiring ───────────────────────────────────────────────────────────────────
@@ -715,7 +543,6 @@ for (const [id, key] of [["round-filter", "round"], ["shown-filter", "shown"]]) 
   });
 }
 
-el.sort.addEventListener("change", () => { filters.sort = el.sort.value; renderList(); });
 el.onlyFlagged.addEventListener("change", () => { filters.flagged = el.onlyFlagged.checked; renderList(); });
 
 let searchTimer;
@@ -734,40 +561,15 @@ document.getElementById("toggle-balance").addEventListener("click", (e) => {
 //
 // It is live the moment it lands. The optional fields mirror the row editor so a
 // task can be configured correctly before players see it, rather than briefly
-// appearing with the wrong scoring rule or missing video requirement.
+// appearing with the wrong scoring rule.
 
 let adding = false;
-let lastRegularPoints = el.newTaskPoints.value;
-let wasSecret = false;
 
 function syncAddDetails() {
   const mode = el.newTaskScoringMode.value;
-  // Only a quantity task has anything for the judge to measure. A competition
-  // task is judged at face value and its bonus is awarded from Admin after the
-  // round, so a field label would name a box that never appears.
+  // Only a quantity task has anything for the judge to count.
   el.newTaskMeasurementLabelField.hidden = mode !== "quantity";
   el.newTaskPointsPerUnitField.hidden = mode !== "quantity";
-  el.newTaskCompetitionBonusField.hidden = mode !== "competition";
-}
-
-function syncSecretPoints() {
-  const secret = el.newTaskSecret.checked;
-  if (secret) {
-    if (!wasSecret) lastRegularPoints = el.newTaskPoints.value;
-    el.newTaskPoints.value = "7";
-    el.newTaskPoints.disabled = true;
-    el.newTaskRound.disabled = true;
-  } else {
-    if (wasSecret) el.newTaskPoints.value = lastRegularPoints;
-    el.newTaskPoints.disabled = false;
-    el.newTaskRound.disabled = false;
-  }
-  wasSecret = secret;
-}
-
-function syncNewTaskForm() {
-  syncSecretPoints();
-  syncAddDetails();
 }
 
 function syncAddButton() {
@@ -802,7 +604,6 @@ async function addTask() {
   el.taskError.hidden = true;
   syncAddButton();
   try {
-    const secret = el.newTaskSecret.checked;
     const round = Number(el.newTaskRound.value);
     const scoringMode = el.newTaskScoringMode.value;
     const res = await fetch("/api/task", {
@@ -811,18 +612,12 @@ async function addTask() {
       body: JSON.stringify({
         title,
         round,
-        isSecret: secret,
         points: Number(el.newTaskPoints.value),
         scoringMode,
         measurementLabel: scoringMode === "quantity" ? el.newTaskMeasurementLabel.value.trim() : "",
         pointsPerUnit: scoringMode === "quantity" ? Number(el.newTaskPointsPerUnit.value) : 0,
-        competitionBonus: scoringMode === "competition" ? Number(el.newTaskCompetitionBonus.value) : 0,
         prop: el.newTaskProp.value.trim(),
-        requiresVideo: el.newTaskRequiresVideo.checked,
         note: el.newTaskNote.value,
-        ...Object.fromEntries(
-          NEW_TASK_RATINGS.map((key) => [key, Number(newTaskRating(key).value)])
-        ),
       }),
     });
     const task = await res.json().catch(() => null);
@@ -835,19 +630,12 @@ async function addTask() {
     // arrive the same way this one does.
     await refreshTasks();
     revealTask(task);
-    el.newTaskSecret.checked = false;
     el.newTaskScoringMode.value = "fixed";
     el.newTaskMeasurementLabel.value = "";
     el.newTaskPointsPerUnit.value = "0";
-    el.newTaskCompetitionBonus.value = "0";
     el.newTaskProp.value = "";
-    el.newTaskRequiresVideo.checked = false;
     el.newTaskNote.value = "";
-    for (const key of NEW_TASK_RATINGS) {
-      newTaskRating(key).value = String(NEW_TASK_RATING_DEFAULTS[key]);
-      newTaskRatingValue(key).textContent = String(NEW_TASK_RATING_DEFAULTS[key]);
-    }
-    syncNewTaskForm();
+    syncAddDetails();
   } catch (e) {
     el.taskError.textContent = String(e?.message ?? e);
     el.taskError.hidden = false;
@@ -858,29 +646,19 @@ async function addTask() {
 }
 
 el.newTask.addEventListener("input", syncAddButton);
-el.newTaskRound.addEventListener("change", syncNewTaskForm);
-el.newTaskPoints.addEventListener("change", () => {
-  if (!wasSecret) lastRegularPoints = el.newTaskPoints.value;
-});
 el.newTaskScoringMode.addEventListener("change", () => {
   syncAddDetails();
   if (el.newTaskScoringMode.value !== "fixed") el.newTaskDetails.open = true;
 });
-for (const key of NEW_TASK_RATINGS) {
-  newTaskRating(key).addEventListener("input", () => {
-    newTaskRatingValue(key).textContent = newTaskRating(key).value;
-  });
-}
 el.newTask.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); addTask(); }
 });
 el.addTaskButton.addEventListener("click", addTask);
-syncNewTaskForm();
+syncAddDetails();
 syncAddButton();
 
 /** Merge by slug: row handlers retain their task object, not a stale snapshot. */
 function applyTasks(next) {
-  data.model = mergeModel(next.model, unsaved(MODEL_SAVE));
   const existing = new Map(data.tasks.map((t) => [t.slug, t]));
   data.tasks = next.tasks.map((incoming) =>
     Object.assign(existing.get(incoming.slug) ?? {}, incoming, unsaved(incoming.slug))

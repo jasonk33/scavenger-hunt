@@ -72,7 +72,7 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
   content back until `scripts/task-sync.mjs` published it — but Admin already edited `tasks`
   live and mirrored the same four fields back onto the board, so the live path existed
   anyway and the mirror only existed to stop the two disagreeing. Everything the board added
-  on top (the ratings, the notes, the props) is never shown to a player, so the gap
+  on top (the notes and props) is never shown to a player, so the gap
   protected nothing. Collapsing it deleted the planner, the title-collision refusal, the
   rename-parking dance, the mirror, the publish banner and an extension that had to find a
   `node` binary and shell out. **Do not reintroduce a staging table, a publish step, a cache
@@ -89,48 +89,41 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
   everywhere else: a polled list retriggers them every tick.
 - **The canvas is project-scoped, so it only loads in a session opened on this repo.** It
   will not appear in a general chat session.
-- **`tasks.slug`** (`r1-01`, `s-04`) is the task's stable key, unique per `(round, slug)` and
+- **`tasks.slug`** (`r1-01`, `r2-04`) is the task's stable key, unique per `(round, slug)` and
   `not null` with a uuid default. **Never match tasks on their title**, which 8 tasks have
   already outgrown.
-- **A secret is TWO rows sharing one slug.** `tasks.round` is `check (round in (1, 2))`, so a
-  challenge offered in both halves cannot be one row. The canvas groups them by slug and
-  presents them as `round: 0` — 0 means "both" — and patches by slug so one statement moves
-  both rounds. `revealed_at` stays per-row, because revealing in R1 must not spoil R2.
+- **No secret tasks, leader bonuses, video-only tags or task ratings.** These features
+  were explicitly retired; do not rebuild them from historical migrations or planning notes.
+  Judges decide whether the uploaded photo or clip is sufficient evidence. Only the assigned
+  points and any per-item scoring rule matter.
+- **Retired database columns remain for deployment compatibility**, not as supported
+  features. Historical `is_secret` rows stay inactive and outside editable task lists;
+  preserve their ids and shared slugs rather than deleting evidence or reactivating them.
 - **Cut means `active = false` — never a delete**, which would cascade to submissions. The
   canvas's In/X toggle writes exactly that column.
 - **`round` is moved, not patched.** It is not in `EDITABLE`, so a patch naming it writes
   nothing; the canvas's R1/R2 toggle calls `moveTask`, which renumbers `doc_order` to last in
-  the destination and refuses three cases: a secret (two rows, so there is no round to move
-  to), an awarded leader bonus, and a task anyone has already submitted — the judge queue,
+  the destination and refuses a task anyone has already submitted — the judge queue,
   `/api/state` and the feed all resolve a submission's task out of the tasks for *that* round,
   so a moved row would show as `(deleted task)`.
 - `teams(round, name, color)` — R1 and R2 teams are **separate rows**. Names and colours
   are edited by team id, never mirrored across rounds. `players(name)`.
 - `roster(round, player_id, team_id)` — the remix lives here and nowhere else.
-- `tasks(round, slug, title, points, scoring_mode, is_secret, revealed_at, active)` plus
-  planning-only columns (`doc_title`, `doc_order`, the five ratings, `prop`, `note`,
-  `rewrite`, `tier_ok`)
-  that no player-facing query selects. Point tiers are **1/3/5/7/10**, but do not infer a
-  task's kind from its tier — check the data. The original design made every secret a
-  7-pointer; as of the last check every 7-pointer is cut (`active = false`) and the one live
-  secret per round is a 5-pointer, so the active tiers are 1/3/5/10. Secrets are revealed
-  manually from Admin (never on a timer). **`sort_order` is a generated
-  column** — `(is_secret, points, doc_order)` — so nothing maintains it and it cannot drift.
-  It is the only thing ordering the player's task list.
-- **`scoring_mode` is `fixed` | `quantity` | `competition`**, and it decides what the judge is
+- `tasks(round, slug, title, points, scoring_mode, active)` plus planning-only columns
+  (`doc_title`, `doc_order`, `prop`, `note`, `rewrite`) that no player-facing query selects.
+  **`sort_order` is generated** and orders ordinary tasks by points, then `doc_order`;
+  nothing maintains it manually.
+- **`scoring_mode` is `fixed` | `quantity`**, and it decides what the judge is
   asked for. `fixed` is the default and asks nothing. `quantity` adds
   `points_per_unit` per counted item and is the **only** mode with a number field on the judge
-  screen — the count lands in `submissions.measurement_value`. `competition` adds `competition_bonus` to exactly one
-  team: `tasks.winner_team_id`, which an **organizer picks from Admin once the round is
-  over**. See the scoring invariants below — the end-of-round pick is load-bearing.
+  screen — the count lands in `submissions.measurement_value`.
 - `submissions` — one row is **one file**. `status`: `uploading → pending → approved | rejected`.
   Carries `points_awarded`, `reject_reason` (free text the judge types, capped at
   `REASON_MAX`), `note`, `group_id`. There is deliberately no discretionary bonus
   and no award star: a task is approved or rejected, and an approved one is worth
   exactly what the task is worth.
-- `settings` is key/value, read via `getSettings()`: `active_round`, `started_round`, `submissions_open`,
-  `event_name`, `notice`, plus `tier_model` (the canvas's tier weights and
-  thresholds, as JSON — the planner's model, not the app's).
+- `settings` is key/value, read via `getSettings()`: `active_round`, `started_round`,
+  `submissions_open`, `event_name`, `notice` and `saved_epoch`.
 - **Revealing a roster is not starting its round.** `started_round` starts at 0;
   `src/lib/event.ts` derives the six welcome/play/break stages. Home uses the
   revealed `active_round`, but Tasks and all media/score APIs must respect
@@ -200,23 +193,6 @@ Validated on real iPhone and Android over 5G (11 uploads, 0 failures, 150 MB in 
   counting as "latest", so rejecting a duplicate cannot un-score a task. `/api/state` and the
   export CSV each carry their own copy of this rule and must be changed with the view, or a
   team sees one score on their task list and another on the leaderboard.
-- A **competition bonus is an end-of-round decision, never a live race.** It goes to
-  `tasks.winner_team_id` — one team, picked by an organizer from Admin — and to nobody until
-  that column is set. It used to go to whoever held the highest `measurement_value`,
-  recomputed on every read, which meant a team's *already approved* task silently lost points
-  when another team was judged, and gave them every reason to go redo it. It also demanded a
-  number for tasks like "the worst photo of Jason" that have none, so the judge invented one
-  under queue pressure — and every competition task in the event had `competition_bonus = 0`,
-  so the number bought nothing. **Do not reintroduce a live leader, and do not put a score
-  box back on a competition task.** `supabase/migrations/20260826170000_round_end_competition_winner.sql`
-  is the full argument.
-- `winner_team_id` is **per row, so per round** when it is picked — like `revealed_at` and
-  unlike every other task field, which the Admin PATCH writes by slug. Each half of the event
-  is a separate competition between different teams. Clearing it because the task stopped
-  being a competition is the exception and writes by slug, following the `scoring_mode` change
-  that triggers it. It is also **never snapshotted onto a submission**: it
-  is chosen long after those rows were judged, so `points_awarded` holds the baseline and the
-  bonus is added on read.
 
 ## Verifying work
 
@@ -275,8 +251,7 @@ real device.
   award-candidate shortlist both existed and were both removed as more complexity than the
   afternoon can carry. A judge approves or rejects; they never choose *how much* something is
   worth. The one number they type is the `quantity` count — an objective tally of what is in
-  the photo, at a rate the task fixed in advance — and the `competition` winner is a separate
-  decision made calmly after the round, not a score entered under queue pressure.
+  the   photo, at a rate the task fixed in advance.
 - **Saved tasks are localStorage, not a table.** Not to be confused with the removed award
   star above — this one is player-side, private, and touches no score. The ☆ on each task
   card and the "Saved" filter on `/submit` are a triage note for a guest facing a task list
@@ -341,21 +316,16 @@ the confident wrong answer.
   title must not repeat the rate** — three of them carried a `(+1 point for each additional
   pigeon)` that said the pill's job twice.
 - **`measurement_label` is `quantity`-only.** `judge/page.tsx` gates it behind
-  `scoringMode === "quantity"`. The Admin "Leader bonuses" picker renders the **title**, the
-  bonus and a team dropdown — never the label. So on a `competition` task the label is dead data, and **the winner criterion has
-  nowhere to live but the title.** Setting the label instead accomplishes nothing.
+  `scoringMode === "quantity"`; a fixed task has no measured count.
 - **A displayed group's score is looked up by `decisionKey`, never by row id.** Several files sent
   as one piece of evidence are one decision, but only ONE row inside the group scores — the
   newest, per `latestApproved` — while every screen anchors its group on the OLDEST file.
-  Keyed by row id the lookup misses on every multi-file group and falls through to
-  `awardedBreakdown()`, which reads what was frozen at judging time and therefore cannot
-  know about a competition bonus decided afterwards. `/api/feed`, `/api/state`,
+  Keyed by row id the lookup misses the scoring row of a multi-file group.
+  `/api/feed`, `/api/state`,
   `/api/task-entries` and `/api/leaderboard/[teamId]` all carry this rule, and any query
   feeding it must select `group_id`, `team_id`, `status` and `judged_at`; these identify the
   files the judging write actually decided together. `winningGroups` takes RAW rows for the same reason: handed ranked
-  ones it can only ever return single-file groups. `flow6` section 7 is the guard — a
-  competition task with a decided winner and two files is the only shape where the ranked
-  path and the frozen fallback differ.
+  ones it can only ever return single-file groups.
 - **A score renders as two pills, never one total** — `<Score>` (`src/components/Score.tsx`):
   what the task was worth, then `+N bonus` when the team earned more. `12 pts` hid the fact
   that anyone had gone beyond the task. Both numbers come from `pointsBreakdown()` server-side
@@ -367,24 +337,24 @@ the confident wrong answer.
 ## Sharp edges
 
 - `npm run seed` **and** `npm run seed:reset` both delete every submission and its linked
-  media (not orphaned bucket objects), re-hide secrets and restore the pre-event welcome page.
+  media (not orphaned bucket objects) and restore the pre-event welcome page.
   They refuse if submissions exist from anyone outside the initial guest list in
   `scripts/seed-event.mjs` (`--force` overrides). **Never run either once the party has
   started.** The guest list, `ROUND_1` split and `PAIRS` arrays are initial bootstrap
   data, not the live roster. **Use Canvas → Roster for ongoing RSVPs and assignments;
   never re-seed to apply them.** The seed's initial Round 2 is derived by rotation and
   checked for team sizes, split plus-one pairs and a total remix; it is not the current plan.
-  **These do not change task content, but they do reset `revealed_at`.**
+  **These do not change task content.**
   Changing a task is a canvas or Admin edit, and
-  neither can take submissions, media, roster or `revealed_at` with it.
+  neither can take submissions, media or roster with it.
 - **`/api/admin/reset` is the other destructive path** — Admin → health → "Reset submissions".
-  It deletes every submission, the media each one uploaded and every awarded `winner_team_id`,
+  It deletes every submission and the media each one uploaded,
   bumps `saved_epoch` so every phone drops its starred shortlist, and it is the one thing in
   the app with no undo. It sweeps the submissions and not the bucket, so bytes orphaned by a
   cancelled upload survive on purpose. Three guards, and none is
   redundant: the PIN, the `ALLOW_RESET` env switch (unset in Vercel for the event, which both
   hides the card and makes the route 403), and a typed confirm word that a stray request cannot
-  supply. It deliberately stops at submissions — players, teams, roster, tasks and `revealed_at`
+  supply. It deliberately stops at submissions — players, teams, roster and tasks
   all survive, so it costs a re-upload rather than a re-seed. **`npm run smoke` covers only its
   refusals**, and that is not an oversight to correct: this Supabase project holds the live
   event, so a test that proved the happy path would have to delete Jason's real photos to do

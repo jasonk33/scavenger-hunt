@@ -41,7 +41,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
     .from("submissions")
     .select(
       "id,round,task_id,player_id,team_id,object_name,media_type,points_awarded,group_id,note,created_at,judged_at,status"
-      + ",measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot"
+      + ",measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot"
     )
     .eq("round", round)
     .eq("team_id", teamId)
@@ -58,10 +58,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
   let allApproved: Array<Record<string, unknown>> = [];
   if (taskIds.length > 0) {
     const result = await Promise.all([
-      sb.from("tasks").select("id,title,points,scoring_mode,points_per_unit,competition_bonus,winner_team_id,sort_order").in("id", taskIds),
+      sb.from("tasks").select("id,title,points,scoring_mode,points_per_unit,sort_order").in("id", taskIds),
       sb
         .from("submissions")
-        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,group_id,created_at,judged_at")
+        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,group_id,created_at,judged_at")
         .eq("round", round)
         .in("task_id", taskIds)
         .eq("status", "approved"),

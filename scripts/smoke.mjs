@@ -73,9 +73,8 @@ const NAME = `__smoke_${Date.now()}`;
 const TEAM_A = "__smoke Team A";
 const TEAM_B = "__smoke Team B";
 let playerId, teamA, teamB, teamAlt, taskId, submissionId, objectName;
-// The leader-bonus fixture: its own task and its own approved row, so the
-// assertions can move a winner around without touching a real task.
-let contestTaskId, contestSubmissionId;
+// Per-item scoring uses its own task and evidence, never a real task's settings.
+let quantityTaskId, quantitySubmissionId;
 // Captured before the test mutates anything, so the restore in `finally` always
 // has something to put back even if main() throws on its first statement.
 let settingsBefore = null;
@@ -109,10 +108,10 @@ async function restoreSettings() {
 async function cleanup() {
   try {
     if (submissionId) await admin.from("submissions").delete().eq("id", submissionId);
-    if (contestSubmissionId) await admin.from("submissions").delete().eq("id", contestSubmissionId);
+    if (quantitySubmissionId) await admin.from("submissions").delete().eq("id", quantitySubmissionId);
     // After its submission, or the cascade would take the row with it and the
     // delete above would report success for something already gone.
-    if (contestTaskId) await admin.from("tasks").delete().eq("id", contestTaskId);
+    if (quantityTaskId) await admin.from("tasks").delete().eq("id", quantityTaskId);
     if (objectName) await admin.storage.from(BUCKET).remove([objectName]);
     if (playerId) {
       await admin.from("roster").delete().eq("player_id", playerId);
@@ -198,8 +197,10 @@ async function main() {
   check("player sees their round 1 team", state.team?.id === teamA.id, state.team?.name);
   check("tasks are visible", (state.tasks ?? []).length > 0, `${state.tasks?.length} tasks`);
   check(
-    "unrevealed secret tasks are hidden",
-    (state.tasks ?? []).every((t) => !t.is_secret || t.revealed_at)
+    "tasks expose only fixed or per-item scoring without retired flags",
+    (state.tasks ?? []).every((t) => ["fixed", "quantity"].includes(t.scoring_mode) &&
+      !["is_secret", "revealed_at", "requires_video", "competition", "competition_bonus", "winner_team_id"]
+        .some((key) => Object.hasOwn(t, key)))
   );
   check("upload key is a JWT", /^ey[A-Za-z0-9_-]+\./.test(state.upload?.anonKey ?? ""));
 
@@ -282,7 +283,7 @@ async function main() {
   const mine = queue.queue.find((q) => q.id === submissionId);
   check("submission appears in the judge queue", Boolean(mine));
   check("queue exposes a playable media URL", Boolean(mine?.media?.[0]?.url?.includes(objectName)));
-  check("queue marks it as video", mine?.isVideo === true);
+  check("queue marks its media file as video", mine?.media?.[0]?.isVideo === true);
 
   const approve = await call(`/api/judge/${submissionId}`, {
     method: "POST",
@@ -376,122 +377,95 @@ async function main() {
     body: JSON.stringify({ id: taskId, points: taskPoints }),
   });
 
-  // --- the leader bonus is an end-of-round decision -------------------------
-  // Nothing is awarded until an organizer names a winner, and naming one is
-  // what moves the score. This used to be a live race decided by whoever had
-  // the highest measured value, which meant an already-approved task lost
-  // points when somebody else was judged.
-  const contest = await call("/api/admin/tasks", {
+  // --- extra-item counts are snapshotted and agree on every score surface ----
+  const quantity = await call("/api/admin/tasks", {
     method: "POST",
     body: JSON.stringify({
       round: 1,
-      title: `${NAME} leader bonus`,
+      title: `${NAME} extra stickers`,
       points: 5,
-      scoringMode: "competition",
-      competitionBonus: 4,
+      scoringMode: "quantity",
+      measurementLabel: "extra sticker",
+      pointsPerUnit: 2,
     }),
   });
-  contestTaskId = contest.body?.id;
-  check("a leader-bonus task can be created", Boolean(contestTaskId), JSON.stringify(contest.body));
+  quantityTaskId = quantity.body?.id;
+  check("a per-item task can be created", Boolean(quantityTaskId), JSON.stringify(quantity.body));
 
-  // Inserted directly rather than uploaded: the view reads approved rows, and a
-  // second trip through TUS would only re-prove the upload path.
-  const { data: contestRow } = await admin
+  // Reuse this driver's uploaded object; no second trip through TUS is needed.
+  const { data: quantityRow } = await admin
     .from("submissions")
     .insert({
       round: 1,
-      task_id: contestTaskId,
+      task_id: quantityTaskId,
       player_id: playerId,
       team_id: teamA.id,
       task_points: 5,
-      scoring_mode_snapshot: "competition",
-      competition_bonus_snapshot: 4,
-      object_name: `${NAME}-contest.jpg`,
-      status: "approved",
-      points_awarded: 5,
-      judged_at: new Date().toISOString(),
+      scoring_mode_snapshot: "quantity",
+      points_per_unit_snapshot: 2,
+      object_name: objectName,
+      media_type: "video/mp4",
+      status: "pending",
     })
     .select("id")
     .single();
-  contestSubmissionId = contestRow?.id;
-  check("leader-bonus evidence was approved", Boolean(contestSubmissionId));
+  quantitySubmissionId = quantityRow?.id;
+  check("per-item evidence was queued", Boolean(quantitySubmissionId));
 
   const scoreFor = async (teamId) =>
     (await call("/api/leaderboard?round=1")).body.rows.find((r) => r.teamId === teamId)?.points ?? 0;
-  const baseScore = await scoreFor(teamA.id);
-  check(
-    "an undecided leader bonus awards nothing",
-    baseScore === taskPoints + 5,
-    `expected ${taskPoints + 5}, got ${baseScore}`
-  );
-
-  const crossRoundWinner = await call("/api/admin/tasks", {
-    method: "PATCH",
-    body: JSON.stringify({ id: contestTaskId, winnerTeamId: teamB.id }),
+  const noCount = await call(`/api/judge/${quantitySubmissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "approve", expectedStatus: "pending" }),
   });
-  check(
-    "a winner from the other round is refused",
-    crossRoundWinner.status === 409,
-    `HTTP ${crossRoundWinner.status}`
-  );
+  check("per-item approval requires a count", noCount.status === 400, JSON.stringify(noCount.body));
 
-  const award = await call("/api/admin/tasks", {
-    method: "PATCH",
-    body: JSON.stringify({ id: contestTaskId, winnerTeamId: teamA.id }),
+  const award = await call(`/api/judge/${quantitySubmissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "approve", expectedStatus: "pending", measurementValue: 3 }),
   });
-  check("a winner can be picked", award.status === 200, JSON.stringify(award.body));
-  const wonScore = await scoreFor(teamA.id);
+  check("a count can be approved", award.status === 200, JSON.stringify(award.body));
+  const quantityScore = await scoreFor(teamA.id);
   check(
-    "picking the winner pays the bonus",
-    wonScore === baseScore + 4,
-    `expected ${baseScore + 4}, got ${wonScore}`
+    "each counted item adds its snapshotted rate",
+    quantityScore === taskPoints + 11,
+    `expected ${taskPoints + 11}, got ${quantityScore}`
   );
 
-  /*
-   * The winning team's OWN screen, not just the leaderboard.
-   *
-   * /api/state carries its own copy of the scoring rule, so it can drop the
-   * bonus while team_scores pays it -- and then a team reads one total on their
-   * task list and a different one on the scoreboard. Asserting only the
-   * leaderboard above missed exactly that.
-   */
-  const wonState = (await call(`/api/state?playerId=${playerId}&_=${Date.now()}`)).body;
+  const quantityState = (await call(`/api/state?playerId=${playerId}&_=${Date.now()}`)).body;
   check(
-    "the winning team's own task list includes the bonus",
-    wonState.stats?.points === wonScore,
-    `state ${wonState.stats?.points} vs leaderboard ${wonScore}`
+    "the team's own task list agrees with the leaderboard",
+    quantityState.stats?.points === quantityScore,
+    `state ${quantityState.stats?.points} vs leaderboard ${quantityScore}`
   );
-  const wonTask = (wonState.tasks ?? []).find((t) => t.id === contestTaskId);
+  const counted = (quantityState.submissions ?? []).find((s) => s.id === quantitySubmissionId);
   check(
-    "the task list names who won it",
-    wonTask?.competition?.bonus === 4 && typeof wonTask?.competition?.team === "string",
-    JSON.stringify(wonTask?.competition)
+    "the task list separates assigned points from extra-item points",
+    counted?.basePoints === 5 && counted?.bonusPoints === 6,
+    JSON.stringify(counted)
   );
 
-  // The other team is the reason the bonus is worth having, and the reason it
-  // must not follow a measurement: it has no approved row here at all.
-  const loserScore = await scoreFor(teamAlt.id);
-  check("the bonus goes to one team only", loserScore === 0, `${loserScore}`);
-
-  const undo = await call("/api/admin/tasks", {
+  const changedRate = await call("/api/admin/tasks", {
     method: "PATCH",
-    body: JSON.stringify({ id: contestTaskId, winnerTeamId: null }),
+    body: JSON.stringify({ id: quantityTaskId, points: 10, pointsPerUnit: 3 }),
   });
-  check("a winner can be taken back", undo.status === 200, JSON.stringify(undo.body));
-  const undoneScore = await scoreFor(teamA.id);
-  check(
-    "taking the winner back removes the bonus",
-    undoneScore === baseScore,
-    `expected ${baseScore}, got ${undoneScore}`
-  );
+  check("task rates remain editable", changedRate.status === 200, JSON.stringify(changedRate.body));
+  check("editing a task does not rewrite its approved evidence", await scoreFor(teamA.id) === quantityScore);
+  const recounted = await call(`/api/judge/${quantitySubmissionId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: "approve", expectedStatus: "approved", measurementValue: 1 }),
+  });
+  check("re-review can correct a count using the original point snapshots",
+    recounted.status === 200 && await scoreFor(teamA.id) === taskPoints + 7, JSON.stringify(recounted.body));
+  check("another team does not inherit the counted points", await scoreFor(teamAlt.id) === 0);
 
   // Torn down here rather than in `finally`: the assertions further down expect
   // team A to hold exactly what the one real submission is worth, and a spare
   // five points sitting on it reads as a scoring bug in whatever ran last.
-  await admin.from("submissions").delete().eq("id", contestSubmissionId);
-  await admin.from("tasks").delete().eq("id", contestTaskId);
-  contestSubmissionId = undefined;
-  contestTaskId = undefined;
+  await admin.from("submissions").delete().eq("id", quantitySubmissionId);
+  await admin.from("tasks").delete().eq("id", quantityTaskId);
+  quantitySubmissionId = undefined;
+  quantityTaskId = undefined;
 
   // --- re-review and rejection visibility ---------------------------------
   // Changing a call you got wrong must be possible at any point, and the team

@@ -47,8 +47,9 @@ export async function POST(req: Request) {
     sb.from("players").select("id,name").eq("id", playerId).maybeSingle(),
     sb
       .from("tasks")
-      .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,active,is_secret,revealed_at")
+      .select("id,round,title,points,scoring_mode,points_per_unit,active")
       .eq("id", taskId)
+      .eq("is_secret", false)
       .maybeSingle(),
   ]);
 
@@ -57,7 +58,6 @@ export async function POST(req: Request) {
 
   const t = task;
   if (t.round !== round) return fail(`That task belongs to Round ${t.round}, not Round ${round}.`, 409);
-  if (t.is_secret && !t.revealed_at) return fail("That challenge hasn't been revealed yet.", 409);
 
   const { data: rosterRow } = await sb
     .from("roster")
@@ -141,9 +141,8 @@ export async function POST(req: Request) {
       player_id: playerId,
       team_id: teamId,
       task_points: t.points,
-      scoring_mode_snapshot: t.scoring_mode,
+      scoring_mode_snapshot: t.scoring_mode === "quantity" ? "quantity" : "fixed",
       points_per_unit_snapshot: t.points_per_unit,
-      competition_bonus_snapshot: t.competition_bonus,
       object_name: objectName,
       media_type: contentType,
       group_id: groupId,

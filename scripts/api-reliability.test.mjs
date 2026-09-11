@@ -179,8 +179,8 @@ test("cutting a secret deactivates both round rows by slug, without deleting the
   assert.ok(!f.calls.some((call) => call.method === "DELETE"));
 });
 
-test("cutting or hiding a decided competition preserves its earned bonus without exposing the task", async () => {
-  for (const hidden of [{ active: false }, { is_secret: true, revealed_at: null }]) {
+test("cut and legacy-hidden tasks keep stored approvals but never add retired winner bonuses", async () => {
+  for (const hidden of [{ active: false }, { is_secret: true, revealed_at: null }, { is_secret: true, revealed_at: "2026-09-01T12:00:00Z" }]) {
     const competition = { ...task, scoring_mode: "competition", competition_bonus: 3, winner_team_id: team.id };
     const approved = { ...submission, scoring_mode_snapshot: "competition", competition_bonus_snapshot: 3 };
     const f = fixture({ tasks: [competition], submissions: [approved] });
@@ -189,14 +189,144 @@ test("cutting or hiding a decided competition preserves its earned bonus without
     assert.equal(response.status, 200);
     const state = await response.json();
     assert.equal(state.tasks.length, 0);
-    assert.equal(state.stats.points, 8);
-    assert.equal(state.submissions[0].bonusPoints, 3);
+    assert.equal(state.stats.points, 5);
+    assert.equal(state.submissions[0].bonusPoints, 0);
     const detail = await f.route("leaderboard/[teamId]").GET(
       req(`leaderboard/${team.id}?round=1`), { params: Promise.resolve({ teamId: team.id }) },
     );
     const entry = (await detail.json()).entries[0];
     assert.equal(state.stats.points, entry.basePoints + entry.bonusPoints);
   }
+});
+
+for (const mode of ["fixed", "quantity"]) {
+  for (const endpoint of ["feed", "leaderboard/[teamId]", "export"]) {
+    test(`${endpoint}: retained ${mode} evidence keeps its retired task's identity and score`, async () => {
+      const bonus = mode === "quantity" ? 6 : 0;
+      const approved = {
+        ...submission, scoring_mode_snapshot: mode, points_per_unit_snapshot: 2,
+        measurement_value: mode === "quantity" ? 3 : null, points_awarded: 5 + bonus,
+      };
+      const rejected = {
+        ...approved, id: randomUUID(), status: "rejected", points_awarded: null,
+        reject_reason: "Retained rejection reason", judged_at: "2026-09-11T13:02:00Z",
+      };
+      const f = fixture({
+        tasks: [{ ...task, is_secret: true, active: false, scoring_mode: mode, points_per_unit: 2 }],
+        submissions: [approved, rejected],
+      });
+      const response = await f.route(endpoint).GET(req(`${endpoint}?round=1`),
+        { params: Promise.resolve({ teamId: team.id }) });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      const rows = body.items ?? body.entries ?? body.submissions;
+      assert.equal(rows.length, endpoint === "leaderboard/[teamId]" ? 1 : 2);
+      for (const row of rows) {
+        assert.equal(row.taskTitle ?? row.task, task.title);
+        assert.ok((row.media?.[0].url ?? row.mediaUrl).includes(submission.object_name));
+      }
+      const scored = rows.find((row) => row.id === approved.id);
+      if (endpoint === "export") {
+        assert.equal(body.tasks.find((row) => row.id === task.id)?.title, task.title);
+        assert.equal(scored.pointsAwarded, 5 + bonus);
+      } else {
+        assert.deepEqual([scored.basePoints, scored.bonusPoints], [5, bonus]);
+      }
+      if (endpoint !== "leaderboard/[teamId]") {
+        assert.equal(rows.find((row) => row.id === rejected.id).rejectReason, rejected.reject_reason);
+      }
+    });
+  }
+}
+
+test("retained hidden history never becomes an available task or a retry prompt", async () => {
+  for (const status of ["approved", "rejected"]) {
+    const f = fixture({
+      tasks: [{ ...task, is_secret: true, active: false, scoring_mode: "quantity", points_per_unit: 2 }],
+      submissions: [{
+        ...submission, status, scoring_mode_snapshot: "quantity", points_per_unit_snapshot: 2,
+        measurement_value: 3, points_awarded: status === "approved" ? 11 : null,
+        reject_reason: status === "rejected" ? "Retained reason" : null,
+      }],
+    });
+    const response = await f.route("state").GET(req(`state?playerId=${player.id}`));
+    assert.equal(response.status, 200);
+    const state = await response.json();
+    assert.deepEqual(state.tasks, []);
+    assert.deepEqual(state.rejections, []);
+    assert.equal(state.submissions.length, 1);
+    assert.equal(state.submissions[0].task_id, task.id);
+    assert.equal(state.submissions[0].status, status);
+    assert.equal(state.stats.points, status === "approved" ? 11 : 0);
+    if (status === "approved") {
+      assert.deepEqual([state.submissions[0].basePoints, state.submissions[0].bonusPoints], [5, 6]);
+    }
+  }
+});
+
+for (const body of [
+  { scoringMode: "competition" }, { scoringMode: "unknown" },
+  { isSecret: true }, { revealed: true }, { requiresVideo: true },
+  { competitionBonus: 3 }, { winnerTeamId: team.id },
+  { scoring_mode: "competition" }, { is_secret: true }, { revealed_at: "2026-09-01T12:00:00Z" },
+  { requires_video: true }, { competition_bonus: 3 }, { winner_team_id: team.id },
+]) {
+  for (const method of ["POST", "PATCH"]) {
+    test(`admin/tasks ${method} refuses retired or unsupported input ${JSON.stringify(body)} without any mutation`, async () => {
+      const f = fixture();
+      const response = await f.route("admin/tasks")[method](req("admin/tasks", method, {
+        ...(method === "POST" ? { round: 1 } : { id: task.id }), title: task.title, points: 5, ...body,
+      }));
+      assert.equal(response.status, 400);
+      assert.ok(!f.calls.some((call) => ["POST", "PATCH", "DELETE"].includes(call.method)));
+    });
+  }
+}
+
+test("historic hidden rows cannot be restored or made available even if previously revealed", async () => {
+  const f = fixture({ tasks: [{ ...task, is_secret: true, revealed_at: "2026-09-01T12:00:00Z", active: false }] });
+  const response = await f.route("admin/tasks").PATCH(req("admin/tasks", "PATCH", { id: task.id, active: true }));
+  assert.equal(response.status, 404);
+  assert.equal(f.tables.tasks[0].active, false);
+  // Simulate old pre-migration data: even an active, previously revealed row is unavailable.
+  f.tables.tasks[0].active = true;
+  const admin = await (await f.route("admin/data").GET(req("admin/data"))).json();
+  assert.equal(admin.tasks.length, 0);
+  assert.equal((await f.route("submissions").POST(req("submissions", "POST", {
+    playerId: player.id, taskId: task.id, fileName: "example.jpg", fileType: "image/jpeg",
+  }))).status, 404);
+  assert.equal((await f.route("task-entries").GET(req(`task-entries?playerId=${player.id}&taskId=${task.id}`))).status, 404);
+});
+
+test("public task and judge payloads contain only supported scoring and evidence fields", async () => {
+  const f = fixture({ tasks: [{ ...task, scoring_mode: "competition", requires_video: true, winner_team_id: team.id }],
+    submissions: [{ ...submission, scoring_mode_snapshot: "competition" }] });
+  const state = await (await f.route("state").GET(req(`state?playerId=${player.id}`))).json();
+  const admin = await (await f.route("admin/data").GET(req("admin/data"))).json();
+  const judged = (await (await f.route("judge/queue").GET(req("judge/queue"))).json()).recent[0];
+  for (const row of [state.tasks[0], admin.tasks[0]]) {
+    assert.equal(row.scoring_mode, "fixed");
+    for (const key of ["competition", "competition_bonus", "winner_team_id", "requires_video", "is_secret", "revealed_at"]) {
+      assert.ok(!Object.hasOwn(row, key), `${key} must not reach a task screen`);
+    }
+  }
+  assert.equal(judged.scoringMode, "fixed");
+  for (const key of ["competitionBonus", "requiresVideo", "isSecret", "isVideo"]) {
+    assert.ok(!Object.hasOwn(judged, key), `${key} is retired at group level`);
+  }
+  assert.equal(judged.media[0].isVideo, false);
+  assert.equal(state.submissions[0].scoring_mode_snapshot, "fixed");
+  assert.ok(!Object.hasOwn(state.submissions[0], "competition_bonus_snapshot"));
+});
+
+test("legacy competition uploads snapshot fixed scoring and still accept photos", async () => {
+  const f = fixture({ tasks: [{ ...task, scoring_mode: "competition", requires_video: true }], submissions: [] });
+  const response = await f.route("submissions").POST(req("submissions", "POST", {
+    playerId: player.id, taskId: task.id, fileName: "example.jpg", fileType: "image/jpeg",
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(f.tables.submissions[0].scoring_mode_snapshot, "fixed");
+  assert.ok(!Object.hasOwn(f.calls.find((call) => call.method === "POST").body, "competition_bonus_snapshot"));
 });
 
 for (const [endpoint, tables] of [
@@ -297,8 +427,8 @@ for (const actions of [["approve", "reject"], ["reject", "approve"], ["approve",
   });
 }
 
-test("files finalized before one decision remain one complete scored group on every surface", async () => {
-  const f = fixture({ submissions: [] });
+test("quantity files finalized before one decision remain one complete scored group on every surface", async () => {
+  const f = fixture({ submissions: [], tasks: [{ ...task, scoring_mode: "quantity", points_per_unit: 2 }] });
   const reserve = f.route("submissions");
   const finish = f.route("submissions/[id]");
   const payload = { playerId: player.id, taskId: task.id, fileName: "example.jpg", fileType: "image/jpeg" };
@@ -307,7 +437,7 @@ test("files finalized before one decision remain one complete scored group on ev
   const second = await (await reserve.POST(req("submissions", "POST", { ...payload, groupWith: first.submissionId }))).json();
   await finish.PATCH(req("submissions", "PATCH", {}), ctx(second.submissionId));
   const judged = await f.route("judge/[id]").POST(req("judge", "POST", {
-    action: "approve", expectedStatus: "pending",
+    action: "approve", expectedStatus: "pending", measurementValue: 3,
   }), ctx(first.submissionId));
   assert.equal((await judged.json()).files, 2);
   const feed = await (await f.route("feed").GET(req("feed"))).json();
@@ -318,9 +448,13 @@ test("files finalized before one decision remain one complete scored group on ev
   for (const list of [feed.items, history.recent, detail.entries]) {
     assert.equal(list.length, 1);
     assert.deepEqual(list[0].media.map((m) => m.id), [first.submissionId, second.submissionId]);
+    const base = list[0].basePoints ?? list[0].awardedBase;
+    const bonus = list[0].bonusPoints ?? list[0].awardedBonus;
+    assert.deepEqual([base, bonus], [5, 6]);
   }
   assert.equal(new Set(state.submissions.map((s) => s.groupId)).size, 1);
-  assert.equal(state.stats.points, 5);
+  assert.equal(state.stats.points, 11);
+  for (const row of state.submissions) assert.deepEqual([row.basePoints, row.bonusPoints], [5, 6]);
   const otherPlayer = { id: randomUUID(), name: "__qa Other Guest" };
   f.tables.players.push(otherPlayer);
   f.tables.roster.push({ round: 1, player_id: otherPlayer.id, team_id: randomUUID() });
@@ -328,7 +462,44 @@ test("files finalized before one decision remain one complete scored group on ev
     req(`task-entries?playerId=${otherPlayer.id}&taskId=${task.id}`),
   )).json();
   assert.deepEqual(other.entries[0].media.map((m) => m.id), [first.submissionId, second.submissionId]);
+  assert.deepEqual([other.entries[0].basePoints, other.entries[0].bonusPoints], [5, 6]);
 });
+
+for (const endpoint of ["feed", "state", "task-entries", "leaderboard/[teamId]"]) {
+  test(`${endpoint}: a stale quantity anchor still displays the complete decision's bonus`, async () => {
+    const group = randomUUID();
+    const viewer = { id: randomUUID(), name: "__qa Other Viewer" };
+    const first = {
+      ...submission, group_id: group, scoring_mode_snapshot: "quantity",
+      points_per_unit_snapshot: 2, measurement_value: 3, points_awarded: 5,
+    };
+    const last = {
+      ...first, id: randomUUID(), points_awarded: 11, created_at: "2026-09-11T13:00:30.000Z",
+    };
+    // Deliberately stale only the oldest file's award: a row-id score lookup
+    // would fall back to 5 + 0, while the decision is worth 5 + 6.
+    const f = fixture({
+      tasks: [{ ...task, scoring_mode: "quantity", points_per_unit: 2 }],
+      submissions: [first, last], players: [player, viewer],
+      roster: [
+        { round: 1, player_id: player.id, team_id: team.id },
+        { round: 1, player_id: viewer.id, team_id: randomUUID() },
+      ],
+    });
+    const playerId = endpoint === "task-entries" ? viewer.id : player.id;
+    const response = await f.route(endpoint).GET(
+      req(`${endpoint}?playerId=${playerId}&taskId=${task.id}&round=1`),
+      { params: Promise.resolve({ teamId: team.id }) },
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const list = body.items ?? body.entries ?? body.submissions;
+    const anchor = list.find((entry) => entry.id === first.id);
+    assert.deepEqual([anchor.basePoints, anchor.bonusPoints], [5, 6]);
+    if (endpoint === "state") assert.equal(body.stats.points, 11);
+    else assert.deepEqual(anchor.media.map((file) => file.id), [first.id, last.id]);
+  });
+}
 
 test("a late file on the original team is not judged with an already reassigned sibling", async () => {
   const otherTeam = { ...team, id: randomUUID(), name: "__qa Blue" };

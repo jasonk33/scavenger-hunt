@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Back to a clean slate for testing: every submission gone, along with the media
- * each one uploaded, every leader bonus un-awarded, and every phone's starred
+ * each one uploaded, and every phone's starred
  * shortlist cleared.
  *
  * It sweeps the submissions, not the bucket, so bytes left behind by an upload
@@ -20,8 +20,8 @@ export const dynamic = "force-dynamic";
  * word that has to arrive in the body. The last one is what stops a stray fetch
  * or a fat finger; an accidental request cannot supply it.
  *
- * It stops at submissions on purpose. Players, teams, the roster, the task list
- * and secret reveals all survive, so a reset costs a re-upload rather than a
+ * It stops at submissions on purpose. Players, teams, the roster and tasks
+ * all survive, so a reset costs a re-upload rather than a
  * re-seed. `npm run seed:reset` is still the way to rebuild the rest.
  */
 const CONFIRM_WORD = "RESET";
@@ -79,14 +79,6 @@ export async function POST(req: Request) {
   const { error: delErr } = await sb.from("submissions").delete().neq("id", NO_SUCH_ID);
   if (delErr) return fail(`Media was deleted but the rows were not: ${delErr.message}`, 500);
 
-  // A leader bonus is an award made over submissions that no longer exist, so it
-  // has to go too -- otherwise a wiped leaderboard still shows bonus points and
-  // Admin still lists the contest as decided.
-  const { error: winnerErr } = await sb
-    .from("tasks")
-    .update({ winner_team_id: null })
-    .not("winner_team_id", "is", null);
-
   // The starred shortlists are localStorage on each phone, so nothing here can
   // delete them. Bumping this marker is the signal: every device clears its own
   // the first time /api/state hands it a value it has not seen before. Written
@@ -99,6 +91,5 @@ export async function POST(req: Request) {
     submissions: subs.length,
     objects: objects.length,
     orphaned,
-    winnersCleared: !winnerErr,
   });
 }

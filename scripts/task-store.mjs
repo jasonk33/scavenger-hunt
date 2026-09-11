@@ -11,8 +11,7 @@
  * The gap did not survive contact with the event: Admin edited `tasks` live and
  * then mirrored the same four fields back onto the board, so the live path
  * already existed and the mirror was only there to stop the two tables
- * disagreeing. Everything the board added on top of those four fields -- the
- * ratings, the notes, the props -- is never shown to a player at all, so there
+ * disagreeing. The notes and props are never shown to a player at all, so there
  * was nothing left for a staging step to protect. See
  * `supabase/migrate-tasks-one-table.sql`.
  *
@@ -35,7 +34,6 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 export const TIERS = [1, 3, 5, 7, 10];
-export const RATINGS = ["difficulty", "guts", "luck", "payoff", "risk"];
 
 /**
  * Which table the tasks live in. Overridable so a scratch copy can be pointed at
@@ -44,113 +42,67 @@ export const RATINGS = ["difficulty", "guts", "luck", "payoff", "risk"];
  */
 export const TASK_TABLE = process.env.SCAVENGER_TASK_TABLE || "tasks";
 
-/** Where the tier model is kept in the key/value `settings` table. */
-export const MODEL_KEY = "tier_model";
-
 /**
  * Column -> the key that column has on a task object.
  *
  * The task object stays camelCase and is what the canvas consumes. This map is
  * the only place the two vocabularies meet.
- *
- * `round` is deliberately absent: it is derived, not copied. See `rowsToTask`.
  */
 export const COLUMNS = {
   slug: "slug",
+  round: "round",
   doc_title: "docTitle",
   title: "title",
   points: "points",
   scoring_mode: "scoringMode",
   measurement_label: "measurementLabel",
   points_per_unit: "pointsPerUnit",
-  competition_bonus: "competitionBonus",
   doc_order: "docOrder",
-  difficulty: "difficulty",
-  guts: "guts",
-  luck: "luck",
-  payoff: "payoff",
-  risk: "risk",
-  requires_video: "requiresVideo",
-  is_secret: "isSecret",
   active: "active",
   prop: "prop",
   rewrite: "rewrite",
   note: "note",
-  tier_ok: "tierOk",
 };
 
 /** Named explicitly rather than `*`, so a column added later cannot arrive unmapped. */
-export const SELECT = ["id", "round", ...Object.keys(COLUMNS)].join(",");
+export const SELECT = ["id", ...Object.keys(COLUMNS)].join(",");
 
 const TASK_KEY_TO_COLUMN = Object.fromEntries(Object.entries(COLUMNS).map(([column, key]) => [key, column]));
 
-/**
- * The rows sharing one slug, as the single task the canvas edits.
- *
- * A secret challenge is offered in BOTH halves of the event, and `tasks.round`
- * is `check (round in (1, 2))`, so it is stored as two rows that share a slug.
- * That is the only reason grouping exists, and it is why `round` is presented as
- * 0 for a secret rather than read off a row: 0 means "both", which is the thing
- * the planner is actually deciding about. Every other task is a single row and
- * groups to itself.
- *
- * @param {object[]} rows  one or more rows, all with the same slug
- */
-export function rowsToTask(rows) {
-  const [first] = rows ?? [];
-  if (!first) return null;
+/** One ordinary task row, with planning fields named for the canvas. */
+export function rowToTask(row) {
+  if (!row || typeof row.slug !== "string" || !row.slug) return null;
   const task = {};
   for (const [column, key] of Object.entries(COLUMNS)) {
     const defaults = {
       scoring_mode: "fixed",
       measurement_label: "",
       points_per_unit: 0,
-      competition_bonus: 0,
     };
-    task[key] = first[column] ?? defaults[column] ?? null;
+    task[key] = row[column] ?? defaults[column] ?? null;
   }
-  task.round = first.is_secret ? 0 : first.round;
-  // Which rows this task actually is. Nothing in the UI reads it; it is here so
-  // a caller can tell a secret from a normal task without re-querying.
-  task.rowIds = rows.map((r) => r.id);
+  // Dormant competition rows can still exist before the cleanup migration.
+  task.scoringMode = task.scoringMode === "quantity" ? "quantity" : "fixed";
   return task;
 }
 
-/** Groups rows by slug, preserving the order the first row of each slug arrived in. */
-export function groupRows(rows) {
-  const bySlug = new Map();
-  for (const row of rows ?? []) {
-    if (!row || typeof row.slug !== "string" || !row.slug) continue;
-    const group = bySlug.get(row.slug);
-    if (group) group.push(row);
-    else bySlug.set(row.slug, [row]);
-  }
-  return [...bySlug.values()].map(rowsToTask);
-}
-
 const int = (v) => (typeof v === "boolean" ? NaN : Number(v));
-const rating = (v) => {
-  const n = int(v);
-  return Number.isInteger(n) && n >= 1 && n <= 5 ? n : undefined;
-};
 const nonNegativeInt = (v) => {
   const n = int(v);
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 };
-const scoringMode = (v) => (["fixed", "quantity", "competition"].includes(v) ? v : undefined);
+const scoringMode = (v) => (["fixed", "quantity"].includes(v) ? v : undefined);
 
 /**
  * The fields a caller may change, with a validator each. Anything not listed is
  * dropped rather than written.
  *
- * `slug`, `round`, `isSecret`, `docTitle` and `docOrder` are deliberately
+ * `slug`, `round`, `docTitle` and `docOrder` are deliberately
  * absent. They are identity and provenance: `docTitle` is the planning doc's own
- * wording and the evidence of what a task used to say, and slug/round/isSecret
- * together decide how many rows a task is. A patch that could move a task
- * between rounds, or turn one row into two, is a different operation from
+ * wording and the evidence of what a task used to say. A patch that could move a task
+ * between rounds is a different operation from
  * editing one -- moving is `moveTask`, which has its own refusals and renumbers
- * `doc_order` to match -- and `revealed_at` is not here either, because
- * revealing a secret is per-round and belongs to Admin on the day.
+ * `doc_order` to match.
  *
  * Every validator returns `undefined` for "not a legal value", which is what
  * drops the field. Returning the raw value instead would send it to a column
@@ -165,16 +117,10 @@ export const EDITABLE = {
   scoringMode,
   measurementLabel: (v) => (typeof v === "string" ? v.trim() : undefined),
   pointsPerUnit: nonNegativeInt,
-  competitionBonus: nonNegativeInt,
   // Cut. Never a delete, which would cascade to submissions: a cut task is
   // hidden from players and its scores stand.
   active: (v) => (typeof v === "boolean" ? v : undefined),
-  requiresVideo: (v) => (typeof v === "boolean" ? v : undefined),
   rewrite: (v) => (typeof v === "boolean" ? v : undefined),
-  // The tier suggestion this task's owner rejected, or null for "never
-  // dismissed". A number rather than a flag on purpose: see tier.mjs.
-  tierOk: (v) => (v === null ? null : TIERS.includes(int(v)) ? int(v) : undefined),
-  ...Object.fromEntries(RATINGS.map((k) => [k, rating])),
 };
 
 /**
@@ -183,6 +129,9 @@ export const EDITABLE = {
  * everything".
  */
 export function taskPatchToRow(patch) {
+  if (patch?.scoringMode !== undefined && !scoringMode(patch.scoringMode)) {
+    throw refuse("scoringMode must be fixed or quantity");
+  }
   const row = {};
   for (const [key, value] of Object.entries(patch ?? {})) {
     const validate = EDITABLE[key];
@@ -191,60 +140,6 @@ export function taskPatchToRow(patch) {
     if (clean !== undefined) row[TASK_KEY_TO_COLUMN[key]] = clean;
   }
   return row;
-}
-
-/**
- * Defaults for the tier model, used whenever the stored one is missing or
- * unreadable.
- *
- * The thresholds are fitted, not invented: they are the score cutoffs that
- * reproduce the planning doc's own tier distribution (10/22/23/14) across the
- * tasks it already had. Arbitrary cutoffs would flag half the list and the
- * disagreements would be noise.
- */
-export const DEFAULT_MODEL = Object.freeze({
-  weights: Object.freeze({ difficulty: 1.2, guts: 1.0, luck: 0.6 }),
-  // Upper bound of each tier's weighted score. Anything above `t5` is a 10.
-  thresholds: Object.freeze({ t1: 5.9, t3: 8.1, t5: 10.8 }),
-});
-
-/**
- * Reads the model out of its settings row.
- *
- * Every failure lands on the defaults rather than on a partial model: one NaN
- * weight makes every tier comparison false, which would quietly re-tier the
- * whole list without anything looking broken.
- */
-export function parseModel(value) {
-  let raw = null;
-  if (value && typeof value === "string") {
-    try {
-      raw = JSON.parse(value);
-    } catch {
-      raw = null;
-    }
-  } else if (value && typeof value === "object") {
-    raw = value;
-  }
-
-  const model = { weights: { ...DEFAULT_MODEL.weights }, thresholds: { ...DEFAULT_MODEL.thresholds } };
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return model;
-  for (const group of ["weights", "thresholds"]) {
-    const from = raw[group];
-    if (!from || typeof from !== "object") continue;
-    for (const key of Object.keys(model[group])) {
-      // Number(null) is 0 and Number("") is 0, so both have to be excluded by
-      // type before the finite check, or a missing weight becomes a zero one.
-      if (from[key] === null || from[key] === "" || typeof from[key] === "boolean") continue;
-      const n = Number(from[key]);
-      if (Number.isFinite(n)) model[group][key] = n;
-    }
-  }
-  return model;
-}
-
-export function serializeModel(model) {
-  return JSON.stringify(parseModel(model));
 }
 
 // ── Talking to PostgREST ─────────────────────────────────────────────────────
@@ -331,27 +226,24 @@ const refuse = (message) => Object.assign(new Error(message), { refusal: true })
 // ── Queries ──────────────────────────────────────────────────────────────────
 
 /**
- * Every task plus the tier model.
+ * Every ordinary task, including cuts.
  *
  * Read fresh every time, with no cache. The cache this replaces was the cause of
  * its own bug -- a process served its first read forever and wrote that stale
  * copy back over whatever another session had done since. Any session can edit
  * the task list, so "the copy I loaded" is never a safe thing to hold.
  *
- * @returns {Promise<{model: object, tasks: object[]}>}
+ * @returns {Promise<{tasks: object[]}>}
  */
 export async function readTasks(client) {
-  const [rows, model] = await Promise.all([
-    rest(client, {
-      // Secrets last, then by tier and by the planning doc's own order, which is
-      // what the canvas lists in and what groups a secret's two rows together.
-      path: `${TASK_TABLE}?select=${SELECT}&order=is_secret.asc,round.asc,doc_order.asc,slug.asc,id.asc`,
-    }).catch((e) => {
-      throw new Error(`could not read the task list: ${e.message}`);
-    }),
-    readModel(client),
-  ]);
-  return { model, tasks: groupRows(Array.isArray(rows) ? rows : []) };
+  // Historical shared-slug secret rows stay in the database but never enter
+  // this editor, including its cut list or any write path.
+  const rows = await rest(client, {
+    path: `${TASK_TABLE}?select=${SELECT}&is_secret=eq.false&order=round.asc,doc_order.asc,slug.asc,id.asc`,
+  }).catch((e) => {
+    throw new Error(`could not read the task list: ${e.message}`);
+  });
+  return { tasks: (Array.isArray(rows) ? rows : []).map(rowToTask).filter(Boolean) };
 }
 
 /**
@@ -364,46 +256,31 @@ export async function readTasks(client) {
  * and last-write-wins on the same field is the only remaining race, which is the
  * expected one.
  *
- * Filtering on the slug rather than a row id is also what keeps a secret's two
- * rounds in step: one statement, both rows, no window in which they disagree.
- *
  * @returns {Promise<object|null>} the updated task, or null if the slug is unknown.
  */
 export async function updateTask(client, slug, patch) {
   if (typeof slug !== "string" || !slug) return null;
   const row = taskPatchToRow(patch);
 
-  /*
-   * Moving a task off the leader bonus takes its winner with it.
-   *
-   * Not a canvas-editable field -- it is not in COLUMNS and the planner never
-   * shows it -- but the canvas CAN change scoring_mode, and team_scores reads
-   * `coalesce(scoring_mode_snapshot, tasks.scoring_mode)`. An already-judged row
-   * keeps its 'competition' snapshot, so a winner left behind here goes on
-   * paying a bonus for a task that is no longer a competition. The same guard
-   * lives in src/app/api/admin/tasks/route.ts; both editors write these rows.
-   */
-  if (row.scoring_mode && row.scoring_mode !== "competition") row.winner_team_id = null;
-
   // Nothing legal to write. Still a read, so the caller can tell "no such task"
   // from "nothing to do" -- returning the task unchanged is the honest answer,
   // and an empty UPDATE would move updated_at for an edit nobody made.
   if (!Object.keys(row).length) {
-    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&slug=${eq(slug)}` }).catch((e) => {
+    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&is_secret=eq.false&slug=${eq(slug)}` }).catch((e) => {
       throw new Error(`could not read task ${slug}: ${e.message}`);
     });
-    return groupRows(found)[0] ?? null;
+    return rowToTask(found[0]);
   }
 
   const updated = await rest(client, {
     method: "PATCH",
-    path: `${TASK_TABLE}?slug=${eq(slug)}&select=${SELECT}`,
+    path: `${TASK_TABLE}?slug=${eq(slug)}&is_secret=eq.false&select=${SELECT}`,
     body: { ...row, updated_at: new Date().toISOString() },
     prefer: "return=representation",
   }).catch((e) => {
     throw new Error(`could not update task ${slug}: ${e.message}`);
   });
-  return groupRows(updated)[0] ?? null;
+  return rowToTask(updated[0]);
 }
 
 /**
@@ -422,7 +299,7 @@ export async function updateTask(client, slug, patch) {
  * `tasks ... eq(round, round)` and look each submission's task up in that map,
  * so a task that has left the round renders as "(deleted task)" in the judge's
  * queue and as a blank title in the feed, with a pending submission stranded
- * behind it. Hence the third refusal below. What already happened is never
+ * behind it. What already happened is never
  * rewritten because a move that would strand it does not happen.
  *
  * @returns {Promise<object|null>} the moved task, or null if the slug is unknown.
@@ -435,23 +312,16 @@ export async function moveTask(client, slug, round) {
   const target = int(round);
   if (![1, 2].includes(target)) throw refuse("a task can only be moved to Round 1 or Round 2");
 
-  // One read, unfiltered, because the destination's highest doc_order is needed
+  // One read across both rounds, because the destination's highest doc_order is needed
   // as well as this task's own rows -- the same shape `addTask` uses.
   const rows = await rest(client, {
-    path: `${TASK_TABLE}?select=id,slug,round,is_secret,doc_order,winner_team_id`,
+    path: `${TASK_TABLE}?select=id,slug,round,doc_order&is_secret=eq.false`,
   }).catch((e) => {
     throw new Error(`could not move task ${slug}: ${e.message}`);
   });
 
   const mine = rows.filter((r) => r.slug === slug);
   if (!mine.length) return null;
-
-  if (mine.some((r) => r.is_secret)) {
-    throw refuse(
-      "A secret challenge runs in both halves of the event, so there is no round to move it to. " +
-        "Cut it and add a replacement in the round you want instead."
-    );
-  }
 
   const current = mine[0];
   // Already there. Still a read, so the caller gets the task back rather than a
@@ -460,17 +330,10 @@ export async function moveTask(client, slug, round) {
   // the refusals below on purpose: a task that is not moving cannot be refused
   // permission to move.
   if (Number(current.round) === target) {
-    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&slug=${eq(slug)}` }).catch((e) => {
+    const found = await rest(client, { path: `${TASK_TABLE}?select=${SELECT}&is_secret=eq.false&slug=${eq(slug)}` }).catch((e) => {
       throw new Error(`could not read task ${slug}: ${e.message}`);
     });
-    return groupRows(found)[0] ?? null;
-  }
-
-  if (mine.some((r) => r.winner_team_id)) {
-    throw refuse(
-      "This task's leader bonus has already been awarded to a team in the round it is in. " +
-        "Clear the winner in Admin first, or the bonus would follow the task out of that round's standings."
-    );
+    return rowToTask(found[0]);
   }
 
   // Anything already submitted against this task pins it to the round it is in.
@@ -502,21 +365,17 @@ export async function moveTask(client, slug, round) {
 
   const moved = await rest(client, {
     method: "PATCH",
-    path: `${TASK_TABLE}?slug=${eq(slug)}&select=${SELECT}`,
+    path: `${TASK_TABLE}?slug=${eq(slug)}&is_secret=eq.false&select=${SELECT}`,
     body: { round: target, doc_order: lastOrder + 1, updated_at: new Date().toISOString() },
     prefer: "return=representation",
   }).catch((e) => {
     throw new Error(`could not move task ${slug}: ${e.message}`);
   });
-  return groupRows(moved)[0] ?? null;
+  return rowToTask(moved[0]);
 }
 
 /**
  * Adds a task, live.
- *
- * A secret (`isSecret: true`, or the legacy `round: 0`) is inserted once per
- * round, sharing a slug -- the fan-out the old publish step used to do. Both
- * rows go in one request so a task can never exist in half the event.
  *
  * The slug is allocated by looking at what is already there, which is a read
  * followed by a write and therefore racy in principle. The insert is the
@@ -524,11 +383,12 @@ export async function moveTask(client, slug, round) {
  * on the duplicate instead of overwriting the other one.
  */
 export async function addTask(client, input) {
-  const requestedRound = Number(input?.round);
-  const secret = input?.isSecret === true || requestedRound === 0;
-  const round = [1, 2].includes(requestedRound) ? requestedRound : 1;
-  const prefix = secret ? "s" : `r${round}`;
-  const existing = await rest(client, { path: `${TASK_TABLE}?select=slug,round,doc_order` }).catch((e) => {
+  const round = int(input?.round);
+  if (![1, 2].includes(round)) throw refuse("a task must be assigned to Round 1 or Round 2");
+  if (input?.isSecret === true) throw refuse("secret tasks are no longer supported");
+  const details = taskPatchToRow(input);
+  const prefix = `r${round}`;
+  const existing = await rest(client, { path: `${TASK_TABLE}?select=slug,round,doc_order&is_secret=eq.false` }).catch((e) => {
     throw new Error(`could not read the task list: ${e.message}`);
   });
   const taken = new Set(existing.map((r) => r.slug));
@@ -539,82 +399,33 @@ export async function addTask(client, input) {
   // one -- because the two must not be able to pick the same number: doc_order
   // is the tie-break inside a tier, and two tasks sharing a sort_order would
   // swap places between polls in the player's list.
-  const rounds = secret ? [1, 2] : [round];
   const lastOrder = existing
-    .filter((r) => rounds.includes(Number(r.round)))
+    .filter((r) => Number(r.round) === round)
     .reduce((max, r) => Math.max(max, Number(r.doc_order) || 0), 0);
 
-  const shared = {
+  const row = {
     slug: `${prefix}-x${n}`,
     // Empty is what marks a task as not having come from the planning doc.
     doc_title: "",
     title: String(input?.title ?? "").trim() || "Untitled task",
-    points: secret ? 7 : TIERS.includes(Number(input?.points)) ? Number(input.points) : 3,
+    points: TIERS.includes(int(input?.points)) ? int(input.points) : 3,
     doc_order: lastOrder + 1,
-    is_secret: secret,
+    round,
     active: true,
+    scoring_mode: "fixed",
     note: typeof input?.note === "string" ? input.note : "",
-    ...taskPatchToRow(
-      Object.fromEntries([
-        ...RATINGS.map((k) => [k, input?.[k]]),
-        ["scoringMode", input?.scoringMode],
-        ["measurementLabel", input?.measurementLabel],
-        ["pointsPerUnit", input?.pointsPerUnit],
-        ["competitionBonus", input?.competitionBonus],
-        ["prop", input?.prop],
-        ["requiresVideo", input?.requiresVideo],
-      ])
-    ),
+    ...details,
   };
 
   const created = await rest(client, {
     method: "POST",
     path: `${TASK_TABLE}?select=${SELECT}`,
-    body: rounds.map((r) => ({ ...shared, round: r })),
+    body: [row],
     prefer: "return=representation",
   }).catch((e) => {
     throw new Error(`could not add a task: ${e.message}`);
   });
-  return groupRows(created)[0] ?? null;
-}
-
-/** Compare-and-swap the JSON text so different sessions' partial edits commute. */
-export async function updateModel(client, patch) {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const rows = await rest(client, { path: `settings?select=value&key=${eq(MODEL_KEY)}` });
-    const current = parseModel(rows[0]?.value);
-    const merged = parseModel({
-      weights: { ...current.weights, ...(patch?.weights ?? {}) },
-      thresholds: { ...current.thresholds, ...(patch?.thresholds ?? {}) },
-    });
-    // PostgREST string filters need quoting/escaping for JSON's commas and quotes.
-    const expected = rows[0]?.value === null ? "is.null" : eq(JSON.stringify(rows[0]?.value));
-    const updated = await rest(client, rows.length ? {
-      method: "PATCH",
-      path: `settings?key=${eq(MODEL_KEY)}&value=${expected}&select=value`,
-      body: { value: JSON.stringify(merged) },
-      prefer: "return=representation",
-    } : {
-      method: "POST",
-      path: "settings?select=value",
-      body: { key: MODEL_KEY, value: JSON.stringify(merged) },
-      prefer: "resolution=ignore-duplicates,return=representation",
-    }).catch((e) => {
-      throw new Error(`could not save the tier model: ${e.message}`);
-    });
-    if (updated.length) return parseModel(updated[0].value);
-  }
-  throw new Error("The tier model changed repeatedly while saving. Please retry.");
-}
-
-export async function readModel(client) {
-  // A missing row is a working list on the defaults, so only a real failure is
-  // worth raising -- a canvas that refuses to open over one absent settings row
-  // would be a canvas nobody can use.
-  const rows = await rest(client, { path: `settings?select=value&key=${eq(MODEL_KEY)}` }).catch((e) => {
-    throw new Error(`could not read the tier model: ${e.message}`);
-  });
-  return parseModel(rows[0]?.value);
+  return rowToTask(created[0]);
 }
 
 // ── Finding the credentials ──────────────────────────────────────────────────

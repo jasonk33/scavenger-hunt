@@ -22,10 +22,8 @@ import {
   createTaskClient,
   moveTask as moveTaskRound,
   readTasks,
-  updateModel as writeModel,
   updateTask as patchTask,
 } from "../../../scripts/task-store.mjs";
-import { suggestedPoints } from "./tier.mjs";
 
 /**
  * Built on first use, never on import.
@@ -53,7 +51,6 @@ export const updateTask = (slug, patch) => patchTask(client(), slug, patch);
 /** Which half of the event a task is offered in. Its own write: see task-store.mjs. */
 export const moveTask = (slug, round) => moveTaskRound(client(), slug, round);
 export const addTask = (input) => insertTask(client(), input);
-export const updateModel = (patch) => writeModel(client(), patch);
 
 /**
  * The rollup the UI header and the `summary` action both render.
@@ -63,10 +60,9 @@ export const updateModel = (patch) => writeModel(client(), patch);
  */
 export function summarize(board) {
   const tasks = board?.tasks ?? [];
-  const model = board?.model;
   const live = tasks.filter((t) => t.active);
   const rounds = {};
-  for (const round of [1, 2, 0]) {
+  for (const round of [1, 2]) {
     const inRound = live.filter((t) => t.round === round);
     const tiers = {};
     for (const tier of TIERS) {
@@ -77,12 +73,7 @@ export function summarize(board) {
       count: inRound.length,
       tiers,
       maxPoints: inRound.reduce((sum, t) => sum + t.points, 0),
-      mismatched: inRound.filter((t) => t.points !== suggestedPoints(t, model)).length,
-      avgPayoff: inRound.length ? +(inRound.reduce((s, t) => s + t.payoff, 0) / inRound.length).toFixed(2) : 0,
-      requiresVideo: inRound.filter((t) => t.requiresVideo).length,
       needsProp: inRound.filter((t) => t.prop).length,
-      highRisk: inRound.filter((t) => t.risk >= 4).length,
-      highLuck: inRound.filter((t) => t.luck >= 4).length,
     };
   }
   return {

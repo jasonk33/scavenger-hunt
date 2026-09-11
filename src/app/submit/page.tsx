@@ -12,14 +12,9 @@ type Task = {
   id: string;
   title: string;
   points: number;
-  scoring_mode: "fixed" | "quantity" | "competition";
+  scoring_mode: "fixed" | "quantity";
   measurement_label: string;
   points_per_unit: number;
-  competition_bonus: number;
-  /** Set once an organizer picks the leader-bonus winner at the end of a round. */
-  competition: { team: string; bonus: number } | null;
-  requires_video: boolean;
-  is_secret: boolean;
 };
 
 type Sub = {
@@ -1180,7 +1175,6 @@ function TaskRow({
             <span className="pill pill-solid">
               {task.points} pt{task.points === 1 ? "" : "s"}
             </span>
-            {task.requires_video && <span className="pill">video only</span>}
             {task.scoring_mode === "quantity" && (
               /* The unit is stored as a singular phrase ("extra pigeon"), so the
                  rate reads as a sentence without the task title having to spell
@@ -1188,19 +1182,6 @@ function TaskRow({
               <span className="pill pill-accent pill-wrap">
                 +{task.points_per_unit} pt{task.points_per_unit === 1 ? "" : "s"} per{" "}
                 {task.measurement_label || "extra item"}
-              </span>
-            )}
-            {task.scoring_mode === "competition" && (
-              <span className="pill pill-warn pill-wrap">
-                best one wins +{task.competition_bonus} at the end of the round
-              </span>
-            )}
-            {/* Just the word: the points pill beside it already carries the
-                number this used to have to spell out on its own. */}
-            {task.is_secret && <span className="pill pill-warn">secret</span>}
-            {task.competition && (
-              <span className="pill pill-wrap">
-                {task.competition.team} won +{task.competition.bonus}
               </span>
             )}
             {st === "done" && approved && (

@@ -15,40 +15,74 @@
  *
  * So the rule is: **nothing in the canvas's import graph may require a package.**
  * Node built-ins and global `fetch` only. The test copies the real files into a
- * bare temp directory with no `node_modules` anywhere above it and imports them
- * for real, because that is the only thing that actually proves it -- reading
- * the source for import statements would miss a transitive one.
+ * bare scratch checkout and imports them for real. A resolver guard rejects
+ * packages and paths escaping the copy, so this repo's installed dependencies
+ * cannot mask a transitive import.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { isBuiltin, registerHooks } from "node:module";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const HERE = new URL(".", import.meta.url);
+const guards = new Map();
+const scratch = (prefix) => {
+  const root = resolve(`.${prefix}-${randomUUID()}`);
+  mkdirSync(root);
+  return root;
+};
 
 /**
  * A throwaway checkout holding only the files the canvas needs.
  *
- * Built under the OS temp directory rather than beside the repo: Node walks
- * every parent looking for `node_modules`, so a copy inside the repo would find
- * the real one and the test would pass while the bug was still there.
+ * The resolver permits only builtins and files inside this copy. Importing a
+ * package must fail even when the parent checkout has it installed.
  */
 function bareCheckout() {
-  const root = mkdtempSync(join(tmpdir(), "canvas-portable-"));
+  const root = scratch("canvas-portable");
+  const rootUrl = pathToFileURL(`${root}/`).href;
+  guards.set(root, registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (!context.parentURL?.startsWith(rootUrl)) return nextResolve(specifier, context);
+      if (isBuiltin(specifier)) return nextResolve(specifier, context);
+      if (!specifier.startsWith(".") && !specifier.startsWith("file:")) {
+        throw new Error(`Non-portable package import: ${specifier}`);
+      }
+      const result = nextResolve(specifier, context);
+      if (!result.url.startsWith(rootUrl)) throw new Error(`Import escapes bare checkout: ${specifier}`);
+      return result;
+    },
+  }));
   mkdirSync(join(root, "scripts"), { recursive: true });
   mkdirSync(join(root, ".github", "extensions", "scavenger-tasks"), { recursive: true });
   for (const file of ["task-store.mjs"]) {
     cpSync(new URL(file, HERE), join(root, "scripts", file));
   }
-  for (const file of ["store.mjs", "roster-store.mjs", "tier.mjs"]) {
+  for (const file of ["store.mjs", "roster-store.mjs"]) {
     cpSync(new URL(`../.github/extensions/scavenger-tasks/${file}`, HERE), join(root, ".github", "extensions", "scavenger-tasks", file));
   }
   return root;
 }
 
 const load = (root, rel) => import(pathToFileURL(join(root, rel)).href);
+const cleanup = (root) => {
+  guards.get(root)?.deregister();
+  guards.delete(root);
+  rmSync(root, { recursive: true, force: true });
+};
+
+test("the portability guard rejects a transitive package import even when installed", async () => {
+  const root = bareCheckout();
+  try {
+    writeFileSync(join(root, "package-import.mjs"), 'import "@supabase/supabase-js";');
+    await assert.rejects(load(root, "package-import.mjs"), /Non-portable package import/);
+  } finally {
+    cleanup(root);
+  }
+});
 
 test("the canvas store imports with no node_modules and no .env.local", async () => {
   const root = bareCheckout();
@@ -59,7 +93,7 @@ test("the canvas store imports with no node_modules and no .env.local", async ()
     assert.equal(typeof store.loadTasks, "function");
     assert.equal(typeof store.summarize, "function");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    cleanup(root);
   }
 });
 
@@ -70,7 +104,7 @@ test("the roster store imports with no node_modules and no .env.local", async ()
     assert.equal(typeof roster.loadRoster, "function");
     assert.equal(typeof roster.assignRoster, "function");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    cleanup(root);
   }
 });
 
@@ -78,11 +112,11 @@ test("the query layer imports with no node_modules", async () => {
   const root = bareCheckout();
   try {
     const mod = await load(root, "scripts/task-store.mjs");
-    for (const name of ["readTasks", "updateTask", "addTask", "updateModel", "createTaskClient"]) {
+    for (const name of ["readTasks", "updateTask", "moveTask", "addTask", "createTaskClient"]) {
       assert.equal(typeof mod[name], "function", `${name} must be importable`);
     }
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    cleanup(root);
   }
 });
 
@@ -92,9 +126,9 @@ test("summarize works in a bare checkout, so the panel can render without creden
   const root = bareCheckout();
   try {
     const { summarize } = await load(root, ".github/extensions/scavenger-tasks/store.mjs");
-    assert.equal(summarize({ tasks: [], model: null }).total, 0);
+    assert.equal(summarize({ tasks: [] }).total, 0);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    cleanup(root);
   }
 });
 
@@ -102,11 +136,11 @@ test("a missing .env.local is a readable error, never a crash at import", async 
   const root = bareCheckout();
   try {
     const { loadEnv } = await load(root, "scripts/task-store.mjs");
-    // No .env.local anywhere above a temp directory, and no vars exported.
-    const env = loadEnv({ cwd: root, env: {} });
+    // Pin the fallback to the bare copy, never this worktree's real credentials.
+    const env = loadEnv({ cwd: root, mainCheckout: root, env: {} });
     assert.deepEqual(env, {}, "absence is an empty result, not a throw");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    cleanup(root);
   }
 });
 
@@ -116,7 +150,7 @@ test("credentials are found in the main checkout when this one has none", async 
   // checkout, so the only question a worktree has to answer is "where are the
   // credentials", and the main checkout is the answer.
   const root = bareCheckout();
-  const main = mkdtempSync(join(tmpdir(), "canvas-main-"));
+  const main = scratch("canvas-main");
   try {
     writeFileSync(join(main, ".env.local"), "SUPABASE_URL=https://example.test\nSUPABASE_SERVICE_ROLE_KEY=secret\n");
     const { loadEnv } = await load(root, "scripts/task-store.mjs");
@@ -124,8 +158,8 @@ test("credentials are found in the main checkout when this one has none", async 
     assert.equal(env.SUPABASE_URL, "https://example.test");
     assert.equal(env.SUPABASE_SERVICE_ROLE_KEY, "secret");
   } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(main, { recursive: true, force: true });
+    cleanup(root);
+    cleanup(main);
   }
 });
 
@@ -133,9 +167,9 @@ test("an exported variable wins over a file, so a session can be configured with
   const root = bareCheckout();
   try {
     const { loadEnv } = await load(root, "scripts/task-store.mjs");
-    const env = loadEnv({ cwd: root, env: { SUPABASE_URL: "https://from-env.test", SUPABASE_SERVICE_ROLE_KEY: "k" } });
+    const env = loadEnv({ cwd: root, mainCheckout: root, env: { SUPABASE_URL: "https://from-env.test", SUPABASE_SERVICE_ROLE_KEY: "k" } });
     assert.equal(env.SUPABASE_URL, "https://from-env.test");
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    cleanup(root);
   }
 });

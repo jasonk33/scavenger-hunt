@@ -166,44 +166,31 @@ try {
 
   /* ---- a group's own pills vs the team's total ---- */
   console.log("\n7. A multi-file group's pills add up to what the team is credited");
-  /*
-   * Every screen shows a scored entry as a baseline plus a bonus, and the
-   * leaderboard shows one total. If those two disagree a team is looking at
-   * evidence of points it was not paid, which is the same class of bug as the
-   * CSV disagreeing with the view above.
-   *
-   * A COMPETITION task with a decided winner is the case that separates them:
-   * the bonus lives on the task, is chosen after the round, and is therefore
-   * added on read -- it is not in the `points_awarded` frozen onto the row. And
-   * it takes TWO files, because a group is anchored on its oldest file while
-   * the row that actually scores is the newest. Looking the anchor up in the
-   * scoring map missed on every multi-file group, silently fell back to the
-   * frozen number, and dropped the bonus.
-   */
-  const comp = await call("/api/admin/tasks", { method: "POST", body: JSON.stringify({
-    round: 1, title: "__qa competition group task", points: 5,
-    scoringMode: "competition", competitionBonus: 5 }) });
-  const compId = comp.body.id;
-  const anchor = await seed({ playerId: alice.id, taskId: compId });
-  await seed({ playerId: alice.id, taskId: compId, name: "photo-2.jpg", groupWith: anchor });
-  const { data: compFiles } = await admin.from("submissions").select("id,group_id").eq("task_id", compId);
+  // The oldest file anchors the display, but the newest file supplies the score.
+  // A stale award on the anchor must not replace the whole decision's quantity.
+  const quantity = await call("/api/admin/tasks", { method: "POST", body: JSON.stringify({
+    round: 1, title: "__qa quantity group task", points: 5,
+    scoringMode: "quantity", measurementLabel: "extra sticker", pointsPerUnit: 2 }) });
+  const quantityId = quantity.body.id;
+  const anchor = await seed({ playerId: alice.id, taskId: quantityId });
+  await seed({ playerId: alice.id, taskId: quantityId, name: "photo-2.jpg", groupWith: anchor });
+  const { data: quantityFiles } = await admin.from("submissions").select("id,group_id").eq("task_id", quantityId);
   check("the two files are one piece of evidence",
     // Non-null explicitly: two ungrouped rows both carry null, and comparing
     // them for equality would pass while grouping was completely broken.
-    compFiles.length === 2 && Boolean(compFiles[0].group_id) &&
-      compFiles[0].group_id === compFiles[1].group_id,
-    JSON.stringify(compFiles.map((r) => r.group_id)));
+    quantityFiles.length === 2 && Boolean(quantityFiles[0].group_id) &&
+      quantityFiles[0].group_id === quantityFiles[1].group_id,
+    JSON.stringify(quantityFiles.map((r) => r.group_id)));
   await call(`/api/judge/${anchor}`, { method: "POST", body: JSON.stringify({
-    action: "approve", expectedStatus: "pending" }) });
-  await call("/api/admin/tasks", { method: "PATCH", body: JSON.stringify({
-    id: compId, winnerTeamId: red1.id }) });
+    action: "approve", expectedStatus: "pending", measurementValue: 3 }) });
+  await admin.from("submissions").update({ points_awarded: 5 }).eq("id", anchor);
 
   const feedJson = await (await fetch(`${BASE}/api/feed?round=1`)).json();
-  const post = (feedJson.items ?? []).find((i) => i.taskTitle === "__qa competition group task");
+  const post = (feedJson.items ?? []).find((i) => i.taskTitle === "__qa quantity group task");
   note(`feed post: ${JSON.stringify(post && { base: post.basePoints, bonus: post.bonusPoints, files: post.media.length })}`);
   check("the feed post carries both files", post?.media.length === 2, String(post?.media.length));
-  check("the feed shows the bonus the team won", post?.bonusPoints === 5,
-    `bonus ${post?.bonusPoints} — a multi-file group lost the competition bonus`);
+  check("the feed shows the extra-item points the team earned", post?.basePoints === 5 && post?.bonusPoints === 6,
+    `bonus ${post?.bonusPoints} — a multi-file group used its stale anchor award`);
 
   const teamView = await (await fetch(`${BASE}/api/leaderboard/${red1.id}?round=1`, {
     headers: { cookie: `organizer=${PIN}` } })).json();
@@ -222,25 +209,25 @@ try {
    * one piece of evidence.
    */
   const aliceState = await (await fetch(`${BASE}/api/state?playerId=${alice.id}`)).json();
-  const compSubs = (aliceState.submissions ?? []).filter((x) => x.task_id === compId && x.status === "approved");
-  note(`/api/state pills for the group: ${JSON.stringify(compSubs.map((x) => `${x.basePoints}+${x.bonusPoints}`))}`);
-  check("every file of the group reports the same score", compSubs.length === 2 &&
-    new Set(compSubs.map((x) => `${x.basePoints}+${x.bonusPoints}`)).size === 1,
-    JSON.stringify(compSubs.map((x) => ({ base: x.basePoints, bonus: x.bonusPoints }))));
-  check("and it is the score the task was actually paid", compSubs[0]?.bonusPoints === 5,
-    `bonus ${compSubs[0]?.bonusPoints} — the expanded list disagrees with the card above it`);
+  const quantitySubs = (aliceState.submissions ?? []).filter((x) => x.task_id === quantityId && x.status === "approved");
+  note(`/api/state pills for the group: ${JSON.stringify(quantitySubs.map((x) => `${x.basePoints}+${x.bonusPoints}`))}`);
+  check("every file of the group reports the same score", quantitySubs.length === 2 &&
+    new Set(quantitySubs.map((x) => `${x.basePoints}+${x.bonusPoints}`)).size === 1,
+    JSON.stringify(quantitySubs.map((x) => ({ base: x.basePoints, bonus: x.bonusPoints }))));
+  check("and it is the score the task was actually paid", quantitySubs[0]?.basePoints === 5 && quantitySubs[0]?.bonusPoints === 6,
+    `bonus ${quantitySubs[0]?.bonusPoints} — the expanded list disagrees with the card above it`);
 
   // "See other teams' entries" is read by somebody NOT on the team that scored.
   await call("/api/admin/players", { method: "POST", body: JSON.stringify({ names: "__qa Carol" }) });
   const { data: carolRow } = await admin.from("players").select("id").eq("name", "__qa Carol").single();
   await call("/api/admin/roster", { method: "POST", body: JSON.stringify({
     round: 1, entries: [{ playerId: carolRow.id, teamId: fx.teamOf("__qa Blue", 1).id }] }) });
-  const others = await (await fetch(`${BASE}/api/task-entries?taskId=${compId}&playerId=${carolRow.id}`)).json();
+  const others = await (await fetch(`${BASE}/api/task-entries?taskId=${quantityId}&playerId=${carolRow.id}`)).json();
   const shown = (others.entries ?? [])[0];
   note(`other teams' entry: ${JSON.stringify(shown && { base: shown.basePoints, bonus: shown.bonusPoints, files: shown.media.length })}`);
   check("another team sees the whole piece of evidence", shown?.media.length === 2,
     `${shown?.media.length} file(s) — the rest of the group was dropped`);
-  check("and sees what it actually scored", shown?.bonusPoints === 5, String(shown?.bonusPoints));
+  check("and sees what it actually scored", shown?.basePoints === 5 && shown?.bonusPoints === 6, String(shown?.bonusPoints));
 
   /* ---- feed weight ---- */
   console.log("\n8. How heavy is the feed on a phone?");

@@ -466,7 +466,14 @@ test("the readiness command accepts intentional welcome and remix waits without 
       players: [{ id: "one", name: "Guest One" }],
       teams: [1, 2].flatMap((round) => [1, 2].map((n) => ({ id: `r${round}-t${n}`, name: `Team ${n}`, round }))),
       roster: [1, 2].map((round) => ({ round, player_id: "one", team_id: `r${round}-t1` })),
-      tasks: [1, 2].map((round) => ({ id: `task${round}`, slug: `r${round}-one`, round, title: "Test task", active: true })),
+      tasks: [
+        ...[1, 2].map((round) => ({
+          id: `task${round}`, slug: `r${round}-one`, round, title: "Test task", active: true, is_secret: false,
+        })),
+        // Historical paired rows need not match or be unrevealed; readiness ignores them.
+        { id: "old1", slug: "old-pair", round: 1, title: "Retired task", active: false, is_secret: true, revealed_at: "2020-01-01" },
+        { id: "old2", slug: "old-pair", round: 2, title: "Different legacy wording", active: false, is_secret: true },
+      ],
       submissions: [],
     };
     await runInNewContext(`(async () => { ${code.replace(/^#![^\n]*\n/, "")} })()`, {
@@ -484,5 +491,7 @@ test("the readiness command accepts intentional welcome and remix waits without 
     assert.equal(exitCode, 0, `${phase}: ${lines.join("\n")}`);
     assert.ok(lines.some((line) => line.startsWith(`\nRound ${event().eventState(settings).activeRound} ·`)));
     assert.doesNotMatch(lines.join("\n"), /SUBMISSIONS ARE CLOSED/);
+    assert.ok(lines.some((line) => line.includes("1 active tasks in Round")));
+    assert.doesNotMatch(lines.join("\n"), /secret challenge|Retired task|Different legacy wording/);
   }
 });

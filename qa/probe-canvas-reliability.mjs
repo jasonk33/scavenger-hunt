@@ -5,12 +5,10 @@ import { after, before, test } from "node:test";
 import { chromium } from "@playwright/test";
 
 const root = new URL("../.github/extensions/scavenger-tasks/", import.meta.url);
-const model = () => ({ weights: { difficulty: 1.2, guts: 1, luck: 0.6 }, thresholds: { t1: 5.9, t3: 8.1, t5: 10.8 } });
 const task = (slug, active = true) => ({
   slug, title: `Task ${slug}`, round: 1, docOrder: slug.charCodeAt(0),
   active, points: 3, scoringMode: "fixed", measurementLabel: "", pointsPerUnit: 0,
-  competitionBonus: 0, difficulty: 3, guts: 3, luck: 3, payoff: 3, risk: 1,
-  note: "", prop: "", requiresVideo: false, rewrite: false, tierOk: null,
+  note: "", prop: "", rewrite: false,
 });
 let browser;
 before(async () => { browser = await chromium.launch({ headless: true }); });
@@ -18,7 +16,7 @@ after(async () => { await browser?.close(); });
 
 async function canvas(t) {
   const page = await browser.newPage();
-  const state = { tasks: [task("a"), task("b", false), task("c")], model: model() };
+  const state = { tasks: [task("a"), task("b", false), task("c")] };
   const writes = [];
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -40,13 +38,9 @@ async function canvas(t) {
           else {
             let body = { error: "offline fixture failure" };
             if (status === 200) {
-              if (path === "/api/model") {
-                for (const group of ["weights", "thresholds"]) Object.assign(state.model[group], patch[group]);
-                body = structuredClone(state.model);
-              } else {
-                body = state.tasks.find((x) => path === `/api/task/${x.slug}`);
-                Object.assign(body, patch);
-              }
+              body = state.tasks.find((x) => path === `/api/task/${x.slug}`);
+              assert.ok(body, `only fixture tasks can be changed: ${path}`);
+              Object.assign(body, patch);
             }
             await route.fulfill({ status, json: body });
           }
@@ -119,30 +113,33 @@ for (const status of [500, 0]) {
   });
 }
 
-test("model saves send only edited fields, in order, and recover from failure", async (t) => {
+test("per-item rate saves send only edited fields and recover without overwriting props", async (t) => {
   const c = await canvas(t);
-  await c.page.locator("#toggle-balance").click();
-  await c.page.locator('[data-weight="difficulty"]').fill("2");
-  await c.page.locator('[data-weight="difficulty"]').press("Tab");
+  c.state.tasks[0].scoringMode = "quantity";
+  await c.refresh();
+  await c.page.locator('[data-slug="a"] .caret').click();
+  const rate = c.page.locator('[data-slug="a"] .points-per-unit');
+  await rate.fill("2");
+  await rate.press("Tab");
   const first = await c.written(1);
-  assert.deepEqual(first.patch, { weights: { difficulty: 2 } });
-  await c.page.locator('[data-weight="difficulty"]').fill("3");
-  await c.page.locator('[data-weight="difficulty"]').press("Tab");
+  assert.deepEqual(first.patch, { pointsPerUnit: 2 });
+  await rate.fill("3");
+  await rate.press("Tab");
   await c.page.waitForTimeout(350);
   assert.equal(c.writes.length, 1);
   await first.finish(500);
   await c.page.getByRole("button", { name: "Retry saves" }).waitFor();
   await c.page.locator("#search").focus();
-  c.state.model.weights.guts = 4;
+  c.state.tasks[0].prop = "remote stickers";
   await c.refresh();
-  assert.equal(await c.page.locator('[data-weight="difficulty"]').inputValue(), "3");
-  assert.equal(await c.page.locator('[data-weight="guts"]').inputValue(), "4");
+  assert.equal(await rate.inputValue(), "3");
+  assert.equal(await c.page.locator('[data-slug="a"] .prop').inputValue(), "remote stickers");
   await c.page.getByRole("button", { name: "Retry saves" }).click();
   const retry = await c.written(2);
-  assert.deepEqual(retry.patch, { weights: { difficulty: 3 } });
+  assert.deepEqual(retry.patch, { pointsPerUnit: 3 });
   await retry.finish();
-  assert.equal(c.state.model.weights.guts, 4);
-  assert.equal(c.state.model.weights.difficulty, 3);
+  assert.equal(c.state.tasks[0].prop, "remote stickers");
+  assert.equal(c.state.tasks[0].pointsPerUnit, 3);
 });
 
 test("polls reconcile live/cut membership while retaining focused and open rows", async (t) => {
@@ -157,38 +154,37 @@ test("polls reconcile live/cut membership while retaining focused and open rows"
   assert.equal(await c.page.locator('[data-slug="c"] .body').isVisible(), true);
 });
 
-for (const filter of ["search", "flagged", "risk"]) {
+for (const filter of ["search", "flagged", "points"]) {
   test(`polls reconcile ${filter} membership/order even with the same slugs`, async (t) => {
     const c = await canvas(t);
     c.state.tasks.forEach((x) => { x.active = true; });
     c.state.tasks[0].note = "target";
     c.state.tasks[0].rewrite = true;
-    c.state.tasks[0].risk = 4;
+    c.state.tasks[0].points = 1;
     await c.refresh();
     if (filter === "search") { await c.page.locator("#search").fill("target"); await c.page.waitForTimeout(150); }
     if (filter === "flagged") await c.page.locator("#only-flagged").check();
-    if (filter === "risk") await c.page.locator("#sort").selectOption("risk");
     c.state.tasks[0].note = "";
     c.state.tasks[0].rewrite = false;
     c.state.tasks[1].note = "target";
     c.state.tasks[1].rewrite = true;
-    c.state.tasks[1].risk = 5;
+    c.state.tasks[0].points = 10;
+    c.state.tasks[1].points = 1;
     await c.refresh();
-    assert.deepEqual(await c.slugs(), filter === "risk" ? ["b", "a", "c"] : ["b"]);
+    assert.deepEqual(await c.slugs(), filter === "points" ? ["b", "c", "a"] : ["b"]);
   });
 }
 
-test("adding a remote task preserves existing row identity and model input focus", async (t) => {
+test("adding a remote task preserves existing row identity and prop input focus", async (t) => {
   const c = await canvas(t);
   await c.page.locator('[data-slug="a"] .caret').click();
   await c.page.locator('[data-slug="a"]').evaluate((node) => { node.marker = true; });
-  await c.page.locator("#toggle-balance").click();
-  await c.page.locator('[data-weight="difficulty"]').fill("2.");
+  await c.page.locator('[data-slug="a"] .prop').fill("unfinished prop");
   c.state.tasks.push(task("d"));
   await c.refresh();
   assert.equal(await c.page.locator('[data-slug="a"]').evaluate((node) => node.marker), true);
   assert.equal(await c.page.locator('[data-slug="a"] .body').isVisible(), true);
-  assert.equal(await c.page.locator('[data-weight="difficulty"]').evaluate((node) => node === document.activeElement), true);
+  assert.equal(await c.page.locator('[data-slug="a"] .prop').evaluate((node) => node === document.activeElement), true);
 });
 
 test("a failure keeps newer queued edits until an explicit retry", async (t) => {
@@ -207,9 +203,8 @@ test("a failure keeps newer queued edits until an explicit retry", async (t) => 
 
 test("a reordered focused row keeps its draft and only disappears after blur", async (t) => {
   const c = await canvas(t);
-  await c.page.locator("#sort").selectOption("risk");
   await c.page.locator('[data-slug="c"] .title').fill("unfinished title");
-  c.state.tasks[2].risk = 5;
+  c.state.tasks[2].points = 1;
   await c.refresh();
   assert.deepEqual(await c.slugs(), ["c", "a"]);
   assert.equal(await c.page.locator('[data-slug="c"] .title').evaluate((node) => node === document.activeElement), true);

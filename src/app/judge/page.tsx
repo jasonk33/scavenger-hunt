@@ -10,18 +10,14 @@ type Item = {
   id: string;
   status: string;
   media: Array<{ id: string; url: string; isVideo: boolean; sizeBytes: number | null }>;
-  isVideo: boolean;
   sizeBytes: number | null;
   note: string | null;
   taskTitle: string;
   taskPoints: number;
-  scoringMode: "fixed" | "quantity" | "competition";
+  scoringMode: "fixed" | "quantity";
   measurementLabel: string;
   measurementValue: number | null;
   pointsPerUnit: number;
-  competitionBonus: number;
-  requiresVideo: boolean;
-  isSecret: boolean;
   teamId: string;
   teamName: string;
   teamColor: string;
@@ -366,17 +362,6 @@ function JudgeQueue() {
           </div>
 
           <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-            {current.isSecret && <span className="pill pill-warn">secret challenge</span>}
-            {/* The doc marks some tasks as clip-only. Flagging the mismatch here
-                beats trying to enforce it at upload time and blocking a player
-                mid-round over a technicality. */}
-            {current.requiresVideo && !current.isVideo && (
-              <span className="pill pill-bad pill-wrap">
-                {current.media.length > 1
-                  ? "task is video-only — none of these is a clip"
-                  : "task is video-only — this is a photo"}
-              </span>
-            )}
             {current.duplicate && (
               <span className="pill pill-warn pill-wrap">team already has this task approved</span>
             )}
@@ -417,23 +402,6 @@ function JudgeQueue() {
               <div className="muted tiny" style={{ marginTop: 6 }}>
                 +{current.pointsPerUnit} pt{current.pointsPerUnit === 1 ? "" : "s"} per{" "}
                 {current.measurementLabel || "extra item"}, on top of the {current.taskPoints} above
-              </div>
-            </div>
-          )}
-
-          {/* A leader-bonus task has nothing for the judge to measure. It is
-              approved or not, at face value, and an organizer picks the winning
-              team from Admin once the round is over. Said out loud because the
-              obvious question on seeing "leader +5" here is "so where do I put
-              the score?". */}
-          {current.scoringMode === "competition" && (
-            <div className="card card-flat" style={{ padding: "10px 12px", marginBottom: 10 }}>
-              <div className="stat-label" style={{ marginBottom: 4 }}>
-                Leader bonus
-              </div>
-              <div style={{ lineHeight: 1.4 }}>
-                Just approve or reject this on its merits. The +{current.competitionBonus} goes to
-                whichever team you and Anna pick in Admin at the end of the round.
               </div>
             </div>
           )}

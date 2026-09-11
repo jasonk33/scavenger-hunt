@@ -22,14 +22,9 @@ type AdminData = {
     round: number;
     title: string;
     points: number;
-    scoring_mode: "fixed" | "quantity" | "competition";
+    scoring_mode: "fixed" | "quantity";
     measurement_label: string;
     points_per_unit: number;
-    competition_bonus: number;
-    winner_team_id: string | null;
-    requires_video: boolean;
-    is_secret: boolean;
-    revealed_at: string | null;
     active: boolean;
   }>;
   stuck: Array<{
@@ -125,7 +120,7 @@ function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
     break: { title: "Break — Round 1 uploads closed", action: "reveal_round_2", label: "Reveal Round 2 teams", help: "Shows the remixed teams on Home, but keeps Round 2 tasks hidden. Wait for any Round 1 uploads still in progress." },
     remix: { title: "Round 2 teams revealed", action: "start_round_2", label: "Start Round 2", help: "Reveals Round 2 tasks and opens uploads when everyone has found their new team." },
     round2: { title: "Round 2 in progress", action: "end_round_2", label: "End Round 2", help: "Closes new uploads. Final tasks, scores and photos stay available, and judging can continue." },
-    finished: { title: "Event finished", action: null, label: "", help: "Uploads are closed. Keep judging the remaining evidence and pick the leader-bonus winners below in Tasks." },
+    finished: { title: "Event finished", action: null, label: "", help: "Uploads are closed. Keep judging the remaining evidence." },
   };
   const step = steps[phase];
   const reopen = phase === "break" ? { action: "reopen_round_1", label: "Reopen Round 1" }
@@ -185,7 +180,7 @@ function EventTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
           <div style={{ marginTop: 18 }}>
             <p className="muted tiny" style={{ margin: "0 0 8px" }}>
               Finished a rehearsal? Return to before Round 1 without deleting anything.
-              Submissions, scores, teams, tasks and revealed secrets are kept.
+              Submissions, scores, teams and tasks are kept.
             </p>
             <button className="btn btn-wide" disabled={disabled} onClick={() => void advance("return_to_welcome")}>
               Return to welcome
@@ -502,27 +497,12 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   const [round, setRound] = useState(data.settings.active_round);
   const [title, setTitle] = useState("");
   const [points, setPoints] = useState(3);
-  const [secret, setSecret] = useState(false);
-  const [scoringMode, setScoringMode] = useState<"fixed" | "quantity" | "competition">("fixed");
+  const [scoringMode, setScoringMode] = useState<"fixed" | "quantity">("fixed");
   const [measurementLabel, setMeasurementLabel] = useState("");
   const [pointsPerUnit, setPointsPerUnit] = useState(0);
-  const [competitionBonus, setCompetitionBonus] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
 
   const tasks = useMemo(() => data.tasks.filter((t) => t.round === round), [data.tasks, round]);
-  // Cut tasks are excluded for the same reason as the contests below: revealing
-  // one does nothing, because /api/state drops inactive rows before it checks
-  // revealed_at. Leaving them in showed every retired secret with a live button.
-  const secrets = tasks.filter((t) => t.is_secret && t.active);
-  // Leader bonuses are decided after the round, so this list is the checklist of
-  // what still owes a decision. Cut tasks are excluded: nobody could submit to
-  // them, so there is nothing to award.
-  const contests = tasks.filter((t) => t.scoring_mode === "competition" && t.active);
-  const undecided = contests.filter((t) => !t.winner_team_id).length;
-  const roundTeams = useMemo(
-    () => data.teams.filter((t) => t.round === round),
-    [data.teams, round]
-  );
 
   const patch = (body: Record<string, unknown>, onSaved?: () => void) =>
     run(async () => {
@@ -545,66 +525,6 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
       </div>
 
       <div className="card">
-        <b>Secret challenges</b>
-        <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-          Hidden from players until you reveal them. Reveal is manual on purpose — a timer would
-          fire while the round is running late.
-        </p>
-        <div style={{ display: "grid", gap: 6 }}>
-          {secrets.map((t) => (
-            <div key={t.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ flex: 1 }}>{t.title}</span>
-              <button
-                className={`btn btn-sm ${t.revealed_at ? "btn-good" : ""}`}
-                onClick={() => patch({ id: t.id, revealed: !t.revealed_at })}
-              >
-                {t.revealed_at ? "Live" : "Reveal"}
-              </button>
-            </div>
-          ))}
-          {secrets.length === 0 && <span className="muted tiny">None for this round.</span>}
-        </div>
-      </div>
-
-      {contests.length > 0 && (
-        <div className="card">
-          <b>Leader bonuses</b>
-          <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
-            Pick the winner once Round {round} is over. Nothing is awarded until you do, and the
-            bonus lands on that team&apos;s score straight away — players never see a running leader,
-            so nobody wastes the round redoing a task to overtake someone.
-          </p>
-          {undecided > 0 && (
-            <div className="pill pill-warn pill-wrap" style={{ marginBottom: 8 }}>
-              {undecided} still to decide
-            </div>
-          )}
-          <div style={{ display: "grid", gap: 8 }}>
-            {contests.map((t) => (
-              <div key={t.id}>
-                <div style={{ marginBottom: 4, lineHeight: 1.35 }}>
-                  {t.title} <span className="muted tiny">+{t.competition_bonus}</span>
-                </div>
-                <select
-                  className="field"
-                  value={t.winner_team_id ?? ""}
-                  onChange={(e) => patch({ id: t.id, winnerTeamId: e.target.value || null })}
-                  style={{ width: "100%" }}
-                >
-                  <option value="">Not decided yet</option>
-                  {roundTeams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="card">
         <b>Add a task</b>
         <input
           className="field"
@@ -623,28 +543,17 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
               {p}
             </button>
           ))}
-          <button
-            className={`btn btn-sm ${secret ? "btn-primary" : ""}`}
-            aria-pressed={secret}
-            onClick={() => setSecret((value) => !value)}
-          >
-            secret
-          </button>
         </div>
         <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
           <select className="field" value={scoringMode} onChange={(e) => setScoringMode(e.target.value as typeof scoringMode)}>
             <option value="fixed">Fixed score</option>
             <option value="quantity">Extra per item</option>
-            <option value="competition">Leader bonus</option>
           </select>
           {scoringMode === "quantity" && (
             <>
               <input className="field" placeholder="One unit, e.g. extra shirt — reads &quot;+1 pt per extra shirt&quot;" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
               <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
             </>
-          )}
-          {scoringMode === "competition" && (
-            <input className="field" type="number" min={0} placeholder="Leader bonus" value={competitionBonus} onChange={(e) => setCompetitionBonus(Number(e.target.value))} />
           )}
         </div>
         <button
@@ -658,11 +567,9 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
                   round,
                   title,
                   points,
-                  isSecret: secret,
                   scoringMode,
                   measurementLabel,
                   pointsPerUnit,
-                  competitionBonus,
                 }),
               });
               setTitle("");
@@ -679,8 +586,6 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
           Tap a task to change its wording, baseline or scoring rule. Editing the value does NOT rescore
           anything already judged — each submission keeps the points it was worth at the time.
           This is the same task list the planner canvas edits, so there is nothing to publish.
-          A secret challenge is offered in both rounds: everything except Reveal changes both,
-          and Reveal only unlocks the round you are in.
         </p>
         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
           {tasks.map((t) =>
@@ -724,8 +629,6 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
                   style={{ flex: 1, minWidth: 0, textDecoration: t.active ? "none" : "line-through" }}
                 >
                   {t.title}
-                  {t.requires_video && <span className="muted"> · clip</span>}
-                  {t.is_secret && <span className="warn"> · secret</span>}
                 </span>
                 <span className="muted tiny">edit</span>
               </button>
@@ -754,22 +657,16 @@ function TaskEditor({
   const [scoringMode, setScoringMode] = useState(task.scoring_mode);
   const [measurementLabel, setMeasurementLabel] = useState(task.measurement_label);
   const [pointsPerUnit, setPointsPerUnit] = useState(task.points_per_unit);
-  const [competitionBonus, setCompetitionBonus] = useState(task.competition_bonus);
-  const [clip, setClip] = useState(task.requires_video);
-  const [secret, setSecret] = useState(task.is_secret);
 
   const save = () => {
     // Polls update `task`, not the values this editor opened with. Only send
-    // deliberate edits; in particular, a stale scoring mode would clear winners.
+    // deliberate edits so a stale editor cannot overwrite another organizer.
     const patch: Record<string, unknown> = {};
     if (title.trim() !== baseline.title.trim()) patch.title = title.trim();
     if (points !== baseline.points) patch.points = points;
-    if (clip !== baseline.requires_video) patch.requiresVideo = clip;
-    if (secret !== baseline.is_secret) patch.isSecret = secret;
     if (scoringMode !== baseline.scoring_mode) patch.scoringMode = scoringMode;
     if (measurementLabel.trim() !== baseline.measurement_label.trim()) patch.measurementLabel = measurementLabel.trim();
     if (pointsPerUnit !== baseline.points_per_unit) patch.pointsPerUnit = pointsPerUnit;
-    if (competitionBonus !== baseline.competition_bonus) patch.competitionBonus = competitionBonus;
     if (Object.keys(patch).length) onSave(patch);
     else onCancel();
   };
@@ -795,35 +692,17 @@ function TaskEditor({
           </button>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-        <button
-          className={`btn btn-sm ${clip ? "btn-primary" : ""}`}
-          onClick={() => setClip((v) => !v)}
-        >
-          video only
-        </button>
-        <button
-          className={`btn btn-sm ${secret ? "btn-primary" : ""}`}
-          onClick={() => setSecret((v) => !v)}
-        >
-          secret
-        </button>
-        {!task.active && <span className="pill muted">removed</span>}
-      </div>
+      {!task.active && <span className="pill muted" style={{ marginBottom: 10 }}>removed</span>}
       <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
         <select className="field" value={scoringMode} onChange={(e) => setScoringMode(e.target.value as typeof scoringMode)}>
           <option value="fixed">Fixed score</option>
           <option value="quantity">Extra per item</option>
-          <option value="competition">Leader bonus</option>
         </select>
         {scoringMode === "quantity" && (
           <>
             <input className="field" placeholder="One unit, e.g. extra shirt — reads &quot;+1 pt per extra shirt&quot;" value={measurementLabel} onChange={(e) => setMeasurementLabel(e.target.value)} />
             <input className="field" type="number" min={0} placeholder="Extra points per item" value={pointsPerUnit} onChange={(e) => setPointsPerUnit(Number(e.target.value))} />
           </>
-        )}
-        {scoringMode === "competition" && (
-          <input className="field" type="number" min={0} placeholder="Leader bonus" value={competitionBonus} onChange={(e) => setCompetitionBonus(Number(e.target.value))} />
         )}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -983,20 +862,15 @@ function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
           submissions: number;
           objects: number;
           orphaned: number;
-          winnersCleared: boolean;
         }>("/api/admin/reset", { method: "POST", body: JSON.stringify({ confirm: "RESET" }) });
         setWord("");
-        // Both partial outcomes are reported. A silent "done" over media that is
-        // still in the bucket, or over leader bonuses still being paid on the
-        // leaderboard, is worse than no reset at all -- nobody would think to
-        // look.
+        // Report partial storage cleanup rather than silently claiming success.
         setDone({
           text:
             `Deleted ${r.submissions} submission${r.submissions === 1 ? "" : "s"} and ` +
             `${r.objects} file${r.objects === 1 ? "" : "s"}.` +
-            (r.orphaned ? ` ${r.orphaned} file(s) could not be removed from storage.` : "") +
-            (r.winnersCleared ? "" : " Leader bonuses could NOT be un-awarded — try again."),
-          ok: r.orphaned === 0 && r.winnersCleared,
+            (r.orphaned ? ` ${r.orphaned} file(s) could not be removed from storage.` : ""),
+          ok: r.orphaned === 0,
         });
       } finally {
         setBusy(false);
@@ -1009,9 +883,9 @@ function ResetCard({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
       <b>Reset submissions</b>
       <p className="muted tiny" style={{ margin: "2px 0 8px" }}>
         Deletes all <b>{total}</b> submission{total === 1 ? "" : "s"} and the media{" "}
-        {total === 1 ? "file" : "files"} they uploaded, un-awards every leader bonus, and clears
-        the tasks players have starred. Players, teams, the roster, the task list and any revealed
-        secrets are left alone. <b>There is no undo</b> — the uploaded photos are the only copy.
+        {total === 1 ? "file" : "files"} they uploaded, and clears
+        the tasks players have starred. Players, teams, the roster and the task list
+        are left alone. <b>There is no undo</b> — the uploaded photos are the only copy.
         Type <b>RESET</b> to enable the button.
       </p>
       <input

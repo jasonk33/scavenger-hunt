@@ -26,7 +26,7 @@ const [{ data: settings }, { data: players }, { data: teams }, { data: roster },
     admin.from("players").select("id,name"),
     admin.from("teams").select("id,name,round"),
     admin.from("roster").select("round,player_id,team_id"),
-    admin.from("tasks").select("id,round,slug,title,points,prop,requires_video,is_secret,revealed_at,active"),
+    admin.from("tasks").select("id,round,slug,title,points,prop,active").eq("is_secret", false),
     admin.from("submissions").select("id,status"),
   ]);
 
@@ -57,10 +57,6 @@ const leftovers = [
 check(leftovers.length === 0, "no test fixtures left behind",
   `test fixtures still present: ${leftovers.join(", ")}`);
 
-const revealed = (tasks ?? []).filter((t) => t.is_secret && t.active && t.revealed_at);
-check(revealed.length === 0, `all ${(tasks ?? []).filter((t) => t.is_secret && t.active).length} secret challenges still hidden`,
-  `secret challenge(s) already revealed: ${revealed.map((t) => t.title).join(", ")} — Admin → tasks → tap "Live" to hide again`);
-
 const rostered = new Set((roster ?? []).filter((r) => r.round === round).map((r) => r.player_id));
 const unrostered = (players ?? []).filter((p) => !rostered.has(p.id));
 check(unrostered.length === 0, `all ${players?.length ?? 0} players are on a Round ${round} team`,
@@ -88,43 +84,9 @@ const stuck = (subs ?? []).filter((x) => x.status === "uploading");
 check(stuck.length === 0, "no half-finished uploads",
   `${stuck.length} submission(s) stuck mid-upload — Admin → health lists them`, false);
 
-// A secret challenge is offered in both halves of the event, so it is two rows
-// sharing a slug. Nothing in the app can normally pull them apart -- the canvas
-// and Admin both write by slug -- but a hand-edit in the Supabase table editor
-// can, and the result is invisible: the canvas shows the Round 1 row, so Round 2
-// would quietly be offering different wording, a different point value, or a
-// task the other half cannot see at all.
-const bySlug = new Map();
-for (const t of tasks ?? []) {
-  if (!bySlug.has(t.slug)) bySlug.set(t.slug, []);
-  bySlug.get(t.slug).push(t);
-}
-const shape = (t) => `${t.title}|${t.points}|${t.requires_video}|${t.is_secret}|${t.active}`;
-const split = [];
-const lonely = [];
-for (const [slug, rows] of bySlug) {
-  // A task marked secret but present in only one round. The planner shows it at
-  // round 0 -- "offered in both halves" -- so this is invisible there, and it is
-  // reachable from Admin's Secret toggle and from a hand-edit.
-  if (rows[0].is_secret && rows.length === 1) {
-    lonely.push(`${rows[0].slug} ("${rows[0].title}", Round ${rows[0].round} only)`);
-    continue;
-  }
-  if (rows.length < 2) continue;
-  if (rows.some((t) => shape(t) !== shape(rows[0]))) split.push(`${slug} ("${rows[0].title}")`);
-}
-const paired = [...bySlug.values()].filter((r) => r.length > 1).length;
-check(split.length === 0, `all ${paired} secret challenges match across both rounds`,
-  `these are offered in both rounds but the two rows disagree: ${split.join(", ")} — ` +
-    `open the planner and re-type the field to write both rounds at once`);
-check(lonely.length === 0, `every secret challenge exists in both rounds`,
-  `marked secret but only in one round, so half the event will never see it: ${lonely.join(", ")}`);
-
 // Props are packed into a goodie bag per round, so a prop needed in both rounds
 // has to be bought and packed twice -- and when it isn't, the second round's
-// task is simply undoable and nothing about the app looks wrong. Secrets are
-// exempt because they exist in both rounds by design, so a secret needing a prop
-// would be a permanent false positive here.
+// task is simply undoable and nothing about the app looks wrong.
 //
 // This can only see props that are declared. A task that names its prop in the
 // title and leaves the column empty is invisible to it -- which is exactly how
@@ -132,7 +94,7 @@ check(lonely.length === 0, `every secret challenge exists in both rounds`,
 // needs something has to say so in `prop` rather than implying it in the title.
 const propRounds = new Map();
 for (const t of tasks ?? []) {
-  if (t.active === false || t.is_secret || !t.prop) continue;
+  if (t.active === false || !t.prop) continue;
   if (!propRounds.has(t.prop)) propRounds.set(t.prop, new Map());
   const rounds = propRounds.get(t.prop);
   rounds.set(t.round, [...(rounds.get(t.round) ?? []), t.slug]);

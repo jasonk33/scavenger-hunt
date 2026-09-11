@@ -22,8 +22,8 @@ export async function GET(req: Request) {
   const [{ data: subs, error: subsError }, { data: tasks, error: tasksError },
     { data: teams, error: teamsError }, { data: players, error: playersError }, { data: scores, error: scoresError }] =
     await Promise.all([
-      sb.from("submissions").select("*").order("created_at"),
-      sb.from("tasks").select("*").order("round").order("sort_order").order("id"),
+      sb.from("submissions").select("id,round,task_id,player_id,team_id,task_points,scoring_mode_snapshot,points_per_unit_snapshot,measurement_value,object_name,media_type,size_bytes,status,points_awarded,reject_reason,group_id,note,created_at,judged_at").order("created_at"),
+      sb.from("tasks").select("id,slug,round,title,doc_title,points,scoring_mode,measurement_label,points_per_unit,active,doc_order,sort_order,prop,note,rewrite,created_at,updated_at").order("round").order("sort_order").order("id"),
       sb.from("teams").select("*").order("round").order("sort_order"),
       sb.from("players").select("*").order("name"),
       sb.from("team_scores").select("*"),
@@ -153,7 +153,7 @@ export async function GET(req: Request) {
         scores: scores ?? [],
         teams: teams ?? [],
         players: players ?? [],
-        tasks: tasks ?? [],
+        tasks: (tasks ?? []).map((task) => ({ ...task, scoring_mode: task.scoring_mode === "quantity" ? "quantity" : "fixed" })),
         submissions: rows,
       },
       null,

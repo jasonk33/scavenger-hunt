@@ -20,9 +20,6 @@ import assert from "node:assert/strict";
 
 import { summarize } from "./store.mjs";
 
-/** The fitted model, so `mismatched` means what it means in the real canvas. */
-const MODEL = { weights: { difficulty: 1.2, guts: 1.0, luck: 0.6 }, thresholds: { t1: 5.9, t3: 8.1, t5: 10.8 } };
-
 let n = 0;
 const task = (over = {}) => ({
   slug: `t-${++n}`,
@@ -31,21 +28,22 @@ const task = (over = {}) => ({
   title: `Task ${n}`,
   points: 3,
   docOrder: n,
-  difficulty: 3,
-  guts: 3,
-  luck: 3,
-  payoff: 3,
-  risk: 1,
-  requiresVideo: false,
   prop: "",
   active: true,
   rewrite: false,
   note: "",
-  tierOk: null,
   ...over,
 });
 
-const board = (tasks) => ({ model: MODEL, tasks });
+const board = (tasks) => ({ tasks });
+
+test("the summary contains only ordinary assigned-point and planning counts", () => {
+  const summary = summarize(board([task({ points: 7, prop: "hat" })]));
+  assert.deepEqual(Object.keys(summary.rounds), ["1", "2"]);
+  assert.deepEqual(summary.rounds[1], {
+    count: 1, tiers: { 7: 1 }, maxPoints: 7, needsProp: 1,
+  });
+});
 
 test("importing the store does not connect to anything", () => {
   // If this file got this far, the import at the top already succeeded without
@@ -59,7 +57,7 @@ test("an empty list reports zeroes rather than throwing", () => {
   assert.equal(s.total, 0);
   assert.equal(s.live, 0);
   assert.equal(s.rounds[1].count, 0);
-  assert.equal(s.rounds[1].avgPayoff, 0, "no division by zero");
+  assert.equal(s.rounds[1].maxPoints, 0);
   assert.deepEqual(s.rounds[1].tiers, {});
 });
 
@@ -94,16 +92,15 @@ test("a cut task is excluded from the round rollup but not from the total", () =
   assert.deepEqual(s.rounds[1].tiers, { 5: 1 });
 });
 
-test("rounds are kept apart, and secrets are their own round", () => {
+test("rounds are kept apart", () => {
   const s = summarize(board([
     task({ round: 1 }), task({ round: 1 }),
     task({ round: 2 }),
-    task({ round: 0, points: 7 }),
+    task({ round: 2, points: 7 }),
   ]));
   assert.equal(s.rounds[1].count, 2);
-  assert.equal(s.rounds[2].count, 1);
-  assert.equal(s.rounds[0].count, 1, "round 0 is falsy and must not be lost");
-  assert.equal(s.rounds[0].maxPoints, 7);
+  assert.equal(s.rounds[2].count, 2);
+  assert.equal(s.rounds[2].maxPoints, 10);
 });
 
 test("empty tiers are omitted rather than reported as zero", () => {
@@ -111,56 +108,21 @@ test("empty tiers are omitted rather than reported as zero", () => {
   assert.deepEqual(s.rounds[1].tiers, { 1: 2, 10: 1 });
 });
 
-test("a secret never counts as disagreeing with its ratings", () => {
-  // Secrets sit outside the scoring model -- they are a 7 by definition -- so a
-  // 7 that the thresholds would price differently is not a disagreement.
-  const s = summarize(board([task({ round: 0, points: 7, difficulty: 1, guts: 1, luck: 1 })]));
-  assert.equal(s.rounds[0].mismatched, 0);
-});
-
-test("a tier that disagrees with the ratings is counted, and one that agrees is not", () => {
-  // difficulty 1, guts 1, luck 1 scores 2.8, which is under t1 -- a 1-pointer.
-  const cheap = { difficulty: 1, guts: 1, luck: 1 };
-  assert.equal(summarize(board([task({ points: 1, ...cheap })])).rounds[1].mismatched, 0);
-  assert.equal(summarize(board([task({ points: 10, ...cheap })])).rounds[1].mismatched, 1);
-});
-
-test("a dismissed suggestion still counts here, because this is not the row's advice", () => {
-  // `summarize` answers "does the tier match the ratings", which tierOk does not
-  // change. The row's arrow uses tierAdvice, which does. Conflating them would
-  // make the header disagree with the list it sits above -- in either direction.
-  const cheap = { difficulty: 1, guts: 1, luck: 1 };
-  assert.equal(summarize(board([task({ points: 10, tierOk: 1, ...cheap })])).rounds[1].mismatched, 1);
-});
-
-test("the per-round flags count only tasks still in the running", () => {
+test("the prop count includes only tasks still in the running", () => {
   const s = summarize(board([
-    task({ round: 1, requiresVideo: true, prop: "hat", risk: 5, luck: 5, payoff: 5 }),
-    task({ round: 1, requiresVideo: true, prop: "", risk: 1, luck: 1, payoff: 1, active: false }),
+    task({ round: 1, prop: "hat" }),
+    task({ round: 1, prop: "rope", active: false }),
+    task({ round: 1, prop: "" }),
   ]));
-  assert.equal(s.rounds[1].requiresVideo, 1, "the cut one does not need a clip from anybody");
   assert.equal(s.rounds[1].needsProp, 1);
-  assert.equal(s.rounds[1].highRisk, 1);
-  assert.equal(s.rounds[1].highLuck, 1);
-  assert.equal(s.rounds[1].avgPayoff, 5, "averaged over what is left, not over everything");
-});
-
-test("high risk and high luck start at 4, not above it", () => {
-  assert.equal(summarize(board([task({ risk: 3, luck: 3 })])).rounds[1].highRisk, 0);
-  assert.equal(summarize(board([task({ risk: 4, luck: 4 })])).rounds[1].highRisk, 1);
-  assert.equal(summarize(board([task({ risk: 4, luck: 4 })])).rounds[1].highLuck, 1);
 });
 
 test("flaggedForRewrite spans the whole list, not one round", () => {
   const s = summarize(board([
     task({ round: 1, rewrite: true }),
     task({ round: 2, rewrite: true }),
-    task({ round: 0, rewrite: false }),
+    task({ round: 2, rewrite: true, active: false }),
+    task({ round: 1, rewrite: false }),
   ]));
-  assert.equal(s.flaggedForRewrite, 2);
-});
-
-test("avgPayoff is rounded to two places rather than left as a long float", () => {
-  const s = summarize(board([task({ payoff: 1 }), task({ payoff: 2 }), task({ payoff: 2 })]));
-  assert.equal(s.rounds[1].avgPayoff, 1.67);
+  assert.equal(s.flaggedForRewrite, 3);
 });

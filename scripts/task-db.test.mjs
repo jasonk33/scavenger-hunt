@@ -20,13 +20,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  MODEL_KEY,
   TASK_TABLE,
   addTask,
   createTaskClient,
   moveTask,
   readTasks,
-  updateModel,
   updateTask,
 } from "./task-store.mjs";
 
@@ -59,14 +57,12 @@ const SECRET_R2 = { ...SECRET_R1, id: "uuid-s2", round: 2 };
 /**
  * A client whose `fetch` answers from fixtures and records every request.
  *
- * Routing is by method and table. It reads the `slug=eq.` filter because a
- * secret is two rows and "did the write reach both" is the thing worth proving,
- * but it deliberately interprets nothing else -- so an assertion about
- * filtering has to look at the recorded URL rather than trusting the fake.
+ * Routing is by method and table. It interprets slug and historical-row filters;
+ * assertions inspect the recorded URL as well as the resulting fake state.
  */
-function fakeDb({ rows = [ROW], settings = null, failOn = null, submissions = [] } = {}) {
+function fakeDb({ rows = [ROW], failOn = null, submissions = [] } = {}) {
   const calls = [];
-  const state = { rows: rows.map((r) => ({ ...r })), settings, submissions };
+  const state = { rows: rows.map((r) => ({ ...r })), submissions };
 
   const respond = (url, init) => {
     const method = init.method ?? "GET";
@@ -75,26 +71,6 @@ function fakeDb({ rows = [ROW], settings = null, failOn = null, submissions = []
     calls.push({ method, table, url, body, headers: init.headers });
 
     if (failOn === table) return { ok: false, status: 500, text: JSON.stringify({ message: `boom on ${table}` }) };
-
-    if (table === "settings") {
-      if (method === "POST") {
-        if (init.headers.Prefer?.includes("ignore-duplicates") && state.settings !== null) {
-          return { ok: true, status: 200, text: "[]" };
-        }
-        state.settings = body.value;
-        return { ok: true, status: 201, text: JSON.stringify([{ value: state.settings }]) };
-      }
-      if (method === "PATCH") {
-        const expected = new URL(url).searchParams.get("value");
-        assert.ok(expected?.startsWith("eq."), "model writes must compare the value they read");
-        if (JSON.parse(expected.slice(3)) !== state.settings) {
-          return { ok: true, status: 200, text: "[]" };
-        }
-        state.settings = body.value;
-        return { ok: true, status: 200, text: JSON.stringify([{ value: state.settings }]) };
-      }
-      return { ok: true, status: 200, text: JSON.stringify(state.settings === null ? [] : [{ value: state.settings }]) };
-    }
 
     // Only ever asked "has this task been played", so it answers with the rows
     // whose task_id was filtered on and interprets nothing else.
@@ -107,10 +83,12 @@ function fakeDb({ rows = [ROW], settings = null, failOn = null, submissions = []
 
     const slugMatch = /slug=eq\.([^&]+)/.exec(url);
     const slug = slugMatch ? decodeURIComponent(slugMatch[1]) : null;
+    const ordinary = new URL(url).searchParams.get("is_secret") === "eq.false";
+    const matches = (r) => (!slug || r.slug === slug) && (!ordinary || r.is_secret === false);
 
     if (method === "PATCH") {
       // Every row with this slug, which is what one statement would touch.
-      const hit = state.rows.filter((r) => r.slug === slug);
+      const hit = state.rows.filter(matches);
       for (const row of hit) Object.assign(row, body);
       return { ok: true, status: 200, text: JSON.stringify(hit) };
     }
@@ -119,7 +97,7 @@ function fakeDb({ rows = [ROW], settings = null, failOn = null, submissions = []
       state.rows.push(...created);
       return { ok: true, status: 201, text: JSON.stringify(created) };
     }
-    const found = slug ? state.rows.filter((r) => r.slug === slug) : state.rows;
+    const found = state.rows.filter(matches);
     return { ok: true, status: 200, text: JSON.stringify(found.map((r) => ({ ...r }))) };
   };
 
@@ -137,37 +115,79 @@ function fakeDb({ rows = [ROW], settings = null, failOn = null, submissions = []
 const taskCalls = (db) => db.calls.filter((c) => c.table === TASK_TABLE);
 const writeOf = (db) => taskCalls(db).find((c) => c.method === "PATCH");
 
+test("retired fields never reach the planner payload or select list", async () => {
+  const db = fakeDb();
+  const board = await readTasks(db);
+  assert.deepEqual(Object.keys(board), ["tasks"]);
+  const retired = ["difficulty", "guts", "luck", "payoff", "risk", "requires_video", "is_secret",
+    "competition_bonus", "winner_team_id", "tier_ok"];
+  const selected = new URL(taskCalls(db)[0].url).searchParams.get("select").split(",");
+  for (const key of retired) assert.ok(!selected.includes(key), `${key} is not selected`);
+  for (const key of ["requiresVideo", "isSecret", "competitionBonus", "tierOk", ...retired]) {
+    assert.ok(!(key in board.tasks[0]), `${key} is not exposed`);
+  }
+  assert.ok(db.calls.every((call) => call.table !== "settings"), "the task list needs no model");
+});
+
+test("historical secret rows stay inaccessible before and after migration", async () => {
+  for (const active of [true, false]) {
+    const rows = [ROW, { ...SECRET_R1, active }, { ...SECRET_R2, active }];
+    const db = fakeDb({ rows });
+    const board = await readTasks(db);
+    assert.deepEqual(board.tasks.map((t) => t.slug), ["r1-01"]);
+    assert.equal(await updateTask(db, "s-04", { active: true, title: "must not land" }), null);
+    assert.equal(await updateTask(db, "s-04", {}), null);
+    assert.equal(await moveTask(db, "s-04", 2), null);
+    assert.deepEqual(db.state.rows, rows, "historical rows are neither renamed, moved nor reactivated");
+    for (const call of taskCalls(db)) {
+      assert.equal(new URL(call.url).searchParams.get("is_secret"), "eq.false");
+    }
+  }
+});
+
+test("retired creation modes are refused before any database request", async () => {
+  for (const input of [
+    { round: 0 }, { round: 1, isSecret: true }, { round: 1, scoringMode: "competition" },
+    { round: true }, { round: 3 }, { round: 1, scoringMode: "unknown" },
+  ]) {
+    const db = fakeDb();
+    await assert.rejects(() => addTask(db, { title: "A task", ...input }), /Round 1 or Round 2|fixed or quantity|no longer supported/i);
+    assert.equal(db.calls.length, 0);
+  }
+});
+
+test("retired scoring patches are refused without partially applying other fields", async () => {
+  const db = fakeDb();
+  await assert.rejects(() => updateTask(db, "r1-01", { scoringMode: "competition", note: "must not land" }), /fixed or quantity/i);
+  assert.equal(db.calls.length, 0);
+});
+
+test("concurrent edits to different fields and tasks never replace each other", async () => {
+  const other = { ...ROW, id: "uuid-2", slug: "r1-02" };
+  const db = fakeDb({ rows: [ROW, other] });
+  await Promise.all([
+    updateTask(db, ROW.slug, { note: "one editor" }),
+    updateTask(db, ROW.slug, { points: 10 }),
+    updateTask(db, other.slug, { prop: "hat", active: false }),
+  ]);
+  assert.equal(db.state.rows[0].note, "one editor");
+  assert.equal(db.state.rows[0].points, 10);
+  assert.equal(db.state.rows[0].active, true);
+  assert.equal(db.state.rows[1].prop, "hat");
+  assert.equal(db.state.rows[1].active, false);
+  assert.equal(db.state.rows[1].points, 3);
+  assert.equal(taskCalls(db).filter((call) => call.method === "PATCH").length, 3);
+});
+
 // ── Reading ──────────────────────────────────────────────────────────────────
 
-test("reading returns tasks in the task shape plus a model", async () => {
+test("reading returns ordinary tasks in the task shape", async () => {
   const db = fakeDb();
   const board = await readTasks(db);
   assert.equal(board.tasks.length, 1);
   assert.equal(board.tasks[0].slug, "r1-01");
-  assert.equal(board.tasks[0].requiresVideo, false);
-  assert.ok(board.model.weights.difficulty > 0);
-});
-
-test("a secret's two rows read as one task", async () => {
-  // Otherwise the canvas lists every secret twice and an edit to one copy
-  // silently disagrees with the other half of the event.
-  const board = await readTasks(fakeDb({ rows: [ROW, SECRET_R1, SECRET_R2] }));
-  assert.deepEqual(board.tasks.map((t) => t.slug), ["r1-01", "s-04"]);
-  assert.equal(board.tasks[1].round, 0);
-});
-
-test("a missing model row is a working task list, not a failure", async () => {
-  // A canvas that refuses to load because one settings row is absent would be
-  // unusable over a value that has a perfectly good default.
-  const board = await readTasks(fakeDb({ settings: null }));
-  assert.deepEqual(Object.keys(board.model), ["weights", "thresholds"]);
-});
-
-test("a stored model wins over the defaults", async () => {
-  const stored = JSON.stringify({ weights: { difficulty: 2, guts: 2, luck: 2 }, thresholds: { t1: 1, t3: 2, t5: 3 } });
-  const board = await readTasks(fakeDb({ settings: stored }));
-  assert.equal(board.model.weights.difficulty, 2);
-  assert.equal(board.model.thresholds.t5, 3);
+  assert.equal(board.tasks[0].round, 1);
+  assert.equal(board.tasks[0].points, 3);
 });
 
 test("a failed read throws rather than returning an empty list", async () => {
@@ -180,7 +200,7 @@ test("reading names its columns rather than selecting everything", async () => {
   const db = fakeDb();
   await readTasks(db);
   const call = taskCalls(db)[0];
-  assert.ok(call.url.includes("select=id,round,slug"), "the select list is explicit");
+  assert.ok(call.url.includes("select=id,slug,round"), "the select list is explicit");
   assert.ok(!call.url.includes("select=*"), "a new column must not arrive unmapped");
 });
 
@@ -206,44 +226,20 @@ test("an update carries no field the caller did not name", async () => {
   }
 });
 
-test("moving a task off the leader bonus clears its winner", async () => {
-  // team_scores reads coalesce(scoring_mode_snapshot, tasks.scoring_mode), so an
-  // already-judged row keeps its 'competition' snapshot -- a winner left behind
-  // here goes on paying a bonus for a task that is no longer a competition.
+test("scoring edits write only the mode, leaving dormant rollout columns alone", async () => {
   for (const mode of ["fixed", "quantity"]) {
     const db = fakeDb();
     await updateTask(db, "r1-01", { scoringMode: mode });
-    assert.equal(writeOf(db).body.winner_team_id, null, `${mode} must clear the winner`);
+    assert.deepEqual(Object.keys(writeOf(db).body).sort(), ["scoring_mode", "updated_at"]);
+    assert.equal(writeOf(db).body.scoring_mode, mode);
   }
 });
 
-test("staying on the leader bonus leaves the winner alone", async () => {
-  const db = fakeDb();
-  await updateTask(db, "r1-01", { scoringMode: "competition" });
-  assert.ok(!("winner_team_id" in writeOf(db).body), "an unrelated edit must not clear a winner");
-
-  const other = fakeDb();
-  await updateTask(other, "r1-01", { points: 5 });
-  assert.ok(!("winner_team_id" in writeOf(other).body), "a points edit must not clear a winner");
-});
-
-test("updating a secret writes both rounds in ONE statement", async () => {
-  // Two statements would leave a window where Round 1 and Round 2 players are
-  // looking at different wording for the same challenge, and a crash between
-  // them would make that permanent.
-  const db = fakeDb({ rows: [ROW, SECRET_R1, SECRET_R2] });
-  const task = await updateTask(db, "s-04", { title: "Reworded secret" });
-  const writes = taskCalls(db).filter((c) => c.method === "PATCH");
-  assert.equal(writes.length, 1, "one request, filtered by slug");
-  assert.ok(writes[0].url.includes("slug=eq.s-04"));
-  assert.equal(db.state.rows.filter((r) => r.title === "Reworded secret").length, 2, "both rounds moved");
-  assert.equal(task.round, 0, "and it comes back as the single task it is");
-});
-
 test("an update leaves every other task alone", async () => {
-  const db = fakeDb({ rows: [ROW, SECRET_R1, SECRET_R2] });
-  await updateTask(db, "s-04", { points: 10 });
-  assert.equal(db.state.rows.find((r) => r.slug === "r1-01").points, 3);
+  const other = { ...ROW, id: "uuid-2", slug: "r2-01", round: 2 };
+  const db = fakeDb({ rows: [ROW, other, SECRET_R1, SECRET_R2] });
+  await updateTask(db, "r1-01", { points: 10 });
+  assert.deepEqual(db.state.rows.slice(1), [other, SECRET_R1, SECRET_R2]);
 });
 
 test("an update drops invalid fields but still applies the valid ones", async () => {
@@ -323,22 +319,11 @@ test("moving a task to the round it is already in writes nothing", async () => {
   assert.equal(task.round, 1, "the unchanged task is still returned");
 });
 
-test("a secret challenge refuses to move", async () => {
-  // It is two rows because it runs in BOTH halves. Moving it to one round means
-  // deleting the other row, and that cascades to submissions.
-  const db = fakeDb({ rows: [ROW, SECRET_R1, SECRET_R2] });
-  await assert.rejects(() => moveTask(db, "s-04", 2), /both halves/);
-  assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false);
-});
-
-test("a task whose leader bonus has been awarded refuses to move", async () => {
-  // The winner is a team in the round the task is leaving, and team_scores pays
-  // the bonus on `winner_team_id = team_id`. Moving the row silently either
-  // takes points off a team that already earned them or leaves a winner that is
-  // not in the task's round. Say so instead.
+test("dormant pre-migration winner columns do not block ordinary unplayed moves", async () => {
   const db = fakeDb({ rows: [{ ...ROW, scoring_mode: "competition", winner_team_id: "team-r1" }] });
-  await assert.rejects(() => moveTask(db, "r1-01", 2), /winner/i);
-  assert.equal(taskCalls(db).some((c) => c.method === "PATCH"), false);
+  const task = await moveTask(db, "r1-01", 2);
+  assert.equal(task.round, 2);
+  assert.equal(task.scoringMode, "fixed");
 });
 
 test("a task someone has already submitted refuses to move", async () => {
@@ -358,9 +343,9 @@ test("a submission on a DIFFERENT task does not block a move", async () => {
 });
 
 test("a task already in the target round is never refused", async () => {
-  // Nothing is moving, so neither an awarded bonus nor a played submission is a
+  // Nothing is moving, so a played submission is not a
   // reason to say no -- refusing there would be a control failing at a no-op.
-  const rows = [{ ...ROW, scoring_mode: "competition", winner_team_id: "team-r1" }];
+  const rows = [ROW];
   const db = fakeDb({ rows, submissions: [{ id: "sub-1", task_id: "uuid-1" }] });
   const task = await moveTask(db, "r1-01", 1);
   assert.equal(task.round, 1);
@@ -388,12 +373,12 @@ test("a failed move throws and names the task", async () => {
 
 test("an added task is live, with a slug that is not already taken", async () => {
   const db = fakeDb({ rows: [ROW, { ...ROW, id: "uuid-2", slug: "r1-x1" }] });
-  const task = await addTask(db, { title: "  A new one  ", round: 1, points: 10, difficulty: 5 });
+  const task = await addTask(db, { title: "  A new one  ", round: 1, points: 10, rewrite: true });
   assert.equal(task.slug, "r1-x2", "r1-x1 is taken");
   assert.equal(task.active, true, "there is no staging state to land in");
   assert.equal(task.title, "A new one");
   assert.equal(task.points, 10);
-  assert.equal(task.difficulty, 5);
+  assert.equal(task.rewrite, true);
   assert.equal(task.docTitle, "", "it did not come from the planning doc");
 });
 
@@ -407,53 +392,16 @@ test("an added task keeps the details chosen in the planner", async () => {
     measurementLabel: "Extra hats",
     pointsPerUnit: 2,
     prop: "red hat",
-    requiresVideo: true,
     note: "Keep the count visible.",
-    difficulty: 4,
-    guts: 2,
-    luck: 3,
-    payoff: 5,
-    risk: 2,
   });
   const insert = taskCalls(db).find((c) => c.method === "POST");
   assert.equal(insert.body[0].scoring_mode, "quantity");
   assert.equal(insert.body[0].measurement_label, "Extra hats");
   assert.equal(insert.body[0].points_per_unit, 2);
   assert.equal(insert.body[0].prop, "red hat");
-  assert.equal(insert.body[0].requires_video, true);
   assert.equal(insert.body[0].note, "Keep the count visible.");
   assert.equal(task.scoringMode, "quantity");
   assert.equal(task.prop, "red hat");
-  assert.equal(task.requiresVideo, true);
-});
-
-test("an added secret is inserted once per round, in one request", async () => {
-  // Two requests could leave a challenge existing in half the event.
-  const db = fakeDb({ rows: [] });
-  const task = await addTask(db, { title: "Secret", round: 0 });
-  const inserts = taskCalls(db).filter((c) => c.method === "POST");
-  assert.equal(inserts.length, 1);
-  assert.deepEqual(inserts[0].body.map((r) => r.round), [1, 2]);
-  assert.ok(inserts[0].body.every((r) => r.slug === "s-x1" && r.is_secret === true));
-  assert.equal(task.round, 0, "and reads back as one task");
-  assert.equal(task.points, 7, "the flat secret tier");
-});
-
-test("an added secret always uses the secret tier", async () => {
-  const db = fakeDb({ rows: [] });
-  const task = await addTask(db, { title: "Secret", round: 0, points: 3 });
-  const insert = taskCalls(db).find((c) => c.method === "POST");
-  assert.deepEqual(insert.body.map((row) => row.points), [7, 7]);
-  assert.equal(task.points, 7);
-});
-
-test("an explicit secret choice fans out to both rounds", async () => {
-  const db = fakeDb({ rows: [] });
-  const task = await addTask(db, { title: "Secret", round: 1, isSecret: true, points: 3 });
-  const insert = taskCalls(db).find((c) => c.method === "POST");
-  assert.deepEqual(insert.body.map((row) => row.round), [1, 2]);
-  assert.ok(insert.body.every((row) => row.is_secret === true && row.points === 7));
-  assert.equal(task.round, 0);
 });
 
 test("an added normal task is exactly one row", async () => {
@@ -461,7 +409,8 @@ test("an added normal task is exactly one row", async () => {
   await addTask(db, { title: "x", round: 2 });
   const insert = taskCalls(db).find((c) => c.method === "POST");
   assert.equal(insert.body.length, 1);
-  assert.equal(insert.body[0].is_secret, false);
+  assert.equal(insert.body[0].scoring_mode, "fixed");
+  assert.ok(!("is_secret" in insert.body[0]), "legacy default is enough; no secret field is writable");
   assert.equal(insert.body[0].round, 2);
 });
 
@@ -481,79 +430,9 @@ test("an added task takes the next doc_order in its round, never a shared one", 
   assert.equal(task.docOrder, 13, "one past round 1's highest, not past round 2's");
 });
 
-test("an added secret clears the highest doc_order in BOTH rounds", async () => {
-  // Its two rows share a doc_order, so a number that is free in Round 1 but
-  // taken in Round 2 would collide in half the event.
-  const db = fakeDb({
-    rows: [
-      { ...ROW, id: "a", slug: "r1-01", round: 1, doc_order: 5 },
-      { ...ROW, id: "b", slug: "r2-01", round: 2, doc_order: 40 },
-    ],
-  });
-  const task = await addTask(db, { title: "Secret", round: 0 });
-  assert.equal(task.docOrder, 41);
-});
-
 test("an added task with an illegal tier falls back rather than being rejected by the column", async () => {
   const db = fakeDb({ rows: [] });
   assert.equal((await addTask(db, { title: "x", round: 2, points: 4 })).points, 3);
-});
-
-test("the model merges rather than replacing what it was not given", async () => {
-  const db = fakeDb({ settings: JSON.stringify({ weights: { difficulty: 9, guts: 9, luck: 9 }, thresholds: { t1: 1, t3: 2, t5: 3 } }) });
-  const model = await updateModel(db, { weights: { guts: 4 } });
-  assert.equal(model.weights.guts, 4, "the change lands");
-  assert.equal(model.weights.difficulty, 9, "everything else survives");
-  assert.equal(model.thresholds.t5, 3);
-  const write = db.calls.find((c) => c.table === "settings" && c.method === "PATCH");
-  assert.ok(write, "an existing model is conditionally patched, never blindly upserted");
-  assert.equal(new URL(write.url).searchParams.get("key"), `eq.${MODEL_KEY}`);
-  assert.deepEqual(JSON.parse(write.body.value), model, "what was stored is what was returned");
-  assert.match(write.headers.Prefer, /return=representation/, "an empty result exposes a concurrent update");
-});
-
-test("a nonsense model value cannot be stored", async () => {
-  const db = fakeDb({ settings: null });
-  const model = await updateModel(db, { weights: { guts: "heavy" }, thresholds: { t3: null } });
-  for (const n of [...Object.values(model.weights), ...Object.values(model.thresholds)]) {
-    assert.ok(Number.isFinite(n), `${n} is not a number`);
-  }
-});
-
-for (const settings of [null, JSON.stringify({ weights: { difficulty: 9, guts: 9, luck: 9 } })]) {
-  test(`concurrent partial model edits survive (${settings === null ? "first save" : "existing row"})`, async () => {
-    const db = fakeDb({ settings });
-    await Promise.all([
-      updateModel(db, { weights: { guts: 4 } }),
-      updateModel(db, { thresholds: { t3: 12 } }),
-    ]);
-    const stored = JSON.parse(db.state.settings);
-    assert.equal(stored.weights.guts, 4);
-    assert.equal(stored.thresholds.t3, 12);
-    assert.equal(stored.weights.difficulty, settings === null ? 1.2 : 9);
-  });
-}
-
-test("contention is surfaced instead of claiming a model was saved", async () => {
-  const db = fakeDb({ settings: "{}" });
-  const fetch = db.fetch;
-  db.fetch = async (url, init) => init.method === "PATCH"
-    ? { ok: true, status: 200, text: async () => "[]" }
-    : fetch(url, init);
-  await assert.rejects(updateModel(db, { weights: { guts: 4 } }), /changed|retry/i);
-});
-
-test("a null model value is conditionally replaced, not mistaken for an absent row", async () => {
-  const calls = [];
-  const db = createTaskClient({ SUPABASE_URL: "https://fake.test", SUPABASE_SERVICE_ROLE_KEY: "k" }, async (url, init) => {
-    calls.push({ url, ...init });
-    const value = init.body ? JSON.parse(init.body).value : null;
-    return { ok: true, status: 200, text: async () => JSON.stringify([{ value }]) };
-  });
-  const model = await updateModel(db, { weights: { guts: 4 } });
-  assert.equal(model.weights.guts, 4);
-  assert.equal(calls[1].method, "PATCH");
-  assert.equal(new URL(calls[1].url).searchParams.get("value"), "is.null");
 });
 
 // ── The wire itself ──────────────────────────────────────────────────────────

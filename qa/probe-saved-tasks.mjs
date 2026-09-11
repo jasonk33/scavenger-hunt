@@ -3,8 +3,7 @@
  * through a task list far longer than a round allows them to attempt, and the
  * filter that shows only those. (Do not hardcode the count here -- it is edited
  * live from the canvas and moved by seven inside one hour during development.
- * Derive it as active tasks minus unrevealed secrets, which is the filter
- * /api/state itself applies.)
+ * Derive it from the active task list /api/state actually returns.)
  *
  * The state lives in localStorage keyed by player id, so the two things worth
  * proving are that it survives a reload and that it does NOT survive a change

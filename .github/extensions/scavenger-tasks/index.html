@@ -28,7 +28,6 @@
             <button class="on" data-round="all">All</button>
             <button data-round="1">R1</button>
             <button data-round="2">R2</button>
-            <button data-round="0">Secret</button>
           </div>
 
           <div class="seg" id="shown-filter" role="group" aria-label="Live or cut">
@@ -37,15 +36,6 @@
             <button data-shown="all">All</button>
           </div>
 
-          <select id="sort" aria-label="Sort by">
-            <option value="doc">Doc order</option>
-            <option value="score">Hardest first</option>
-            <option value="mismatch">Tier disagreement</option>
-            <option value="payoff">Weakest payoff first</option>
-            <option value="risk">Riskiest first</option>
-            <option value="luck">Luckiest first</option>
-          </select>
-
           <input id="search" type="search" placeholder="Filter…" aria-label="Filter tasks" />
 
           <label class="check"><input type="checkbox" id="only-flagged" /> Flagged</label>
@@ -53,7 +43,7 @@
         </div>
 
         <p class="live-note">
-          Everything on this tab is live. Wording, points, round, video-only and cut all reach
+          Everything on this tab is live. Wording, points, scoring, round and cut all reach
           players on their next refresh — there is nothing to publish.
         </p>
         <p id="save-status" role="status" hidden></p>
@@ -71,10 +61,6 @@
                 <option value="2">R2</option>
               </select>
             </label>
-            <label class="check">
-              <input id="new-task-secret" type="checkbox" />
-              Secret challenge (both rounds)
-            </label>
             <label class="field">
               <span>Points</span>
               <select id="new-task-points">
@@ -90,7 +76,6 @@
               <select id="new-task-scoring-mode">
                 <option value="fixed">Fixed score</option>
                 <option value="quantity">Extra per item</option>
-                <option value="competition">Competition (leader bonus)</option>
               </select>
             </label>
             <button id="add-task-button" class="ghost primary">Add</button>
@@ -107,53 +92,14 @@
                 <span>Extra points per item</span>
                 <input id="new-task-points-per-unit" type="number" min="0" step="1" value="0" />
               </label>
-              <label id="new-task-competition-bonus-field" class="field">
-                <span>Leader bonus</span>
-                <input id="new-task-competition-bonus" type="number" min="0" step="1" value="0" />
-              </label>
               <label class="field grow">
                 <span>Prop needed</span>
                 <input id="new-task-prop" type="text" placeholder="none" />
-              </label>
-              <label class="check">
-                <input id="new-task-requires-video" type="checkbox" />
-                Video only
               </label>
               <label class="field grow">
                 <span>Note</span>
                 <textarea id="new-task-note" rows="2" placeholder="Planning note"></textarea>
               </label>
-
-              <div class="task-add-ratings">
-                <span class="task-add-ratings-title">Planning ratings</span>
-                <div class="task-add-rating-grid">
-                  <label class="task-add-rating">
-                    <span>Difficulty</span>
-                    <input id="new-task-difficulty" type="range" min="1" max="5" step="1" value="3" />
-                    <output id="new-task-difficulty-value">3</output>
-                  </label>
-                  <label class="task-add-rating">
-                    <span>Guts</span>
-                    <input id="new-task-guts" type="range" min="1" max="5" step="1" value="3" />
-                    <output id="new-task-guts-value">3</output>
-                  </label>
-                  <label class="task-add-rating">
-                    <span>Luck</span>
-                    <input id="new-task-luck" type="range" min="1" max="5" step="1" value="3" />
-                    <output id="new-task-luck-value">3</output>
-                  </label>
-                  <label class="task-add-rating">
-                    <span>Payoff</span>
-                    <input id="new-task-payoff" type="range" min="1" max="5" step="1" value="3" />
-                    <output id="new-task-payoff-value">3</output>
-                  </label>
-                  <label class="task-add-rating">
-                    <span>Risk</span>
-                    <input id="new-task-risk" type="range" min="1" max="5" step="1" value="1" />
-                    <output id="new-task-risk-value">1</output>
-                  </label>
-                </div>
-              </div>
             </div>
           </details>
         </div>
@@ -223,15 +169,11 @@
         <div class="head">
           <button class="caret" aria-label="Expand"></button>
           <span class="tier"></span>
-          <span class="arrow" hidden>&rarr;</span>
-          <span class="tier suggested" role="button" tabindex="0" hidden></span>
-          <button class="tier-dismiss ghost" hidden aria-label="Keep this tier">&times;</button>
           <span class="title" role="textbox" contenteditable="plaintext-only" spellcheck="true"></span>
           <span class="chips"></span>
           <div class="seg round" role="group" aria-label="Round">
             <button data-round="1">R1</button>
             <button data-round="2">R2</button>
-            <button class="round-both" disabled title="A secret challenge runs in both halves of the event, so it has no round to move to.">Both</button>
           </div>
           <div class="seg shown" role="group" aria-label="Live or cut">
             <button data-active="true" title="Players can see this task">In</button>
@@ -239,7 +181,6 @@
           </div>
         </div>
         <div class="body" hidden>
-          <div class="sliders"></div>
           <div class="meta">
             <label class="field">
               <span>Points</span>
@@ -256,26 +197,20 @@
               <select class="scoring-mode">
                 <option value="fixed">Fixed</option>
                 <option value="quantity">Extra per item</option>
-                <option value="competition">Competition</option>
               </select>
             </label>
-            <label class="field grow">
+            <label class="field grow quantity-field">
               <span>Counted unit</span>
               <input class="measurement-label" type="text" placeholder="e.g. extra shirt" />
             </label>
-            <label class="field">
+            <label class="field quantity-field">
               <span>Extra points per item</span>
               <input class="points-per-unit" type="number" min="0" step="1" />
-            </label>
-            <label class="field">
-              <span>Leader bonus</span>
-              <input class="competition-bonus" type="number" min="0" step="1" />
             </label>
             <label class="field grow">
               <span>Prop needed</span>
               <input class="prop" type="text" placeholder="none" />
             </label>
-            <label class="check"><input type="checkbox" class="clip" /> Video only</label>
             <label class="check"><input type="checkbox" class="rewrite" /> Needs rewrite</label>
           </div>
           <label class="field">

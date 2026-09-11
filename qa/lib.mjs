@@ -222,16 +222,13 @@ export async function snapshot() {
     admin.from("players").select("id,name"),
     admin.from("teams").select("id,name,round,color"),
     admin.from("roster").select("round,player_id,team_id"),
-    // Full task state, not just a count: a stray click on a Reveal button
-    // changes nothing countable but spoils a secret challenge, and deactivating
-    // a task silently removes it from every player's list. The planning columns
-    // are in here too -- the canvas writes this same table, and losing one of
-    // Jason's task edits is exactly as bad as losing a submission.
+    // Preserve the whole row, including opaque legacy fields. A changed score,
+    // round, cut, prop or note is invisible to counts alone.
     admin
       .from("tasks")
-      .select("id,slug,title,points,round,is_secret,requires_video,revealed_at,active,note,prop,rewrite,difficulty,guts,luck,payoff,risk,tier_ok")
+      .select("*")
       .order("id"),
-    admin.from("submissions").select("id,status,team_id,player_id,points_awarded").order("id"),
+    admin.from("submissions").select("*").order("id"),
     admin.from("settings").select("key,value"),
   ]);
   const realPlayers = (players.data ?? []).filter((p) => !isQa(p.name));
@@ -248,22 +245,10 @@ export async function snapshot() {
     teams: realTeams.length,
     roster: (roster.data ?? []).filter((r) => !qaPlayers.has(r.player_id)).length,
     tasks: realTasks.length,
-    secretsRevealed: realTasks.filter((t) => t.revealed_at).map((t) => t.title),
     tasksInactive: realTasks.filter((t) => t.active === false).map((t) => t.title),
-    // Wide on purpose: this one table is now both what players see and what the
-    // planner canvas edits, so a driver that moved a rating has damaged Jason's
-    // work just as surely as one that moved a point value.
-    taskFingerprint: realTasks
-      .map(
-        (t) =>
-          `${t.id}:${t.slug}:${t.title}:${t.points}:${t.requires_video}:${t.is_secret}:` +
-          `${t.note}:${t.prop}:${t.rewrite}:${t.difficulty}:${t.guts}:${t.luck}:${t.payoff}:${t.risk}:${t.tier_ok}`
-      )
-      .join("|"),
+    taskFingerprint: JSON.stringify(realTasks),
     submissions: realSubs.length,
-    submissionFingerprint: realSubs
-      .map((s) => `${s.id}:${s.status}:${s.team_id}:${s.points_awarded}`)
-      .join("|"),
+    submissionFingerprint: JSON.stringify(realSubs),
     settings: Object.fromEntries((settings.data ?? []).map((s) => [s.key, s.value])),
   };
 }

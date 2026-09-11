@@ -59,23 +59,26 @@ try {
     (await ta.inputValue()) === "__qa tap to edit me", await ta.inputValue());
   check("the editor offers the point presets used by the real tasks",
     (await page.locator(".card button.btn-sm").filter({ hasText: /^(1|3|5|7|10)$/ }).count()) >= 5);
-  check("the editor offers the video-only and secret flags",
-    (await page.getByRole("button", { name: "video only" }).count()) > 0 &&
-    (await page.getByRole("button", { name: "secret" }).count()) > 0);
+  check("the editor has no retired task flags",
+    (await page.getByRole("button", { name: /video only|secret/i }).count()) === 0);
 
   // Scope every control to the editor card itself; the task list behind it also
   // contains buttons whose labels are bare numbers.
   const editor = page.locator(".card").filter({ has: page.getByRole("button", { name: "Save" }) }).last();
   await ta.fill("__qa edited by tapping");
   await editor.getByRole("button", { name: "5", exact: true }).click();
-  await editor.getByRole("button", { name: "video only" }).click();
+  await editor.locator("select").selectOption("quantity");
+  await editor.getByPlaceholder(/One unit/).fill("extra sticker");
+  await editor.getByPlaceholder("Extra points per item", { exact: true }).fill("2");
   await editor.getByRole("button", { name: "Save" }).click();
   await page.waitForTimeout(2500);
 
-  const { data: after } = await admin.from("tasks").select("title,points,requires_video").eq("id", taskId).single();
+  const { data: after } = await admin.from("tasks").select("title,points,scoring_mode,measurement_label,points_per_unit").eq("id", taskId).single();
   check("editing a task title through the UI persists", after.title === "__qa edited by tapping", JSON.stringify(after));
   check("editing the point value through the UI persists", after.points === 5, JSON.stringify(after));
-  check("toggling video-only through the UI persists", after.requires_video === true, JSON.stringify(after));
+  check("per-item scoring through the UI persists",
+    after.scoring_mode === "quantity" && after.measurement_label === "extra sticker" && after.points_per_unit === 2,
+    JSON.stringify(after));
   note(`task is now: ${JSON.stringify(after)}`);
   check("the edited task shows its new title in the list",
     await page.getByText("__qa edited by tapping", { exact: false }).count() > 0);
@@ -96,9 +99,8 @@ try {
   console.log("\n4. Event tab controls");
   await page.getByRole("button", { name: "event", exact: true }).first().click();
   await page.waitForTimeout(1200);
-  check("round buttons present", await page.getByRole("button", { name: "Round 1", exact: true }).count() > 0);
-  check("submissions toggle present", await page.getByRole("button", { name: /tap to (close|open)/ }).count() > 0);
-  check("notice box present", await page.getByPlaceholder("Secret challenge is live", { exact: false }).count() > 0);
+  check("round lifecycle controls present", await page.getByRole("button", { name: /End Round|Start Round|Reopen Round|Reveal Round/ }).count() > 0);
+  check("notice box present", await page.getByRole("textbox").count() > 0);
   check("notice has Post and Clear controls",
     (await page.getByRole("button", { name: "Post" }).count()) > 0 &&
     (await page.getByRole("button", { name: "Clear" }).count()) > 0);

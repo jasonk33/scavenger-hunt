@@ -27,8 +27,7 @@ export async function GET(req: Request) {
    *
    * Photos are lazy-loaded so extra rows are nearly free, but videos render with
    * preload="auto" (required, or iOS shows an untappable black box), so each one
-   * starts fetching as soon as it is rendered. Round 2 has 11 video-only tasks,
-   * so a fully-scored round is worth on the order of 50 eager video fetches.
+   * starts fetching as soon as it is rendered.
    *
    * The cap counts FILES, while the feed shows one post per group. Multi-file
    * submissions therefore make it show fewer posts, never more -- which is the
@@ -48,7 +47,7 @@ export async function GET(req: Request) {
       .in("status", ["approved", "rejected"])
       .order("judged_at", { ascending: false })
       .limit(limit),
-    sb.from("tasks").select("id,title,points,scoring_mode,points_per_unit,competition_bonus,winner_team_id").eq("round", round),
+    sb.from("tasks").select("id,title,points,scoring_mode,points_per_unit").eq("round", round),
     sb.from("teams").select("id,name,color").eq("round", round),
     sb.from("players").select("id,name"),
   ]);
@@ -61,7 +60,7 @@ export async function GET(req: Request) {
   const { data: approved, error: approvedError } = taskIds.length
     ? await sb
         .from("submissions")
-        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,group_id,created_at,judged_at")
+        .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,group_id,created_at,judged_at")
         .eq("round", round)
         .in("task_id", taskIds)
         .eq("status", "approved")
@@ -85,10 +84,8 @@ export async function GET(req: Request) {
       /* Looked up by GROUP. A group is one decision the judge made, but only
          one row inside it scores -- the newest -- while `s` here is deliberately
          the oldest. Keyed by row id this missed on every multi-file post and
-         took the fallback, which reads only what was frozen at judging time and
-         so cannot know about a competition bonus decided afterwards. The
-         fallback is for a genuinely unranked group: a second approval on a task
-         the team has already scored. */
+         took the fallback for a different file. The fallback is for a genuinely
+         unranked group: a second approval on a task the team already scored. */
       const split = pointsById.get(decisionKey(s)) ?? awardedBreakdown(s);
       return {
         id: s.id,

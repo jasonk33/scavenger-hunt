@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { SCORING_MODES } from "../src/lib/scoring.mjs";
 
 // Execute the real component and its handlers, but never import a live API client.
 const compiled = ts.transpileModule(
@@ -18,11 +19,6 @@ const task = (overrides = {}) => ({
   scoring_mode: "fixed",
   measurement_label: "extra shirt",
   points_per_unit: 2,
-  competition_bonus: 5,
-  winner_team_id: null,
-  requires_video: false,
-  is_secret: false,
-  revealed_at: null,
   active: true,
   ...overrides,
 });
@@ -98,6 +94,7 @@ function editor(initial = task()) {
     input: (placeholder, value) => change(
       (node) => node.type === "input" && node.props.placeholder.startsWith(placeholder), value
     ),
+    get controls() { return JSON.stringify(tree); },
   };
 }
 
@@ -106,11 +103,8 @@ test("Admin title-only save preserves newer canvas fields, even after a poll", (
   view.title("New wording");
   view.render(task({
     points: 10,
-    scoring_mode: "competition",
-    winner_team_id: "team-r1",
-    competition_bonus: 8,
-    requires_video: true,
-    is_secret: true,
+    scoring_mode: "quantity",
+    points_per_unit: 8,
     active: false,
   }));
   view.click("Save");
@@ -119,9 +113,7 @@ test("Admin title-only save preserves newer canvas fields, even after a poll", (
 
 for (const { name, initial, edit, expected } of [
   { name: "points", edit: (view) => view.click(7), expected: { points: 7 } },
-  { name: "video-only", edit: (view) => view.click("video only"), expected: { requiresVideo: true } },
-  { name: "secret", edit: (view) => view.click("secret"), expected: { isSecret: true } },
-  { name: "scoring mode", edit: (view) => view.mode("competition"), expected: { scoringMode: "competition" } },
+  { name: "scoring mode", edit: (view) => view.mode("quantity"), expected: { scoringMode: "quantity" } },
   {
     name: "unit label",
     initial: { scoring_mode: "quantity" },
@@ -133,12 +125,6 @@ for (const { name, initial, edit, expected } of [
     initial: { scoring_mode: "quantity" },
     edit: (view) => view.input("Extra points per item", "0"),
     expected: { pointsPerUnit: 0 },
-  },
-  {
-    name: "leader bonus",
-    initial: { scoring_mode: "competition", winner_team_id: "team-r1" },
-    edit: (view) => view.input("Leader bonus", "0"),
-    expected: { competitionBonus: 0 },
   },
 ]) {
   test(`Admin ${name} save sends only that deliberately changed field`, () => {
@@ -152,7 +138,7 @@ for (const { name, initial, edit, expected } of [
 
 test("Admin no-op save closes without any write, even if the task changed remotely", () => {
   const view = editor();
-  view.render(task({ title: "Canvas wording", points: 10, scoring_mode: "competition" }));
+  view.render(task({ title: "Canvas wording", points: 10, scoring_mode: "quantity" }));
   view.click("Save");
   assert.deepEqual(view.saved, []);
   assert.equal(view.cancelled, 1);
@@ -161,11 +147,9 @@ test("Admin no-op save closes without any write, even if the task changed remote
 test("Admin edits reverted to the opening values do not overwrite a poll", () => {
   const view = editor();
   view.title("Temporary wording");
-  view.click("video only");
-  view.mode("competition");
-  view.render(task({ title: "Canvas wording", requires_video: true, scoring_mode: "quantity" }));
+  view.mode("quantity");
+  view.render(task({ title: "Canvas wording", scoring_mode: "quantity" }));
   view.title("Original wording");
-  view.click("video only");
   view.mode("fixed");
   view.click("Save");
   assert.deepEqual(view.saved, []);
@@ -179,26 +163,21 @@ test("Admin whitespace-only changes are not writes", () => {
   assert.deepEqual(view.saved, []);
 });
 
-test("Admin can deliberately change several fields, including turning booleans off", () => {
-  const view = editor(task({ requires_video: true, is_secret: true }));
+test("Admin can deliberately change several supported fields", () => {
+  const view = editor();
   view.title("New wording");
   view.click(10);
-  view.click("video only");
-  view.click("secret");
+  view.mode("quantity");
   view.click("Save");
   assert.deepEqual(view.saved, [{
     title: "New wording",
     points: 10,
-    requiresVideo: false,
-    isSecret: false,
+    scoringMode: "quantity",
   }]);
 });
 
-test("Admin only sends a mode change away from competition when deliberately selected", () => {
-  const view = editor(task({ scoring_mode: "competition", winner_team_id: "team-r1" }));
-  view.mode("fixed");
-  view.click("Save");
-  assert.deepEqual(view.saved, [{ scoringMode: "fixed" }]);
+test("Admin exposes no retired mode, video-only or secret controls", () => {
+  assert.doesNotMatch(editor().controls, /competition|Leader bonus|video only|secret/);
 });
 
 test("Admin restore stays an explicit active-only action", () => {
@@ -245,6 +224,7 @@ function taskApi(rows) {
     require(name) {
       if (name === "@/lib/db") return { db };
       if (name === "@/lib/settings") return { isOrganizer: async () => true };
+      if (name === "@/lib/scoring.mjs") return { SCORING_MODES };
       if (name === "@/lib/http") return {
         json: (body) => ({ body, status: 200 }),
         fail: (error, status = 400) => ({ body: { error }, status }),
@@ -261,20 +241,18 @@ function taskApi(rows) {
   };
 }
 
-const secrets = (overrides = {}) => [1, 2].map((round) => task({
+const sharedRows = (overrides = {}) => [1, 2].map((round) => task({
   id: `task-r${round}`,
   round,
-  slug: "secret-both",
-  is_secret: true,
-  scoring_mode: "competition",
-  winner_team_id: `team-r${round}`,
-  revealed_at: round === 1 ? "2026-09-04T12:00:00Z" : null,
+  slug: "shared-task",
+  is_secret: false,
+  scoring_mode: "quantity",
   ...overrides,
 }));
 
-test("Admin title-only save through the real route preserves both winners and per-round reveals", async () => {
-  const view = editor(secrets({ scoring_mode: "fixed", winner_team_id: null })[0]);
-  const rows = secrets({ points: 10, competition_bonus: 8 });
+test("Admin title-only save through the real route preserves other fields on every slug row", async () => {
+  const view = editor(sharedRows({ scoring_mode: "fixed" })[0]);
+  const rows = sharedRows({ points: 10, points_per_unit: 8 });
   const before = structuredClone(rows);
   const api = taskApi(rows);
   view.title("New shared wording");
@@ -282,7 +260,7 @@ test("Admin title-only save through the real route preserves both winners and pe
   view.click("Save");
   for (const body of view.saved) await api.patch({ id: "task-r1", ...body });
   assert.equal(api.writes.length, 1);
-  assert.deepEqual(api.writes[0].filters, [["slug", "secret-both"]]);
+  assert.deepEqual(api.writes[0].filters, [["slug", "shared-task"], ["is_secret", false]]);
   assert.deepEqual(Object.keys(api.writes[0].patch).sort(), ["title", "updated_at"]);
   assert.deepEqual(rows, before.map((row, index) => ({
     ...row,
@@ -291,29 +269,15 @@ test("Admin title-only save through the real route preserves both winners and pe
   })));
 });
 
-test("a deliberate mode change through the real route clears both secret winners only", async () => {
-  const rows = secrets();
+test("a deliberate mode change through the real route writes no unrelated fields", async () => {
+  const rows = sharedRows();
   const view = editor(structuredClone(rows[0]));
   const api = taskApi(rows);
   view.mode("fixed");
   view.click("Save");
   for (const body of view.saved) await api.patch({ id: "task-r1", ...body });
   assert.equal(api.writes.length, 1);
-  assert.deepEqual(api.writes[0].filters, [["slug", "secret-both"]]);
-  assert.ok(rows.every((row) => row.scoring_mode === "fixed" && row.winner_team_id === null));
-  assert.deepEqual(rows.map((row) => row.revealed_at), ["2026-09-04T12:00:00Z", null]);
-});
-
-test("the existing reveal and winner actions still target only the selected round", async () => {
-  const rows = secrets({ revealed_at: null, winner_team_id: null });
-  const api = taskApi(rows);
-  await api.patch({ id: "task-r1", revealed: true });
-  await api.patch({ id: "task-r2", winnerTeamId: "team-r2" });
-  assert.deepEqual(api.writes.map((write) => write.filters), [
-    [["id", "task-r1"]],
-    [["id", "task-r2"]],
-  ]);
-  assert.ok(rows[0].revealed_at);
-  assert.equal(rows[1].revealed_at, null);
-  assert.deepEqual(rows.map((row) => row.winner_team_id), [null, "team-r2"]);
+  assert.deepEqual(api.writes[0].filters, [["slug", "shared-task"], ["is_secret", false]]);
+  assert.ok(rows.every((row) => row.scoring_mode === "fixed"));
+  assert.deepEqual(Object.keys(api.writes[0].patch).sort(), ["scoring_mode", "updated_at"]);
 });

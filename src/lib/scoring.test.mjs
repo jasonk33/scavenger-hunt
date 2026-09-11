@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   awardedBreakdown,
-  competitionWinners,
+  SCORING_MODES,
   effectivePoints,
   latestApproved,
   pointsBreakdown,
@@ -15,8 +15,6 @@ const task = (overrides = {}) => ({
   points: 5,
   scoring_mode: "fixed",
   points_per_unit: 0,
-  competition_bonus: 0,
-  winner_team_id: null,
   ...overrides,
 });
 
@@ -44,94 +42,67 @@ test("quantity tasks add the configured points for every measured item", () => {
   assert.equal(effectivePoints(quantity, 99), 203);
 });
 
-test("competition tasks award the bonus only to the team the organizer picked", () => {
-  const undecided = task({ scoring_mode: "competition", competition_bonus: 3 });
-  assert.equal(effectivePoints(undecided, null, "team-a"), 5);
+test("only fixed and quantity scoring remain supported", () => {
+  assert.deepEqual(SCORING_MODES, ["fixed", "quantity"]);
+});
 
+test("legacy competition tasks are fixed even with a winner and a measurement", () => {
   const decided = task({
     scoring_mode: "competition",
     competition_bonus: 3,
     winner_team_id: "team-b",
   });
-  assert.equal(effectivePoints(decided, null, "team-b"), 8);
+  assert.equal(effectivePoints(decided, 99, "team-b"), 5);
   assert.equal(effectivePoints(decided, null, "team-a"), 5);
 });
 
-test("competition bonuses ignore measurements entirely", () => {
-  // The old rule handed the bonus to whoever posted the highest number, so a
-  // team's score moved when somebody else was judged. Nothing but the
-  // organizer's pick decides it now.
-  const decided = task({
-    scoring_mode: "competition",
-    competition_bonus: 3,
-    winner_team_id: "team-b",
-  });
-  assert.equal(effectivePoints(decided, 99, "team-a"), 5);
-  assert.equal(effectivePoints(decided, 0, "team-b"), 8);
-});
-
-test("approved scoring uses the latest approval and the picked competition winner", () => {
-  const competition = task({
-    scoring_mode: "competition",
-    competition_bonus: 3,
-    winner_team_id: "team-b",
-  });
+test("approved scoring uses the latest approval, not the highest quantity", () => {
+  const quantity = task({ scoring_mode: "quantity", points_per_unit: 2 });
   const scored = scoreApproved(
     [
-      row({ id: "old", team_id: "team-a" }),
+      row({ id: "old", team_id: "team-a", measurement_value: 10, points_awarded: 25 }),
       row({
         id: "new",
         team_id: "team-a",
+        measurement_value: 1,
+        points_awarded: 7,
         judged_at: "2026-08-23T12:11:00.000Z",
       }),
-      row({ id: "other", team_id: "team-b" }),
+      row({ id: "other", team_id: "team-b", measurement_value: 3, points_awarded: 11 }),
     ],
-    [competition]
+    [quantity]
   );
 
   assert.deepEqual(
     scored.map(({ row: scoredRow, points }) => [scoredRow.id, points]),
     [
-      ["new", 5],
-      ["other", 8],
+      ["new", 7],
+      ["other", 11],
     ]
   );
 });
 
-test("approved scoring reads the winner from the task, never from a snapshot", () => {
-  // The winner is chosen after the round, so it cannot have been snapshotted
-  // onto the submission at judging time. The frozen bonus AMOUNT still wins.
+test("legacy competition snapshots retain the stored approval without a winner effect", () => {
   const competition = task({
     scoring_mode: "competition",
     competition_bonus: 99,
     winner_team_id: "team-a",
   });
   const scored = scoreApproved(
-    [row({ team_id: "team-a", competition_bonus_snapshot: 3 })],
+    [row({ task_points: 10, points_awarded: 5, scoring_mode_snapshot: "competition", competition_bonus_snapshot: 3 })],
     [competition]
   );
-  assert.equal(scored[0].points, 8);
+  assert.equal(scored[0].points, 5);
+  assert.equal(scored[0].base, 5);
+  assert.equal(scored[0].bonus, 0);
 });
 
-test("competitionWinners reports the decided winner and nothing before that", () => {
-  const teams = [{ id: "team-b", name: "Blue" }];
-  assert.deepEqual(
-    competitionWinners([task({ scoring_mode: "competition", competition_bonus: 3 })], teams),
-    {}
-  );
-  assert.deepEqual(
-    competitionWinners(
-      [
-        task({
-          scoring_mode: "competition",
-          competition_bonus: 3,
-          winner_team_id: "team-b",
-        }),
-      ],
-      teams
-    ),
-    { "task-1": { team: "Blue", bonus: 3 } }
-  );
+test("quantity snapshots survive a later fixed task edit", () => {
+  const [scored] = scoreApproved([row({
+    task_points: 3, scoring_mode_snapshot: "quantity", points_per_unit_snapshot: 2,
+    measurement_value: 4, points_awarded: 11,
+  })], [task({ points: 10, scoring_mode: "fixed", points_per_unit: 0 })]);
+  assert.deepEqual([scored.base, scored.bonus, scored.points], [3, 8, 11]);
 });
 
 test("approved scoring keeps the submission baseline when the task is edited later", () => {
@@ -187,13 +158,13 @@ test("pointsBreakdown splits what the task was worth from what was earned on top
   assert.deepEqual(pointsBreakdown(fixed, null), { base: 3, bonus: 0, total: 3 });
 });
 
-test("pointsBreakdown shows a competition bonus only to the team that won it", () => {
+test("pointsBreakdown ignores retired winner metadata", () => {
   const decided = task({
     scoring_mode: "competition",
     competition_bonus: 3,
     winner_team_id: "team-b",
   });
-  assert.deepEqual(pointsBreakdown(decided, null, "team-b"), { base: 5, bonus: 3, total: 8 });
+  assert.deepEqual(pointsBreakdown(decided, null, "team-b"), { base: 5, bonus: 0, total: 5 });
   assert.deepEqual(pointsBreakdown(decided, null, "team-a"), { base: 5, bonus: 0, total: 5 });
 });
 

@@ -8,7 +8,7 @@
 // why that is gone.
 //
 // extension.mjs is wiring only: store.mjs reads and writes the `tasks` table,
-// roster-store.mjs the roster, tier.mjs owns the scoring model, and
+// roster-store.mjs the roster, and
 // index.html/ui.js/ui.css are the renderer served over loopback.
 
 import { createServer } from "node:http";
@@ -16,7 +16,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas, CanvasError } from "@github/copilot-sdk/extension";
-import { addTask, loadTasks, moveTask, summarize, updateModel, updateTask } from "./store.mjs";
+import { addTask, loadTasks, moveTask, summarize, updateTask } from "./store.mjs";
 import {
   addPlayers,
   addTeam,
@@ -29,7 +29,6 @@ import {
   updatePlayer,
   updateTeam,
 } from "./roster-store.mjs";
-import { scoreOf, suggestedPoints } from "./tier.mjs";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ASSETS = {
@@ -37,7 +36,6 @@ const ASSETS = {
   "/ui.js": "ui.js",
   "/roster.js": "roster.js",
   "/ui.css": "ui.css",
-  "/tier.mjs": "tier.mjs",
 };
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css" };
 
@@ -46,18 +44,7 @@ const servers = new Map();
 /** Open SSE responses across every instance, so an agent edit reaches all panels. */
 const streams = new Set();
 
-/** The task list plus everything derived from it, which is what the renderer wants. */
-async function tasksPayload() {
-  const board = await loadTasks();
-  return {
-    model: board.model,
-    tasks: board.tasks.map((t) => ({
-      ...t,
-      score: +scoreOf(t, board.model.weights).toFixed(2),
-      suggestedPoints: suggestedPoints(t, board.model),
-    })),
-  };
-}
+const tasksPayload = loadTasks;
 
 async function rosterPayload() {
   return loadRoster();
@@ -145,14 +132,6 @@ async function handle(req, res) {
 
   if (path === "/api/tasks") return json(res, 200, await tasksPayload());
   if (path === "/api/roster") return json(res, 200, await rosterPayload());
-
-  if (path === "/api/model" && req.method === "PATCH") {
-    const body = await readJson(req);
-    if (!body) return json(res, 400, { error: "invalid JSON" });
-    const model = await updateModel(body);
-    await broadcast();
-    return json(res, 200, model);
-  }
 
   const taskMatch = path.match(/^\/api\/task\/([\w.-]+)$/);
   if (taskMatch && req.method === "PATCH") {
@@ -276,7 +255,7 @@ async function startServer() {
     // on screen while meaning opposite things.
     handle(req, res).catch((e) => {
       if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+        res.writeHead(e?.refusal ? 409 : 500, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ error: String(e?.message ?? e) }));
         return;
       }
@@ -289,38 +268,32 @@ async function startServer() {
 
 // ── Agent-facing actions ─────────────────────────────────────────────────────
 //
-// Deliberately narrow. The UI owns judgment calls (ratings, live/cut); these
+// Deliberately narrow. The UI owns judgment calls (points, live/cut); these
 // exist so the agent can read the current task list and apply the one thing it
 // is better at than a slider — rewriting the wording of a task.
 //
 // Every one of them writes the live table. There is no draft to work in.
 
-const RATING_PROPS = Object.fromEntries(
-  ["difficulty", "guts", "luck", "payoff", "risk"].map((k) => [k, { type: "integer", minimum: 1, maximum: 5 }])
-);
-
 const listTasks = {
   name: "list_tasks",
   description:
-    "Read the live task list: every task with its wording, assigned and suggested point tier, ratings, notes, and whether players can see it. Filter to the subset you need.",
+    "Read the live task list: wording, assigned points, per-item scoring, props, notes and live/cut status. Filter to the subset you need.",
   inputSchema: {
     type: "object",
     properties: {
-      round: { type: "integer", enum: [0, 1, 2], description: "0 = secret challenges, 1 = Round 1, 2 = Round 2" },
+      round: { type: "integer", enum: [1, 2], description: "1 = Round 1, 2 = Round 2" },
       active: { type: "boolean", description: "true for tasks players can see, false for cut ones" },
       flaggedForRewrite: { type: "boolean", description: "Only tasks the user marked as needing better wording" },
-      mismatchedOnly: { type: "boolean", description: "Only tasks whose assigned tier disagrees with the ratings" },
     },
     additionalProperties: false,
   },
   handler: async (ctx) => {
-    const { round, active, flaggedForRewrite, mismatchedOnly } = ctx.input ?? {};
+    const { round, active, flaggedForRewrite } = ctx.input ?? {};
     const payload = await tasksPayload();
     const tasks = payload.tasks.filter((t) => {
       if (round !== undefined && t.round !== round) return false;
       if (active !== undefined && t.active !== active) return false;
       if (flaggedForRewrite && !t.rewrite) return false;
-      if (mismatchedOnly && t.points === t.suggestedPoints) return false;
       return true;
     });
     return { count: tasks.length, tasks };
@@ -330,7 +303,7 @@ const listTasks = {
 const updateTaskAction = {
   name: "update_task",
   description:
-    "Change one task, live — players see it on their next poll. Use this to apply a wording rewrite (and clear its rewrite flag), or to record a rating, tier or cut decision the user asked for in chat. Setting active:false hides a task from players; it is never deleted and points already scored stand. It cannot change which round a task runs in: that is a move rather than an edit, and it is made from the R1/R2 control on the row in the planner.",
+    "Change one task, live — players see it on their next poll. Apply wording, assigned points, per-item scoring, props, notes, rewrite flags or a cut decision the user requested. Setting active:false hides a task; it is never deleted and points already scored stand. Round moves use the R1/R2 control in the planner.",
   inputSchema: {
     type: "object",
     properties: {
@@ -339,14 +312,11 @@ const updateTaskAction = {
       note: { type: "string" },
       prop: { type: "string" },
       points: { type: "integer", enum: [1, 3, 5, 7, 10] },
-      scoringMode: { type: "string", enum: ["fixed", "quantity", "competition"] },
+      scoringMode: { type: "string", enum: ["fixed", "quantity"] },
       measurementLabel: { type: "string" },
       pointsPerUnit: { type: "integer", minimum: 0 },
-      competitionBonus: { type: "integer", minimum: 0 },
       active: { type: "boolean" },
-      requiresVideo: { type: "boolean" },
       rewrite: { type: "boolean", description: "Set false after applying a rewrite so it leaves the flagged list" },
-      ...RATING_PROPS,
     },
     required: ["slug"],
     additionalProperties: false,
@@ -355,31 +325,26 @@ const updateTaskAction = {
     const { slug, ...patch } = ctx.input ?? {};
     const task = await updateTask(slug, patch);
     if (!task) throw new CanvasError("task_not_found", `No task with slug "${slug}".`);
-    const { model } = await loadTasks();
     await broadcast();
-    return { ...task, suggestedPoints: suggestedPoints(task, model) };
+    return task;
   },
 };
 
 const addTaskAction = {
   name: "add_task",
   description:
-    "Add a task with its scoring, media and planning details. It goes live immediately, so players in that round will see it on their next poll. Set isSecret:true for a challenge offered in both halves of the event; it is always worth 7 points.",
+    "Add a task with assigned points, optional per-item scoring, props and notes. It goes live immediately in Round 1 or Round 2.",
   inputSchema: {
     type: "object",
     properties: {
       title: { type: "string" },
-      round: { type: "integer", enum: [0, 1, 2] },
-      isSecret: { type: "boolean" },
+      round: { type: "integer", enum: [1, 2] },
       points: { type: "integer", enum: [1, 3, 5, 7, 10] },
-      scoringMode: { type: "string", enum: ["fixed", "quantity", "competition"] },
+      scoringMode: { type: "string", enum: ["fixed", "quantity"] },
       measurementLabel: { type: "string" },
       pointsPerUnit: { type: "integer", minimum: 0 },
-      competitionBonus: { type: "integer", minimum: 0 },
       prop: { type: "string" },
-      requiresVideo: { type: "boolean" },
       note: { type: "string" },
-      ...RATING_PROPS,
     },
     required: ["title", "round"],
     additionalProperties: false,
@@ -394,7 +359,7 @@ const addTaskAction = {
 const summaryAction = {
   name: "summary",
   description:
-    "Task list rollup: how many are live and how many are cut, and per round the tier spread, total points available, tier disagreements, average payoff, and how many tasks are high-risk, high-luck or need a prop.",
+    "Task list rollup: live, cut and rewrite counts; per round, the assigned-point spread, baseline points available and tasks needing a prop.",
   handler: async () => summarize(await loadTasks()),
 };
 

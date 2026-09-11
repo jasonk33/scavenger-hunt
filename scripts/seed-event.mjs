@@ -10,7 +10,7 @@
  * this replaces those live decisions with the initial allocations and clears
  * every submission and its linked media. Never run it once the party has started.
  *
- * It leaves task content alone, but re-hides revealed secrets and restores the welcome stage.
+ * It leaves tasks alone and restores the welcome stage.
  * A task edit never requires running something that deletes every submission.
  */
 
@@ -72,7 +72,7 @@ const ROUND_2 = remix(ROUND_1);
 
 /*
  * Task content lives in the `tasks` table, edited through the planner canvas.
- * The only task field this script resets is `revealed_at`.
+ * Task rows are never changed by this script.
  */
 
 const GUESTS = ROUND_1.flat();
@@ -142,7 +142,7 @@ async function confirmDestructive() {
   }
 }
 
-/** Clears every submission and its media, re-hides secrets, restores the welcome stage. */
+/** Clears every submission and its media, then restores the welcome stage. */
 async function clearScoring() {
   const { data: subs } = await db.from("submissions").select("id,object_name");
   const objects = (subs ?? []).map((s) => s.object_name).filter(Boolean);
@@ -151,7 +151,6 @@ async function clearScoring() {
   }
   await db.from("submissions").delete().neq("id", "00000000-0000-0000-0000-000000000000");
 
-  await db.from("tasks").update({ revealed_at: null }).not("revealed_at", "is", null);
   await db.from("settings").upsert(
     [
       { key: "active_round", value: "1" },
@@ -174,7 +173,7 @@ async function wipe() {
   }
   console.log(
     `Removed ${ids.length} player(s), ${cleared.submissions} submission(s), ` +
-      `${cleared.objects} media file(s). Secrets re-hidden, back to Round 1.`
+      `${cleared.objects} media file(s). Back to the welcome stage.`
   );
 }
 

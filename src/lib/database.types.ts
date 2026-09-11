@@ -24,45 +24,27 @@ type RosterRow = { round: number; player_id: string; team_id: string };
 
 type TaskRow = {
   id: string;
-  /**
-   * The task's stable key. A secret challenge is offered in both halves of the
-   * event and `round` is 1 or 2, so it is two rows sharing one slug.
-   */
+  /** Stable task key used for per-field edits. */
   slug: string;
   round: number;
   title: string;
   /** The planning doc's original wording, kept for provenance. Empty if there was none. */
   doc_title: string;
   points: number;
-  scoring_mode: "fixed" | "quantity" | "competition";
+  scoring_mode: "fixed" | "quantity";
   measurement_label: string;
   points_per_unit: number;
-  competition_bonus: number;
-  /**
-   * Which team won this task's competition bonus, or null while it is still
-   * undecided. An organizer picks it once the round is over; nothing about
-   * judging a submission sets it.
-   */
-  winner_team_id: string | null;
-  requires_video: boolean;
+  /** Dormant legacy-data guard; never selected into a task payload. */
   is_secret: boolean;
-  revealed_at: Timestamp | null;
   active: boolean;
   /** Position within the round in the planning doc; the tie-break inside a tier. */
   doc_order: number;
-  /** Generated from (is_secret, points, doc_order). Never written. */
+  /** Generated display order. Never written. */
   sort_order: number;
-  // Planning only, never shown to a player. The canvas owns these; the app reads
-  // them nowhere, and they are here so the client does not reject a `select *`.
-  difficulty: number;
-  guts: number;
-  luck: number;
-  payoff: number;
-  risk: number;
+  // Planning only, never shown to a player.
   prop: string;
   note: string;
   rewrite: boolean;
-  tier_ok: number | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 };
@@ -74,9 +56,8 @@ type SubmissionRow = {
   player_id: string;
   team_id: string;
   task_points: number;
-  scoring_mode_snapshot: "fixed" | "quantity" | "competition";
+  scoring_mode_snapshot: "fixed" | "quantity";
   points_per_unit_snapshot: number;
-  competition_bonus_snapshot: number;
   measurement_value: number | null;
   object_name: string;
   media_type: string | null;
@@ -131,22 +112,12 @@ export type Database = {
         | "scoring_mode"
         | "measurement_label"
         | "points_per_unit"
-        | "competition_bonus"
-        | "winner_team_id"
-        | "requires_video"
         | "is_secret"
-        | "revealed_at"
         | "active"
         | "doc_order"
-        | "difficulty"
-        | "guts"
-        | "luck"
-        | "payoff"
-        | "risk"
         | "prop"
         | "note"
         | "rewrite"
-        | "tier_ok"
         | "created_at"
         | "updated_at",
         "sort_order"
@@ -159,7 +130,6 @@ export type Database = {
         | "measurement_value"
         | "scoring_mode_snapshot"
         | "points_per_unit_snapshot"
-        | "competition_bonus_snapshot"
         | "status"
         | "points_awarded"
         | "reject_reason"

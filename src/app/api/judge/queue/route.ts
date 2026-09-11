@@ -32,7 +32,7 @@ export async function GET(req: Request) {
     await Promise.all([
       sb
         .from("submissions")
-        .select("*")
+        .select("id,round,task_id,player_id,team_id,task_points,scoring_mode_snapshot,points_per_unit_snapshot,measurement_value,object_name,media_type,size_bytes,status,points_awarded,reject_reason,group_id,note,created_at,judged_at")
         .eq("round", round)
         .eq("status", "pending")
         .order("created_at", { ascending: true }),
@@ -45,12 +45,12 @@ export async function GET(req: Request) {
       // and a group is written in lockstep so its files sort together.
       sb
         .from("submissions")
-        .select("*")
+        .select("id,round,task_id,player_id,team_id,task_points,scoring_mode_snapshot,points_per_unit_snapshot,measurement_value,object_name,media_type,size_bytes,status,points_awarded,reject_reason,group_id,note,created_at,judged_at")
         .eq("round", round)
         .in("status", ["approved", "rejected"])
         .order("judged_at", { ascending: false })
         .limit(300),
-      sb.from("tasks").select("id,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,requires_video,is_secret").eq("round", round),
+      sb.from("tasks").select("id,title,points,scoring_mode,measurement_label,points_per_unit").eq("round", round),
       sb.from("teams").select("id,name,color").eq("round", round),
       sb.from("players").select("id,name"),
     ]);
@@ -84,7 +84,7 @@ export async function GET(req: Request) {
     const s = files[0];
     const task = taskById.get(s.task_id);
     const team = teamById.get(s.team_id);
-    const scoringMode = s.scoring_mode_snapshot ?? task?.scoring_mode ?? "fixed";
+    const scoringMode = (s.scoring_mode_snapshot ?? task?.scoring_mode) === "quantity" ? "quantity" : "fixed";
     const media = files.map((f) => ({
       id: f.id,
       url: mediaUrl(f.object_name),
@@ -99,9 +99,6 @@ export async function GET(req: Request) {
       status: s.status,
       createdAt: s.created_at,
       media,
-      // True if ANY file is a video. This only drives the "task is video-only"
-      // warning, and one clip in the set does satisfy that task.
-      isVideo: media.some((m) => m.isVideo),
       sizeBytes: files.reduce((sum, f) => sum + (f.size_bytes ?? 0), 0) || null,
       // Whichever file carries it -- the note is written across the whole group.
       note: files.find((f) => f.note)?.note ?? null,
@@ -111,9 +108,6 @@ export async function GET(req: Request) {
       measurementLabel: task?.measurement_label ?? "",
       measurementValue: s.measurement_value,
       pointsPerUnit: s.points_per_unit_snapshot ?? task?.points_per_unit ?? 0,
-      competitionBonus: s.competition_bonus_snapshot ?? task?.competition_bonus ?? 0,
-      requiresVideo: Boolean(task?.requires_video),
-      isSecret: Boolean(task?.is_secret),
       teamId: s.team_id,
       teamName: team?.name ?? "(unknown team)",
       teamColor: team?.color ?? "#666",
@@ -124,8 +118,7 @@ export async function GET(req: Request) {
       duplicate: s.status === "pending" && alreadyApproved.has(`${s.team_id}:${s.task_id}`),
       pointsAwarded: s.points_awarded,
       // Split the same way the players see it, off the baseline frozen onto the
-      // row. A competition bonus is deliberately absent: it is picked in Admin
-      // after the round, so at judging time there is nothing to show.
+      // row.
       awardedBase: awarded.base,
       awardedBonus: awarded.bonus,
       rejectReason: s.reject_reason,

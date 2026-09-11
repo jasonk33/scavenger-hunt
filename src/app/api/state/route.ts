@@ -3,7 +3,7 @@ import { getSettings } from "@/lib/settings";
 import { decisionKey } from "@/lib/scored-entries.mjs";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { eventState } from "@/lib/event";
-import { awardedBreakdown, competitionWinners, scoreApproved } from "@/lib/scoring.mjs";
+import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -25,14 +25,12 @@ export async function GET(req: Request) {
   const round = settings.active_round;
   const sb = db();
 
-  // Score with all task metadata: cutting or re-hiding a task cannot remove a
-  // bonus already awarded. Filter visibility before returning tasks below.
+  // History still needs retained task metadata. Filter only the available list.
   const tasksQ = sb
     .from("tasks")
-    .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,winner_team_id,requires_video,is_secret,revealed_at,sort_order,active")
+    .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,sort_order,active,is_secret")
     .eq("round", round)
-    // id only breaks ties. sort_order is derived from (is_secret, points,
-    // doc_order), so two tasks CAN share one -- and an unstable order on a list
+    // id only breaks ties: two tasks CAN share sort_order, and an unstable list
     // polled every 5 seconds would visibly reshuffle under the player's thumb.
     .order("sort_order")
     .order("id");
@@ -43,18 +41,11 @@ export async function GET(req: Request) {
   ]);
   if (tasksError || teamsError) return fail("Couldn't load your team's progress. Try again.", 503);
 
-  const tasks = (tasksRaw ?? []).filter((t) => t.active && (!t.is_secret || t.revealed_at));
-  /*
-   * Who won each leader bonus, once an organizer has said so. This used to be a
-   * second query over every approved submission for every competition task, to
-   * work out who was ahead right now -- a live race that pushed teams to redo
-   * tasks and quietly moved scores that were already settled. It is a column on
-   * the task now, so the answer arrives with the tasks themselves.
-   */
-  const winners = competitionWinners(tasks, teams ?? []) as Record<
-    string,
-    { team: string; bonus: number }
-  >;
+  const tasks = (tasksRaw ?? []).flatMap(({ is_secret, ...task }) =>
+    task.active && !is_secret
+      ? [{ ...task, scoring_mode: task.scoring_mode === "quantity" ? "quantity" : "fixed" }]
+      : []
+  );
 
   let me: { id: string; name: string } | null = null;
   let team: { id: string; round: number; name: string; color: string; sort_order: number } | null =
@@ -62,7 +53,6 @@ export async function GET(req: Request) {
   let mine: Array<{
     id: string;
     task_id: string;
-    // Read by scoreApproved to decide the competition bonus, not just carried.
     team_id: string;
     status: string;
     points_awarded: number | null;
@@ -76,6 +66,7 @@ export async function GET(req: Request) {
     judged_at: string | null;
     measurement_value: number | null;
     task_points: number | null;
+    scoring_mode_snapshot: "fixed" | "quantity";
   }> = [];
   // Names of whoever on the team actually sent each submission. Progress is
   // team-wide, so "you already submitted this" is often really a teammate --
@@ -102,15 +93,11 @@ export async function GET(req: Request) {
       // counts for everyone, and people need to see what has already been done so
       // two people don't burn time on the same task.
       if (team) {
-        // team_id looks redundant next to `.eq("team_id", team.id)` and is not:
-        // scoreApproved matches it against tasks.winner_team_id to decide the
-        // competition bonus, so dropping it from the select silently pays the
-        // winning team nothing on their own task list while the leaderboard
-        // shows the higher total -- the exact split the comment below warns of.
+        // Keep team_id: decisionKey distinguishes reassigned group members.
         const { data: subs, error: submissionsError } = await sb
           .from("submissions")
           .select(
-            "id,task_id,team_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot"
+            "id,task_id,team_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot"
           )
           .eq("round", round)
           .eq("team_id", team.id)
@@ -156,9 +143,7 @@ export async function GET(req: Request) {
   /* Keyed by GROUP, not by row. Several files sent as one piece of evidence are
      one thing the judge decided, but only the newest of them is the row that
      scores -- and the expanded list on /submit reads its pill off the OLDEST.
-     Keyed by row id, that pill fell through to the frozen numbers and lost a
-     competition bonus, so a card could show 10 on the task and 5 on the very
-     evidence that earned it. */
+     Resolve the scoring decision, not an arbitrary file's frozen numbers. */
   const rankedByGroup = new Map(
     scoredRows.map(({ row, base, bonus, points }) => [
       decisionKey(row),
@@ -185,7 +170,7 @@ export async function GET(req: Request) {
   const taskTitle = new Map((tasks ?? []).map((t) => [t.id, t.title]));
   const openRejections = mine
     // Only tasks still in the visible list: a rejection on a task the organizer
-    // has since removed (or an unrevealed secret) would render as "a task" with
+    // has since removed would render as "a task" with
     // a Retry button that does nothing.
     .filter((s) => s.status === "rejected" && !approvedTasks.has(s.task_id) && taskTitle.has(s.task_id))
     // One entry per task, even if two teammates both got rejected on it.
@@ -209,13 +194,14 @@ export async function GET(req: Request) {
     },
     me,
     team,
-    tasks: tasks.map((task) => ({ ...task, competition: winners[task.id] ?? null })),
+    tasks,
     // Media URLs are just strings, so sending them costs nothing; the Submit
     // screen only fetches the bytes for a submission the player opens. The
     // object path itself is dropped -- the URL already contains it, and this
     // endpoint is polled by every phone every 5 seconds.
     submissions: mine.map(({ object_name, media_type, group_id, ...s }) => ({
       ...s,
+      scoring_mode_snapshot: s.scoring_mode_snapshot === "quantity" ? "quantity" : "fixed",
       points_awarded: splitById.get(s.id)?.total ?? s.points_awarded,
       // What the task itself was worth, and what the team earned on top of it.
       // Sent split rather than as one number so no screen has to subtract a

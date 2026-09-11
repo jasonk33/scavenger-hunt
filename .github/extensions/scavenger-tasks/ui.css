@@ -120,7 +120,7 @@ textarea { width: 100%; resize: vertical; }
 
 /* One line, always the same, replacing a publish banner that used to have six
  * states. Nothing here is staged, so there is no state to report -- but the fact
- * that a slider moves what a player sees still has to be on screen. */
+ * that an edit changes what a player sees still has to be on screen. */
 
 .live-note {
   margin: 8px 0 0;
@@ -147,20 +147,6 @@ textarea { width: 100%; resize: vertical; }
 .balance th:first-child, .balance td:first-child { text-align: left; }
 .balance thead th { color: var(--text-color-muted, #59636e); font-weight: var(--font-weight-semibold, 600); }
 .balance tbody tr + tr td { border-top: 1px solid var(--border-color-default, #d1d9e0); }
-
-.model {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-color-default, #d1d9e0);
-  color: var(--text-color-muted, #59636e);
-}
-
-.model input[type="number"] { width: 52px; }
-.model label { display: inline-flex; align-items: center; gap: 4px; }
 
 /* ── Planner tabs ─────────────────────────────────────────────────────────── */
 
@@ -237,28 +223,6 @@ textarea { width: 100%; resize: vertical; }
 .tier.t7  { background: var(--true-color-yellow-muted, #fff8c5); color: var(--true-color-orange, #bc4c00); }
 .tier.t10 { background: var(--true-color-red-muted, #ffebe9);    color: var(--true-color-red, #cf222e); }
 
-.tier.suggested { border: 1px dashed currentColor; background: transparent; }
-/* The suggestion is an offer, so it has to look pressable. */
-.tier.suggested { cursor: pointer; }
-.tier.suggested:hover, .tier.suggested:focus-visible { border-style: solid; }
-
-.tier-dismiss {
-  flex: none;
-  padding: 0 5px;
-  line-height: 1.4;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-color-muted, #59636e);
-  cursor: pointer;
-  font-size: 13px;
-}
-.tier-dismiss:hover, .tier-dismiss:focus-visible {
-  border-color: var(--border-color-default, #d1d9e0);
-  color: var(--text-color-default, #1f2328);
-}
-.arrow { flex: none; color: var(--text-color-muted, #59636e); font-size: var(--text-body-small, 12px); }
-
 .title {
   flex: 1;
   min-width: 0;
@@ -282,7 +246,6 @@ textarea { width: 100%; resize: vertical; }
 }
 
 .chip.warn  { background: var(--true-color-yellow-muted, #fff8c5); color: var(--true-color-orange, #bc4c00); }
-.chip.alert { background: var(--true-color-red-muted, #ffebe9);    color: var(--true-color-red, #cf222e); }
 
 .shown { flex: none; }
 .shown button { min-width: 22px; padding: 2px 5px; }
@@ -292,34 +255,10 @@ textarea { width: 100%; resize: vertical; }
 .seg.round { flex: none; }
 .seg.round button { min-width: 26px; padding: 2px 5px; }
 .seg.round button:disabled { cursor: default; opacity: 0.6; }
-/* Its siblings are hidden when it shows, so `button + button` would draw a
-   divider with nothing on the other side of it. */
-.seg.round button.round-both { border-left: 0; color: var(--text-color-muted, #59636e); font-style: italic; }
 
 /* ── Expanded body ───────────────────────────────────────────────────────── */
 
 .body { padding: 2px 0 12px 22px; }
-
-.sliders {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 2px 14px;
-  margin-bottom: 8px;
-}
-
-.slider {
-  display: grid;
-  grid-template-columns: 62px 1fr 14px;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--text-body-small, 12px);
-}
-
-.slider > span:first-child { color: var(--text-color-muted, #59636e); }
-.slider input { width: 100%; margin: 0; accent-color: var(--true-color-blue, #0969da); }
-.slider .val { font-variant-numeric: tabular-nums; text-align: right; }
-.slider.payoff input { accent-color: var(--true-color-green, #1a7f37); }
-.slider.risk input { accent-color: var(--true-color-red, #cf222e); }
 
 .meta {
   display: flex;
@@ -330,6 +269,7 @@ textarea { width: 100%; resize: vertical; }
 }
 
 .field { display: inline-flex; flex-direction: column; gap: 2px; }
+.field[hidden] { display: none; }
 .field.grow { flex: 1; min-width: 130px; }
 .field > span { color: var(--text-color-muted, #59636e); font-size: var(--text-body-small, 12px); }
 
@@ -499,40 +439,6 @@ textarea { width: 100%; resize: vertical; }
   align-items: flex-end;
   gap: 10px;
   padding-top: 8px;
-}
-
-.task-add-ratings {
-  flex: 1 1 100%;
-}
-
-.task-add-ratings-title {
-  display: block;
-  margin-bottom: 4px;
-}
-
-.task-add-rating-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 2px 14px;
-}
-
-.task-add-rating {
-  display: grid;
-  grid-template-columns: 62px 1fr 14px;
-  align-items: center;
-  gap: 6px;
-}
-
-.task-add-rating input {
-  width: 100%;
-  margin: 0;
-  accent-color: var(--true-color-blue, #0969da);
-}
-
-.task-add-rating output {
-  color: var(--text-color-default, #1f2328);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
 }
 
 .add-box .grow {
