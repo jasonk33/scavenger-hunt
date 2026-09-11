@@ -11,7 +11,8 @@ export async function GET() {
   const settings = await getSettings();
   const sb = db();
 
-  const [{ data: players }, { data: teams }, { data: roster }, { data: tasks }, { data: subs }] =
+  const [{ data: players, error: playersError }, { data: teams, error: teamsError },
+    { data: roster, error: rosterError }, { data: tasks, error: tasksError }, { data: subs, error: subsError }] =
     await Promise.all([
       sb.from("players").select("id,name").order("name"),
       sb.from("teams").select("id,round,name,color,sort_order").order("round").order("sort_order"),
@@ -24,6 +25,9 @@ export async function GET() {
         .order("id"),
       sb.from("submissions").select("id,round,status,object_name,created_at,player_id,task_id"),
     ]);
+  if (playersError || teamsError || rosterError || tasksError || subsError) {
+    return fail("Couldn't load event data. Try again.", 503);
+  }
 
   const all = subs ?? [];
   // Rows stuck in `uploading` are submissions whose bytes may or may not have

@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { eventState } from "@/lib/event";
-import { groupKey } from "@/lib/groups";
+import { decisionKey } from "@/lib/scored-entries.mjs";
 import { json, fail } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
     { data: players, error: playersError },
   ] = await Promise.all([
     sb.from("team_scores").select("*").eq("round", round),
-    sb.from("submissions").select("id,group_id,team_id").eq("round", round).eq("status", "pending"),
+    sb.from("submissions").select("id,group_id,team_id,status,judged_at").eq("round", round).eq("status", "pending"),
     sb.from("roster").select("team_id,player_id").eq("round", round),
     sb.from("players").select("id,name"),
   ]);
@@ -50,7 +50,7 @@ export async function GET(req: Request) {
   const pendingGroups = new Map<string, Set<string>>();
   for (const p of pending ?? []) {
     const seen = pendingGroups.get(p.team_id) ?? new Set<string>();
-    seen.add(groupKey(p));
+    seen.add(decisionKey(p));
     pendingGroups.set(p.team_id, seen);
   }
 
@@ -69,7 +69,7 @@ export async function GET(req: Request) {
   return json({
     round,
     activeRound: startedRound,
-    totalPending: new Set((pending ?? []).map(groupKey)).size,
+    totalPending: new Set((pending ?? []).map(decisionKey)).size,
     rows,
   });
 }

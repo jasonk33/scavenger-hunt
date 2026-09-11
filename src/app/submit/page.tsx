@@ -592,6 +592,10 @@ export default function SubmitPage() {
     });
   };
 
+  const saveJobNote = (anchorId: string, note: string) => {
+    setJob((current) => current?.anchorId === anchorId ? { ...current, note } : current);
+  };
+
   if (!me) return <p className="muted" style={{ marginTop: 24 }}>Loading…</p>;
 
   const s = data?.stats;
@@ -816,6 +820,7 @@ export default function SubmitPage() {
           showTitle
           onClose={() => setJob(null)}
           onCancel={cancelUpload}
+          onNoteSaved={saveJobNote}
           onAddAnother={() =>
             pickFor(job.task, job.anchorId ? { anchorId: job.anchorId, note: job.note } : undefined)
           }
@@ -1030,6 +1035,7 @@ export default function SubmitPage() {
                 job={job?.task.id === t.id ? job : null}
                 onJobClose={() => setJob(null)}
                 onJobCancel={cancelUpload}
+                onNoteSaved={saveJobNote}
                 disabled={uploadBlocked}
                 playerId={me.id}
                 saved={saved.has(t.id)}
@@ -1062,6 +1068,7 @@ function TaskRow({
   job,
   onJobClose,
   onJobCancel,
+  onNoteSaved,
   disabled,
   playerId,
   saved,
@@ -1076,6 +1083,7 @@ function TaskRow({
   job: Job | null;
   onJobClose: () => void;
   onJobCancel: () => void;
+  onNoteSaved: (anchorId: string, note: string) => void;
   disabled: boolean;
   playerId: string;
   saved: boolean;
@@ -1242,6 +1250,7 @@ function TaskRow({
           job={job}
           onClose={onJobClose}
           onCancel={onJobCancel}
+          onNoteSaved={onNoteSaved}
           onAddAnother={() => job.anchorId && onAddTo(job.anchorId, job.note)}
           addAnotherBlocked={disabled}
         />
@@ -1400,13 +1409,20 @@ function NoteEditor({
 }: {
   submissionId: string;
   initial: string;
-  onSaved?: () => void;
+  onSaved?: (note: string) => void;
 }) {
   const [text, setText] = useState(initial);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   // What the server is known to hold. Compared against on every blur so
   // re-blurring an unchanged box doesn't fire a pointless write.
   const stored = useRef(initial);
+
+  useEffect(() => {
+    const previous = stored.current;
+    if (previous === initial) return;
+    stored.current = initial;
+    setText((current) => current === previous ? initial : current);
+  }, [initial]);
 
   const save = async () => {
     const value = text.trim();
@@ -1419,7 +1435,7 @@ function NoteEditor({
       });
       stored.current = value;
       setState("saved");
-      onSaved?.();
+      onSaved?.(value);
     } catch {
       setState("error");
     }
@@ -1470,6 +1486,7 @@ function JobCard({
   showTitle = false,
   onClose,
   onCancel,
+  onNoteSaved,
   onAddAnother,
   addAnotherBlocked,
 }: {
@@ -1479,6 +1496,7 @@ function JobCard({
   showTitle?: boolean;
   onClose: () => void;
   onCancel: () => void;
+  onNoteSaved: (anchorId: string, note: string) => void;
   onAddAnother: () => void;
   addAnotherBlocked: boolean;
 }) {
@@ -1553,12 +1571,14 @@ function JobCard({
 
       {job.status === "error" && (
         <div>
-          <b className="bad">Didn&apos;t send.</b>
+          <b className="bad">{job.sent ? "Upload needs attention." : "Didn't send."}</b>
           <p className="tiny" style={{ margin: "4px 0 10px" }}>
             {job.message}
           </p>
           <p className="tiny muted" style={{ margin: "0 0 10px" }}>
-            Your photo is still on your phone. Try again, or text it to an organizer.
+            {job.sent
+              ? "Your photo is still on your phone. Check with an organizer before sending it again."
+              : "Your photo is still on your phone. Try again, or text it to an organizer."}
           </p>
           <button className="btn btn-sm" onClick={onClose}>
             Dismiss
@@ -1571,7 +1591,12 @@ function JobCard({
           exists from the moment it is reserved, so this is live before the bytes
           have finished moving. */}
       {job.anchorId && job.status !== "error" && (
-        <NoteEditor key={job.anchorId} submissionId={job.anchorId} initial={job.note} />
+        <NoteEditor
+          key={job.anchorId}
+          submissionId={job.anchorId}
+          initial={job.note}
+          onSaved={(note) => { if (job.anchorId) onNoteSaved(job.anchorId, note); }}
+        />
       )}
 
       {/* Some tasks need two photos, or a photo and the clip that explains it.

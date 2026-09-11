@@ -19,7 +19,8 @@ export async function GET(req: Request) {
   const format = new URL(req.url).searchParams.get("format") ?? "json";
   const sb = db();
 
-  const [{ data: subs }, { data: tasks }, { data: teams }, { data: players }, { data: scores }] =
+  const [{ data: subs, error: subsError }, { data: tasks, error: tasksError },
+    { data: teams, error: teamsError }, { data: players, error: playersError }, { data: scores, error: scoresError }] =
     await Promise.all([
       sb.from("submissions").select("*").order("created_at"),
       sb.from("tasks").select("*").order("round").order("sort_order").order("id"),
@@ -27,6 +28,9 @@ export async function GET(req: Request) {
       sb.from("players").select("*").order("name"),
       sb.from("team_scores").select("*"),
     ]);
+  if (subsError || tasksError || teamsError || playersError || scoresError) {
+    return fail("Couldn't load the complete export. Try again.", 503);
+  }
 
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
   const teamById = new Map((teams ?? []).map((t) => [t.id, t]));
@@ -64,18 +68,9 @@ export async function GET(req: Request) {
     // it has to carry the same dedup or a team gets credited twice and the
     // wrong team can win. `counts` is 1 only on the row that actually scores.
     //
-    // Same tiebreak as the view: the approval judged MOST RECENTLY wins, not the
-    // highest one. Getting this wrong here is worse than getting it wrong on a
-    // screen, because a spreadsheet total is what gets read out at the awards.
-    const best = new Map<string, { id: string; at: string }>();
-    for (const r of rows) {
-      if (r.status !== "approved") continue;
-      const k = `${r.round}:${r.team}:${r.task}`;
-      const at = `${r.judgedAt ?? ""}|${r.createdAt}|${r.id}`;
-      const prev = best.get(k);
-      if (!prev || at > prev.at) best.set(k, { id: r.id, at });
-    }
-    const counted = new Set([...best.values()].map((b) => b.id));
+    // Reuse the scoring selection, which keys by IDs, not mutable team names
+    // or task titles. Different tasks are allowed to have identical wording.
+    const counted = new Set(effectiveById.keys());
 
     const cols = [
       "round", "team", "player", "task", "status", "pointsAwarded",

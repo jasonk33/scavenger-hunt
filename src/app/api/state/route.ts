@@ -1,6 +1,6 @@
 import { db, mediaUrl, uploadConfig } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
-import { groupKey } from "@/lib/groups";
+import { decisionKey } from "@/lib/scored-entries.mjs";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { eventState } from "@/lib/event";
 import { awardedBreakdown, competitionWinners, scoreApproved } from "@/lib/scoring.mjs";
@@ -8,8 +8,8 @@ import { awardedBreakdown, competitionWinners, scoreApproved } from "@/lib/scori
 export const dynamic = "force-dynamic";
 
 /** How many distinct pieces of evidence these rows amount to. */
-const countGroups = (rows: Array<{ id: string; group_id: string | null }>) =>
-  new Set(rows.map(groupKey)).size;
+const countGroups = (rows: Array<{ id: string; group_id: string | null; team_id: string; status: string; judged_at: string | null }>) =>
+  new Set(rows.map(decisionKey)).size;
 
 /**
  * The single endpoint the player app polls every 5 seconds. One round trip
@@ -25,25 +25,25 @@ export async function GET(req: Request) {
   const round = settings.active_round;
   const sb = db();
 
-  // Secret challenges are hidden until an organizer reveals them. Filtering here
-  // rather than in the client means an unrevealed task never reaches the browser.
+  // Score with all task metadata: cutting or re-hiding a task cannot remove a
+  // bonus already awarded. Filter visibility before returning tasks below.
   const tasksQ = sb
     .from("tasks")
-    .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,winner_team_id,requires_video,is_secret,revealed_at,sort_order")
+    .select("id,round,title,points,scoring_mode,measurement_label,points_per_unit,competition_bonus,winner_team_id,requires_video,is_secret,revealed_at,sort_order,active")
     .eq("round", round)
-    .eq("active", true)
     // id only breaks ties. sort_order is derived from (is_secret, points,
     // doc_order), so two tasks CAN share one -- and an unstable order on a list
     // polled every 5 seconds would visibly reshuffle under the player's thumb.
     .order("sort_order")
     .order("id");
 
-  const [{ data: tasksRaw }, { data: teams }] = await Promise.all([
+  const [{ data: tasksRaw, error: tasksError }, { data: teams, error: teamsError }] = await Promise.all([
     tasksQ,
     sb.from("teams").select("id,round,name,color,sort_order").eq("round", round).order("sort_order"),
   ]);
+  if (tasksError || teamsError) return fail("Couldn't load your team's progress. Try again.", 503);
 
-  const tasks = (tasksRaw ?? []).filter((t) => !t.is_secret || t.revealed_at);
+  const tasks = (tasksRaw ?? []).filter((t) => t.active && (!t.is_secret || t.revealed_at));
   /*
    * Who won each leader bonus, once an organizer has said so. This used to be a
    * second query over every approved submission for every competition task, to
@@ -83,16 +83,18 @@ export async function GET(req: Request) {
   let submitterName = new Map<string, string>();
 
   if (playerId) {
-    const { data: p } = await sb.from("players").select("id,name").eq("id", playerId).maybeSingle();
+    const { data: p, error: playerError } = await sb.from("players").select("id,name").eq("id", playerId).maybeSingle();
+    if (playerError) return fail("Couldn't load your player details. Try again.", 503);
     me = p ?? null;
 
     if (me) {
-      const { data: r } = await sb
+      const { data: r, error: rosterError } = await sb
         .from("roster")
         .select("team_id")
         .eq("round", round)
         .eq("player_id", playerId)
         .maybeSingle();
+      if (rosterError) return fail("Couldn't load your team assignment. Try again.", 503);
 
       if (r) team = (teams ?? []).find((t) => t.id === r.team_id) ?? null;
 
@@ -105,7 +107,7 @@ export async function GET(req: Request) {
         // competition bonus, so dropping it from the select silently pays the
         // winning team nothing on their own task list while the leaderboard
         // shows the higher total -- the exact split the comment below warns of.
-        const { data: subs } = await sb
+        const { data: subs, error: submissionsError } = await sb
           .from("submissions")
           .select(
             "id,task_id,team_id,status,points_awarded,created_at,judged_at,reject_reason,player_id,object_name,media_type,group_id,note,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot"
@@ -113,6 +115,7 @@ export async function GET(req: Request) {
           .eq("round", round)
           .eq("team_id", team.id)
           .order("created_at", { ascending: false });
+        if (submissionsError) return fail("Couldn't load your team's submissions. Try again.", 503);
         mine = subs ?? [];
 
         // Scoped to the handful of people who actually submitted rather than
@@ -120,10 +123,11 @@ export async function GET(req: Request) {
         // phone every 5 seconds.
         const submitterIds = [...new Set(mine.map((s) => s.player_id))];
         if (submitterIds.length > 0) {
-          const { data: submitters } = await sb
+          const { data: submitters, error: submittersError } = await sb
             .from("players")
             .select("id,name")
             .in("id", submitterIds);
+          if (submittersError) return fail("Couldn't load the submission names. Try again.", 503);
           submitterName = new Map((submitters ?? []).map((p) => [p.id, p.name]));
         }
       }
@@ -140,8 +144,8 @@ export async function GET(req: Request) {
    * If these two ever disagree, a team sees one score on their own task list and
    * a different one on the leaderboard.
    */
-  const scoredRows = scoreApproved(mine, tasks) as Array<{
-    row: { id: string; task_id: string; group_id: string | null };
+  const scoredRows = scoreApproved(mine, tasksRaw ?? []) as Array<{
+    row: { id: string; task_id: string; group_id: string | null; team_id: string; status: string; judged_at: string | null };
     points: number;
     base: number;
     bonus: number;
@@ -157,7 +161,7 @@ export async function GET(req: Request) {
      evidence that earned it. */
   const rankedByGroup = new Map(
     scoredRows.map(({ row, base, bonus, points }) => [
-      groupKey(row),
+      decisionKey(row),
       { base, bonus, total: points },
     ])
   );
@@ -168,7 +172,7 @@ export async function GET(req: Request) {
   const splitById = new Map(
     mine
       .filter((s) => s.status === "approved")
-      .map((s) => [s.id, rankedByGroup.get(groupKey(s)) ?? awardedBreakdown(s)])
+      .map((s) => [s.id, rankedByGroup.get(decisionKey(s)) ?? awardedBreakdown(s)])
   );
 
   /**
@@ -219,7 +223,7 @@ export async function GET(req: Request) {
       basePoints: splitById.get(s.id)?.base ?? null,
       bonusPoints: splitById.get(s.id)?.bonus ?? 0,
       // What ties several files into one piece of evidence.
-      groupId: groupKey({ id: s.id, group_id }),
+      groupId: decisionKey({ ...s, group_id }),
       mediaUrl: mediaUrl(object_name),
       isVideo: isVideoObject(media_type, object_name),
       playerName: submitterName.get(s.player_id) ?? "a teammate",

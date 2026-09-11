@@ -2,8 +2,7 @@ import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { eventState } from "@/lib/event";
 import { json, fail, isVideoObject } from "@/lib/http";
-import { groupKey } from "@/lib/groups";
-import { winningGroups } from "@/lib/scored-entries.mjs";
+import { decisionKey, winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
 import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
@@ -69,7 +68,7 @@ export async function GET(req: Request) {
      made over however many files the team sent. */
   const splitByGroup = new Map(
     scoreApproved(submissions ?? [], [task]).map(({ row, base, bonus }) => [
-      groupKey(row),
+      decisionKey(row),
       { base, bonus },
     ])
   );
@@ -100,7 +99,7 @@ export async function GET(req: Request) {
     .map((files) => {
       const first = files[0];
       const team = teamById.get(first.team_id);
-      const split = splitByGroup.get(groupKey(first)) ?? awardedBreakdown(first);
+      const split = splitByGroup.get(decisionKey(first)) ?? awardedBreakdown(first);
       return {
         sortOrder: teamOrder.get(first.team_id) ?? Number.MAX_SAFE_INTEGER,
         entry: {

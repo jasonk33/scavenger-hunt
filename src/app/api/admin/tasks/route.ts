@@ -199,8 +199,8 @@ export async function PATCH(req: Request) {
 }
 
 /**
- * Tasks with submissions are deactivated rather than deleted -- a hard delete
- * would cascade and silently destroy scored evidence.
+ * Cutting a task always deactivates it. Never hard-delete a row that evidence
+ * can reference, including evidence arriving after a submission-count check.
  *
  * Scoped by slug, so a secret challenge goes from both rounds at once. Removing
  * it from one would leave the other half of the event still offering it, and the
@@ -211,27 +211,11 @@ export async function DELETE(req: Request) {
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return fail("id required.");
 
-  const { data: found } = await db().from("tasks").select("slug").eq("id", id).maybeSingle();
+  const { data: found, error: readError } = await db().from("tasks").select("slug").eq("id", id).maybeSingle();
+  if (readError) return fail("Couldn't load that task. Try again.", 503);
   if (!found) return fail("No such task.", 404);
 
-  const { data: rows, error: readError } = await db().from("tasks").select("id").eq("slug", found.slug);
-  if (readError) return fail(readError.message, 500);
-  // Never an empty list: `in("id", [])` matches nothing, so a failed read would
-  // delete nothing and still report a deletion.
-  const ids = rows?.length ? rows.map((r) => r.id) : [id];
-
-  const { count } = await db()
-    .from("submissions")
-    .select("id", { count: "exact", head: true })
-    .in("task_id", ids);
-
-  if (count) {
-    const { error } = await db().from("tasks").update({ active: false }).in("id", ids);
-    if (error) return fail(error.message, 500);
-    return json({ ok: true, deactivated: true, submissions: count });
-  }
-
-  const { error } = await db().from("tasks").delete().in("id", ids);
+  const { error } = await db().from("tasks").update({ active: false }).eq("slug", found.slug);
   if (error) return fail(error.message, 500);
-  return json({ ok: true, deleted: true });
+  return json({ ok: true, deactivated: true });
 }

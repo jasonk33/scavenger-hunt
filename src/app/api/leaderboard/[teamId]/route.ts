@@ -2,8 +2,7 @@ import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { eventState } from "@/lib/event";
 import { json, fail, isVideoObject } from "@/lib/http";
-import { groupKey } from "@/lib/groups";
-import { winningGroups } from "@/lib/scored-entries.mjs";
+import { decisionKey, winningGroups } from "@/lib/scored-entries.mjs";
 import type { Database } from "@/lib/database.types";
 import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
@@ -67,12 +66,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
         .in("task_id", taskIds)
         .eq("status", "approved"),
     ]);
+    if (result.some((read) => read.error)) return fail("Couldn't load that team's scores right now. Try again.", 503);
     taskRows = result[0].data ?? [];
     allApproved = result[1].data ?? [];
   }
   const scored = scoreApproved(allApproved ?? [], taskRows ?? []);
   const pointsById = new Map(
-    scored.map(({ row, points, base, bonus }) => [groupKey(row), { total: points, base, bonus }])
+    scored.map(({ row, points, base, bonus }) => [decisionKey(row), { total: points, base, bonus }])
   );
   const groups = winningGroups(teamSubmissions) as SubmissionRow[][];
   const groupTaskIds = [...new Set(groups.map((files) => files[0].task_id))];
@@ -114,7 +114,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ teamId: string 
       const task = taskById.get(first.task_id);
       /* By group, for the reason spelled out in /api/feed: only the newest row
          inside a group scores, and `first` is the oldest. */
-      const split = pointsById.get(groupKey(first)) ?? awardedBreakdown(first);
+      const split = pointsById.get(decisionKey(first)) ?? awardedBreakdown(first);
       return {
         judgedAt: judgedAt(files),
         entry: {

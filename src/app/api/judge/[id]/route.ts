@@ -212,7 +212,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
    * turning the whole call into an error. Requiring every member to match would
    * have made that late arrival block the decision outright.
    */
-  let write = sb.from("submissions").update(patch).in("id", memberIds).eq("status", existing.status);
+  let write = sb.from("submissions").update(patch).in("id", memberIds)
+    .eq("status", existing.status).eq("team_id", existing.team_id);
   write =
     existing.judged_at === null
       ? write.is("judged_at", null)

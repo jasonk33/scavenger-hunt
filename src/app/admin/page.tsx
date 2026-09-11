@@ -56,14 +56,22 @@ function Admin() {
   const { data, error, reload } = usePoll<AdminData>("/api/admin/data", 8000);
   const [tab, setTab] = useState<"event" | "roster" | "tasks" | "health">("event");
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const writing = useRef(false);
 
   const run = async (fn: () => Promise<unknown>) => {
+    if (writing.current) return;
+    writing.current = true;
+    setBusy(true);
     setErr("");
     try {
       await fn();
       await reload();
     } catch (e) {
       setErr(errorMessage(e, "Failed"));
+    } finally {
+      writing.current = false;
+      setBusy(false);
     }
   };
 
@@ -88,10 +96,13 @@ function Admin() {
       {err && <div className="card bad tiny">{err}</div>}
       {error && <div className="card card-bad tiny">Couldn&apos;t refresh event settings: {error}. Retrying.</div>}
 
-      {tab === "event" && <EventTab data={data} run={run} />}
-      {tab === "roster" && <RosterTab data={data} run={run} />}
-      {tab === "tasks" && <TasksTab data={data} run={run} />}
-      {tab === "health" && <HealthTab data={data} run={run} />}
+      {busy && <p className="muted tiny" role="status">Saving changes…</p>}
+      <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+        {tab === "event" && <EventTab data={data} run={run} />}
+        {tab === "roster" && <RosterTab data={data} run={run} />}
+        {tab === "tasks" && <TasksTab data={data} run={run} />}
+        {tab === "health" && <HealthTab data={data} run={run} />}
+      </fieldset>
     </>
   );
 }
@@ -235,6 +246,15 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
       })
     );
 
+  const rename = (id: string) =>
+    run(async () => {
+      await api("/api/admin/players", {
+        method: "PATCH",
+        body: JSON.stringify({ id, name: draft }),
+      });
+      setEditing((current) => current === id ? null : current);
+    });
+
   const unassigned = data.players.filter((p) => !assigned.get(p.id)).length;
 
   return (
@@ -292,13 +312,7 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && draft.trim()) {
-                      run(() =>
-                        api("/api/admin/players", {
-                          method: "PATCH",
-                          body: JSON.stringify({ id: p.id, name: draft }),
-                        })
-                      );
-                      setEditing(null);
+                      rename(p.id);
                     }
                     if (e.key === "Escape") setEditing(null);
                   }}
@@ -306,15 +320,7 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
                 <button
                   className="btn btn-sm btn-primary"
                   disabled={!draft.trim()}
-                  onClick={() => {
-                    run(() =>
-                      api("/api/admin/players", {
-                        method: "PATCH",
-                        body: JSON.stringify({ id: p.id, name: draft }),
-                      })
-                    );
-                    setEditing(null);
-                  }}
+                  onClick={() => rename(p.id)}
                 >
                   Save
                 </button>
@@ -326,8 +332,10 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
                 <button
                   className="btn btn-sm btn-bad"
                   onClick={() => {
-                    run(() => api(`/api/admin/players?id=${p.id}`, { method: "DELETE" }));
-                    setEditing(null);
+                    run(async () => {
+                      await api(`/api/admin/players?id=${p.id}`, { method: "DELETE" });
+                      setEditing((current) => current === p.id ? null : current);
+                    });
                   }}
                 >
                   Delete
@@ -494,6 +502,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
   const [round, setRound] = useState(data.settings.active_round);
   const [title, setTitle] = useState("");
   const [points, setPoints] = useState(3);
+  const [secret, setSecret] = useState(false);
   const [scoringMode, setScoringMode] = useState<"fixed" | "quantity" | "competition">("fixed");
   const [measurementLabel, setMeasurementLabel] = useState("");
   const [pointsPerUnit, setPointsPerUnit] = useState(0);
@@ -515,8 +524,11 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
     [data.teams, round]
   );
 
-  const patch = (body: Record<string, unknown>) =>
-    run(() => api("/api/admin/tasks", { method: "PATCH", body: JSON.stringify(body) }));
+  const patch = (body: Record<string, unknown>, onSaved?: () => void) =>
+    run(async () => {
+      await api("/api/admin/tasks", { method: "PATCH", body: JSON.stringify(body) });
+      onSaved?.();
+    });
 
   return (
     <>
@@ -611,6 +623,13 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
               {p}
             </button>
           ))}
+          <button
+            className={`btn btn-sm ${secret ? "btn-primary" : ""}`}
+            aria-pressed={secret}
+            onClick={() => setSecret((value) => !value)}
+          >
+            secret
+          </button>
         </div>
         <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
           <select className="field" value={scoringMode} onChange={(e) => setScoringMode(e.target.value as typeof scoringMode)}>
@@ -639,7 +658,7 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
                   round,
                   title,
                   points,
-                  isSecret: points === 7,
+                  isSecret: secret,
                   scoringMode,
                   measurementLabel,
                   pointsPerUnit,
@@ -671,12 +690,15 @@ function TasksTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unkn
                 task={t}
                 onCancel={() => setEditing(null)}
                 onSave={(body) => {
-                  patch({ id: t.id, ...body });
-                  setEditing(null);
+                  patch({ id: t.id, ...body }, () => {
+                    setEditing((current) => current === t.id ? null : current);
+                  });
                 }}
                 onDelete={() => {
-                  run(() => api(`/api/admin/tasks?id=${t.id}`, { method: "DELETE" }));
-                  setEditing(null);
+                  run(async () => {
+                    await api(`/api/admin/tasks?id=${t.id}`, { method: "DELETE" });
+                    setEditing((current) => current === t.id ? null : current);
+                  });
                 }}
               />
             ) : (
@@ -897,8 +919,8 @@ function HealthTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
         {data.stuck.length === 0 && <span className="good tiny">None.</span>}
         <div style={{ display: "grid", gap: 8 }}>
           {data.stuck.map((s) => (
-            <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <div className="tiny" style={{ flex: 1, minWidth: 0 }}>
+            <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div className="tiny name" style={{ flex: "1 1 100%" }}>
                 R{s.round} · <b>{s.playerName}</b> · {s.taskTitle}
                 <br />
                 <span className="muted">{new Date(s.createdAt).toLocaleTimeString()}</span>

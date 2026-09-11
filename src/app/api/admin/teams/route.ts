@@ -83,27 +83,31 @@ export async function DELETE(req: Request) {
   if (!id) return fail("id required.");
 
   const sb = db();
-  const { data: team } = await sb.from("teams").select("id,name").eq("id", id).maybeSingle();
+  const { data: team, error: teamError } = await sb.from("teams").select("id,name").eq("id", id).maybeSingle();
+  if (teamError) return fail("Couldn't load that team. Try again.", 503);
   if (!team) return fail("Team not found.", 404);
 
-  const { data: pair } = await sb.from("teams").select("id").eq("name", team.name);
+  const { data: pair, error: pairError } = await sb.from("teams").select("id").eq("name", team.name);
+  if (pairError) return fail("Couldn't load the matching teams. Try again.", 503);
   const ids = (pair ?? []).map((t) => t.id);
   if (!ids.length) return fail("Team not found.", 404);
 
-  const { count } = await sb
+  const { count, error: countError } = await sb
     .from("submissions")
     .select("id", { count: "exact", head: true })
     .in("team_id", ids);
+  if (countError || count === null) return fail("Couldn't check that team's submissions. Try again.", 503);
   if (count) {
     return fail(`"${team.name}" has ${count} submission(s). Deleting it would delete those too.`, 409);
   }
 
   // roster.team_id cascades, so members are silently unassigned. Say so rather
   // than letting players discover it when they cannot submit.
-  const { count: rostered } = await sb
+  const { count: rostered, error: rosterError } = await sb
     .from("roster")
     .select("player_id", { count: "exact", head: true })
     .in("team_id", ids);
+  if (rosterError || rostered === null) return fail("Couldn't check that team's roster. Try again.", 503);
 
   const { error } = await sb.from("teams").delete().in("id", ids);
   if (error) return fail(error.message, 500);

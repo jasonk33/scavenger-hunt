@@ -49,10 +49,11 @@ export async function DELETE(req: Request) {
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return fail("id required.");
 
-  const { count } = await db()
+  const { count, error: countError } = await db()
     .from("submissions")
     .select("id", { count: "exact", head: true })
     .eq("player_id", id);
+  if (countError || count === null) return fail("Couldn't check that player's submissions. Try again.", 503);
   if (count) return fail(`That player has ${count} submissions. Removing them would delete those too.`, 409);
 
   const { error } = await db().from("players").delete().eq("id", id);

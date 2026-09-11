@@ -70,6 +70,15 @@ let stateHeld = false;
 let queueReads = 0;
 let healthReads = 0;
 let stateReads = 0;
+let taskSaveError = false;
+let playerSaveError = false;
+let promotionError = false;
+let noteError = false;
+let feedHeld = false;
+let uploads = 0;
+let holdTaskWrite = false;
+let releaseTaskWrite = null;
+let stuck = [];
 const refused = [];
 const pageErrors = [];
 const mutations = [];
@@ -86,7 +95,7 @@ const state = () => ({
     points_awarded: i.pointsAwarded, basePoints: i.awardedBase, bonusPoints: i.awardedBonus,
     measurement_value: i.measurementValue, reject_reason: i.rejectReason,
     created_at: `2026-09-11T12:00:0${index}.000Z`, judged_at: "2026-09-11T12:01:00.000Z",
-    groupId: i.id, note: i.note, mediaUrl: m.url, isVideo: m.isVideo, playerName: me.name,
+    groupId: i.groupId ?? i.id, note: i.note, mediaUrl: m.url, isVideo: m.isVideo, playerName: me.name,
   }))),
   stats: { submitted: items.length, pending: items.filter((i) => i.status === "pending").length,
     approved: entries().length, rejected: items.filter((i) => i.status === "rejected").length,
@@ -100,7 +109,7 @@ const adminData = () => ({
   settings: { active_round: event().activeRound, started_round: event().startedRound,
     submissions_open: event().submissionsOpen, event_name: "__qa Birthday", notice: "" },
   players: [me, mate], teams, roster: [me, mate].map((p) => ({ round: 1, player_id: p.id, team_id: "t1" })),
-  tasks, stuck: [], counts: { "1": { total: items.length, uploading: 0, pending: 2, approved: 1, rejected: 1 } },
+  tasks, stuck, counts: { "1": { total: items.length, uploading: stuck.length, pending: 2, approved: 1, rejected: 1 } },
   resetEnabled: false,
 });
 const browser = await chromium.launch({ headless: process.env.PW_HEADLESS === "true" });
@@ -112,6 +121,8 @@ try {
     localStorage.setItem("sh.player", JSON.stringify(player));
     const interval = window.setInterval.bind(window);
     window.setInterval = (fn, ms, ...args) => interval(fn, ms >= 2000 ? 150 : ms, ...args);
+    const timeout = window.setTimeout.bind(window);
+    window.setTimeout = (fn, ms, ...args) => timeout(fn, window.__fastTimeouts && ms === 15000 ? 300 : ms, ...args);
   }, me);
   await ctx.route("**/*", async (route) => {
     const req = route.request();
@@ -166,9 +177,12 @@ try {
         return healthError ? respond({ error: "Health service unavailable" }, 503)
           : respond({ ok: true, checks: [{ name: "Offline sample", ok: true, detail: "Fixture response, not a live health check" }] });
       }
-      if (url.pathname === "/api/feed") return respond({ round: 1, items: entries().concat(
-        items.filter((i) => i.status === "rejected").map((i) => ({ ...i, basePoints: 0, bonusPoints: 0 })),
-      ) });
+      if (url.pathname === "/api/feed") {
+        while (feedHeld) await sleep(10);
+        return respond({ round: 1, items: entries().concat(
+          items.filter((i) => i.status === "rejected").map((i) => ({ ...i, basePoints: 0, bonusPoints: 0 })),
+        ) });
+      }
       if (url.pathname === "/api/leaderboard") return respond({
         round: 1, activeRound: event().startedRound, totalPending: 2,
         rows: teams.filter((t) => t.round === 1).map((t) => ({
@@ -192,9 +206,32 @@ try {
         return respond({ ok: true });
       }
       if (url.pathname === "/api/admin/tasks" && req.method() === "PATCH") {
+        if (holdTaskWrite) {
+          holdTaskWrite = false;
+          await new Promise((resolve) => { releaseTaskWrite = resolve; });
+        }
+        if (taskSaveError) return respond({ error: "Task changes could not be saved" }, 503);
         const t = tasks.find((t) => t.id === body.id);
         if (body.title !== undefined) t.title = body.title;
         if (body.revealed !== undefined) t.revealed_at = body.revealed ? "2026-09-11" : null;
+        if (body.active !== undefined) t.active = body.active;
+        return respond({ ok: true });
+      }
+      if (url.pathname === "/api/admin/tasks" && req.method() === "DELETE") {
+        const t = tasks.find((t) => t.id === url.searchParams.get("id"));
+        assert(t, "Only a sample task can be cut");
+        t.active = false;
+        return respond({ ok: true, deactivated: true });
+      }
+      if (url.pathname === "/api/admin/tasks" && req.method() === "POST") {
+        const t = { ...tasks[0], id: `created-${tasks.length}`, title: body.title,
+          points: body.points, round: body.round, is_secret: body.isSecret };
+        tasks.push(t);
+        return respond({ id: t.id });
+      }
+      if (url.pathname === "/api/admin/players" && req.method() === "PATCH") {
+        if (playerSaveError) return respond({ error: "Player changes could not be saved" }, 503);
+        Object.assign(body.id === me.id ? me : mate, { name: body.name });
         return respond({ ok: true });
       }
       if (url.pathname.startsWith("/api/judge/")) {
@@ -216,14 +253,26 @@ try {
         return respond({ ok: true });
       }
       if (url.pathname === "/api/submissions") {
-        const i = item("upload1", tasks.findIndex((t) => t.id === body.taskId), "uploading");
+        const anchor = items.find((i) => i.id === body.groupWith);
+        const id = `upload${++uploads}`;
+        const video = /\.(mov|mp4)$/i.test(body.fileName);
+        const i = item(id, tasks.findIndex((t) => t.id === body.taskId), "uploading", {
+          groupId: anchor?.groupId ?? anchor?.id, note: anchor?.note ?? "",
+          media: [media(id, video)],
+        });
         items.push(i);
-        return respond({ submissionId: i.id, objectName: "offline/photo.jpg", contentType: "image/jpeg" });
+        return respond({ submissionId: i.id, objectName: `offline/${body.fileName}`, contentType: video ? "video/mp4" : "image/jpeg" });
       }
-      if (url.pathname === "/api/submissions/upload1") {
-        const i = items.find((i) => i.id === "upload1");
-        if (body.noteOnly) i.note = body.note;
-        else i.status = "pending";
+      if (url.pathname.startsWith("/api/submissions/")) {
+        const i = items.find((i) => i.id === url.pathname.split("/").at(-1));
+        assert(i, "Only a sample submission can be changed");
+        if (body.noteOnly) {
+          if (noteError) return respond({ error: "Note could not be saved" }, 503);
+          for (const sibling of items.filter((s) => (s.groupId ?? s.id) === (i.groupId ?? i.id))) sibling.note = body.note;
+        } else {
+          if (promotionError) return respond({ error: "Registration unavailable" }, 503);
+          i.status = "pending";
+        }
         return respond({ ok: true });
       }
     }
@@ -231,6 +280,8 @@ try {
     return route.abort("blockedbyclient");
   });
   const page = await ctx.newPage();
+  page.setDefaultTimeout(1800);
+  page.setDefaultNavigationTimeout(10000);
   page.on("pageerror", (e) => pageErrors.push(e.message));
   page.on("dialog", (dialog) => dialog.accept());
   const check = async (name, fn) => {
@@ -242,7 +293,7 @@ try {
       await page.screenshot({ path: `qa/shots/bug-bash-failure-${checks}.png`, fullPage: false });
     }
   };
-  const shot = (name) => page.screenshot({ path: `qa/shots/bug-bash-${name}.png`, fullPage: true });
+  const shot = (name) => page.screenshot({ path: `qa/shots/bug-bash-${name}.png`, fullPage: false });
   const fits = async () => {
     const overflow = await page.locator("body *").evaluateAll((nodes) => nodes.filter((node) => {
       const r = node.getBoundingClientRect();
@@ -512,14 +563,187 @@ try {
   await page.goto(`${BASE}/feed`);
   await expect(page.getByText(tasks[3].title, { exact: true })).toBeVisible();
   await shot("feed-dark-mobile");
+
+  await page.goto(`${BASE}/admin`);
+  await page.getByRole("button", { name: "tasks", exact: true }).click();
+  await check("A failed task edit keeps the editor and draft available for retry", async () => {
+    const title = tasks[0].title;
+    taskSaveError = true;
+    try {
+      await page.getByRole("button", { name: new RegExp(`${title}.*edit`) }).click();
+      const draft = page.locator("textarea");
+      await draft.fill("__qa Corrected task wording");
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(page.getByText("Task changes could not be saved", { exact: true })).toBeVisible();
+      await expect(draft).toHaveValue("__qa Corrected task wording");
+      assert.equal(tasks[0].title, title);
+      taskSaveError = false;
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect.poll(() => tasks[0].title).toBe("__qa Corrected task wording");
+      await expect(draft).toHaveCount(0);
+    } finally {
+      taskSaveError = false;
+      await page.reload();
+      await page.getByRole("button", { name: "tasks", exact: true }).click();
+    }
+  });
+  await check("A normal seven-point task is not silently made secret", async () => {
+    const form = page.locator(".card").filter({ has: page.getByText("Add a task", { exact: true }) });
+    await form.getByPlaceholder("Task description").fill("__qa Public seven-point task");
+    await form.getByRole("button", { name: "7", exact: true }).click();
+    await form.getByRole("button", { name: "Add to Round 1", exact: true }).click();
+    await expect.poll(() => tasks.at(-1).title).toBe("__qa Public seven-point task");
+    assert.equal(tasks.at(-1).is_secret, false);
+  });
+  await check("A five-point secret is an explicit choice independent of its tier", async () => {
+    const form = page.locator(".card").filter({ has: page.getByText("Add a task", { exact: true }) });
+    await form.getByPlaceholder("Task description").fill("__qa Explicit five-point secret");
+    await form.getByRole("button", { name: "5", exact: true }).click();
+    await form.getByRole("button", { name: "secret", exact: true }).click();
+    await form.getByRole("button", { name: "Add to Round 1", exact: true }).click();
+    await expect.poll(() => tasks.at(-1).title).toBe("__qa Explicit five-point secret");
+    assert.equal(tasks.at(-1).points, 5);
+    assert.equal(tasks.at(-1).is_secret, true);
+  });
+  await check("A task being saved cannot accept edits that its response would discard", async () => {
+    await page.getByRole("button", { name: new RegExp(`${tasks[0].title}.*edit`) }).click();
+    const draft = page.locator("textarea");
+    await draft.fill("__qa Wording with a slow save");
+    holdTaskWrite = true;
+    try {
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect.poll(() => Boolean(releaseTaskWrite)).toBe(true);
+      await expect(draft).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    } finally {
+      releaseTaskWrite?.();
+      releaseTaskWrite = null;
+      await expect.poll(() => tasks[0].title).toBe("__qa Wording with a slow save");
+    }
+  });
+  await check("Removing and restoring a task keeps its evidence intact", async () => {
+    const evidenceCount = items.length;
+    const edit = () => page.getByRole("button", { name: new RegExp(`${tasks[0].title}.*edit`) }).click();
+    await edit();
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect.poll(() => tasks[0].active).toBe(false);
+    await edit();
+    await page.getByRole("button", { name: "Restore", exact: true }).click();
+    await expect.poll(() => tasks[0].active).toBe(true);
+    assert.equal(items.length, evidenceCount);
+  });
+  await page.getByRole("button", { name: "roster", exact: true }).click();
+  await check("A failed player rename keeps the typed name available for retry", async () => {
+    playerSaveError = true;
+    const oldName = me.name;
+    try {
+      await page.getByRole("button", { name: `${oldName} edit`, exact: true }).click();
+      const draft = page.locator(".card").filter({ has: page.getByText("Everyone is assigned.", { exact: true }) }).getByRole("textbox");
+      await draft.fill("__qa Corrected guest name");
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(page.getByText("Player changes could not be saved", { exact: true })).toBeVisible();
+      await expect(draft).toHaveValue("__qa Corrected guest name");
+      assert.equal(me.name, oldName);
+      playerSaveError = false;
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect.poll(() => me.name).toBe("__qa Corrected guest name");
+    } finally {
+      playerSaveError = false;
+      me.name = oldName;
+    }
+  });
+  await page.goto(`${BASE}/submit`);
+  await check("A saved upload note survives moving its card out of the task list", async () => {
+    const row = page.locator(".card-flat").filter({ hasText: tasks[0].title });
+    await row.getByRole("button", { name: "Redo", exact: true }).click();
+    await page.locator('input[type="file"]').setInputFiles({ name: "note.jpg", mimeType: "image/jpeg", buffer: photo });
+    await expect(page.getByText("It's in the judge's queue", { exact: false })).toBeVisible();
+    const note = page.getByPlaceholder("Add a note for the judge (optional)");
+    await note.fill("The person holding the yellow umbrella is our stranger.");
+    await note.blur();
+    await expect(page.getByText("Note saved.", { exact: true })).toBeVisible();
+    await page.getByPlaceholder("Search tasks").fill("no-such-task");
+    await expect(note).toHaveValue("The person holding the yellow umbrella is our stranger.");
+    await page.getByPlaceholder("Search tasks").fill("");
+    await expect(note).toHaveValue("The person holding the yellow umbrella is our stranger.");
+    await shot("saved-note");
+  });
+  await check("Adding a video preserves the group's saved note and retries a failed note save", async () => {
+    const anchor = items.at(-1);
+    await page.getByRole("button", { name: "Add another photo or clip to this", exact: true }).click();
+    await page.locator('input[type="file"]').setInputFiles({ name: "another.mov", mimeType: "video/quicktime", buffer: clip });
+    await expect(page.getByText("It's in the judge's queue", { exact: false })).toBeVisible();
+    assert.equal(items.at(-1).groupId, anchor.id);
+    const note = page.getByPlaceholder("Add a note for the judge (optional)");
+    await expect(note).toHaveValue(anchor.note);
+    await expect(page.locator(".media-preview video")).toHaveAttribute("preload", "auto");
+    noteError = true;
+    try {
+      await note.fill("Both angles show the same stranger.");
+      await note.blur();
+      await expect(page.getByText("Couldn't save that note.", { exact: true })).toBeVisible();
+      noteError = false;
+      await note.locator("..").getByRole("button", { name: "Retry", exact: true }).click();
+      await expect(page.getByText("Note saved.", { exact: true })).toBeVisible();
+      assert.equal(anchor.note, "Both angles show the same stranger.");
+      assert.equal(items.at(-1).note, anchor.note);
+    } finally {
+      noteError = false;
+    }
+  });
+  await check("An upload that reached Storage is not labelled as never sent", async () => {
+    promotionError = true;
+    try {
+      await page.getByPlaceholder("Search tasks").fill("");
+      await page.locator(".card-flat").filter({ hasText: tasks[0].title }).getByRole("button", { name: "Redo", exact: true }).click();
+      await page.locator('input[type="file"]').setInputFiles({ name: "arrived.jpg", mimeType: "image/jpeg", buffer: photo });
+      await expect(page.getByText(/Uploaded, but couldn't register it/)).toBeVisible();
+      await expect(page.getByText("Didn't send.", { exact: true })).toHaveCount(0);
+      await shot("registration-failure");
+    } finally {
+      promotionError = false;
+    }
+  });
+  await check("A stalled feed request times out and polling recovers without a reload", async () => {
+    feedHeld = true;
+    try {
+      await page.goto(`${BASE}/submit`);
+      await page.evaluate(() => { window.__fastTimeouts = true; });
+      await page.getByRole("link", { name: "Feed", exact: true }).click();
+      await expect(page.getByText(/Connection hiccup/)).toBeVisible();
+      feedHeld = false;
+      await expect(page.getByText(tasks[3].title, { exact: true })).toBeVisible();
+      await expect(page.getByText(/Connection hiccup/)).toHaveCount(0);
+    } finally {
+      feedHeld = false;
+    }
+  });
+  await check("Stuck-upload recovery keeps the player's name readable at 260px", async () => {
+    stuck = [{ id: "stuck-fixture", round: 1, playerName: mate.name,
+      taskTitle: tasks[0].title, createdAt: "2026-09-11T12:00:00Z", mediaUrl: `${BASE}/__qa/clip.mp4` }];
+    try {
+      await page.goto(`${BASE}/admin`);
+      await page.getByRole("button", { name: "health", exact: true }).click();
+      await page.setViewportSize({ width: 260, height: 844 });
+      const card = page.locator(".card").filter({ has: page.getByText("Stuck uploads", { exact: true }) });
+      await expect(card.getByText(mate.name, { exact: true })).toBeVisible();
+      await card.scrollIntoViewIfNeeded();
+      await fits();
+      await shot("stuck-upload-narrow");
+    } finally {
+      stuck = [];
+    }
+  });
   await check("Browser has no uncaught application errors or unmocked requests", async () => {
     assert.deepEqual(pageErrors, []);
     assert.deepEqual(refused, []);
   });
 } finally {
   stateHeld = false;
+  feedHeld = false;
   releaseQueue?.();
   releaseDecision?.();
+  releaseTaskWrite?.();
   clearTimeout(deadline);
   await browser.close();
 }

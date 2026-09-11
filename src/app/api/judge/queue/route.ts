@@ -1,6 +1,7 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings, isOrganizer } from "@/lib/settings";
-import { groupBy, groupKey } from "@/lib/groups";
+import { groupBy } from "@/lib/groups";
+import { decisionKey } from "@/lib/scored-entries.mjs";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { awardedBreakdown } from "@/lib/scoring.mjs";
 import type { Database } from "@/lib/database.types";
@@ -26,7 +27,8 @@ export async function GET(req: Request) {
   const round = Number(url.searchParams.get("round")) || settings.active_round;
   const sb = db();
 
-  const [{ data: pending }, { data: recent }, { data: tasks }, { data: teams }, { data: players }] =
+  const [{ data: pending, error: pendingError }, { data: recent, error: recentError },
+    { data: tasks, error: tasksError }, { data: teams, error: teamsError }, { data: players, error: playersError }] =
     await Promise.all([
       sb
         .from("submissions")
@@ -52,6 +54,9 @@ export async function GET(req: Request) {
       sb.from("teams").select("id,name,color").eq("round", round),
       sb.from("players").select("id,name"),
     ]);
+  if (pendingError || recentError || tasksError || teamsError || playersError) {
+    return fail("Couldn't load the judging queue. Try again.", 503);
+  }
 
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
   const teamById = new Map((teams ?? []).map((t) => [t.id, t]));
@@ -61,11 +66,12 @@ export async function GET(req: Request) {
   // retry after a rejection. That is allowed (a hard constraint would throw an
   // error in the field), and scoring counts a task once. The judge just needs to
   // SEE it, so approving a duplicate is a deliberate choice.
-  const { data: approved } = await sb
+  const { data: approved, error: approvedError } = await sb
     .from("submissions")
     .select("team_id,task_id")
     .eq("round", round)
     .eq("status", "approved");
+  if (approvedError) return fail("Couldn't check previously approved tasks. Try again.", 503);
   const alreadyApproved = new Set(
     (approved ?? []).map((s) => `${s.team_id}:${s.task_id}`)
   );
@@ -126,19 +132,20 @@ export async function GET(req: Request) {
     };
   };
 
-  const queue = groupBy(pending ?? [], groupKey).map(shape);
-  const recentGroups = groupBy(recent ?? [], groupKey).map(shape);
+  const queue = groupBy(pending ?? [], decisionKey).map(shape);
+  const recentGroups = groupBy(recent ?? [], decisionKey).map(shape);
 
   // Pending count for the OTHER round. After the 3:30pm flip there is normally
   // still a Round 1 backlog, and if the judge screen never mentions it those
   // submissions quietly never get scored. Counted in DECISIONS, so it means the
   // same thing as the count shown for the round on display.
-  const { data: otherPending } = await sb
+  const { data: otherPending, error: otherPendingError } = await sb
     .from("submissions")
-    .select("id,group_id")
+    .select("id,group_id,team_id,status,judged_at")
     .eq("round", round === 1 ? 2 : 1)
     .eq("status", "pending");
-  const otherRoundPending = new Set((otherPending ?? []).map(groupKey)).size;
+  if (otherPendingError) return fail("Couldn't check the other round's queue. Try again.", 503);
+  const otherRoundPending = new Set((otherPending ?? []).map(decisionKey)).size;
 
   return json({
     round,

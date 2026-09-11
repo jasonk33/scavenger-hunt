@@ -1,7 +1,8 @@
 import { db, mediaUrl } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { eventState } from "@/lib/event";
-import { groupBy, groupKey } from "@/lib/groups";
+import { groupBy } from "@/lib/groups";
+import { decisionKey } from "@/lib/scored-entries.mjs";
 import { json, fail, isVideoObject } from "@/lib/http";
 import { awardedBreakdown, scoreApproved } from "@/lib/scoring.mjs";
 
@@ -36,11 +37,12 @@ export async function GET(req: Request) {
   const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 400));
   const sb = db();
 
-  const [{ data: subs }, { data: tasks }, { data: teams }, { data: players }] = await Promise.all([
+  const [{ data: subs, error: subsError }, { data: tasks, error: tasksError },
+    { data: teams, error: teamsError }, { data: players, error: playersError }] = await Promise.all([
     sb
       .from("submissions")
       .select(
-        "id,task_id,team_id,player_id,object_name,media_type,group_id,note,created_at,status,points_awarded,task_points,reject_reason"
+        "id,task_id,team_id,player_id,object_name,media_type,group_id,note,created_at,judged_at,status,points_awarded,task_points,reject_reason"
       )
       .eq("round", round)
       .in("status", ["approved", "rejected"])
@@ -50,22 +52,24 @@ export async function GET(req: Request) {
     sb.from("teams").select("id,name,color").eq("round", round),
     sb.from("players").select("id,name"),
   ]);
+  if (subsError || tasksError || teamsError || playersError) return fail("Couldn't load the feed. Try again.", 503);
 
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
   const teamById = new Map((teams ?? []).map((t) => [t.id, t]));
   const playerById = new Map((players ?? []).map((p) => [p.id, p]));
   const taskIds = [...new Set((subs ?? []).map((submission) => submission.task_id))];
-  const { data: approved } = taskIds.length
+  const { data: approved, error: approvedError } = taskIds.length
     ? await sb
         .from("submissions")
         .select("id,round,task_id,team_id,status,points_awarded,measurement_value,task_points,scoring_mode_snapshot,points_per_unit_snapshot,competition_bonus_snapshot,group_id,created_at,judged_at")
         .eq("round", round)
         .in("task_id", taskIds)
         .eq("status", "approved")
-    : { data: [] };
+    : { data: [], error: null };
+  if (approvedError) return fail("Couldn't load the feed's scores. Try again.", 503);
   const pointsById = new Map(
     scoreApproved(approved ?? [], tasks ?? []).map(({ row, points, base, bonus }) => [
-      groupKey(row),
+      decisionKey(row),
       { total: points, base, bonus },
     ])
   );
@@ -73,7 +77,7 @@ export async function GET(req: Request) {
   return json({
     round,
     activeRound: startedRound,
-    items: groupBy(subs ?? [], groupKey).map((group) => {
+    items: groupBy(subs ?? [], decisionKey).map((group) => {
       // Oldest first: judged_at is identical across a group, so it says nothing
       // about the order the files were shot in.
       const files = [...group].sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -85,7 +89,7 @@ export async function GET(req: Request) {
          so cannot know about a competition bonus decided afterwards. The
          fallback is for a genuinely unranked group: a second approval on a task
          the team has already scored. */
-      const split = pointsById.get(groupKey(s)) ?? awardedBreakdown(s);
+      const split = pointsById.get(decisionKey(s)) ?? awardedBreakdown(s);
       return {
         id: s.id,
         status: s.status,

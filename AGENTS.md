@@ -141,6 +141,9 @@ files to Supabase when they reach `main`. Fold the change back into `setup.sql` 
 - **Groups**: several files can be one piece of evidence via `group_id`. It is nullable and
   every read goes through `groupKey()`/`groupBy()` (`src/lib/groups.ts`) — a row without one
   is a group of one. The judge decides a group as a unit. Notes cap at `NOTE_MAX` (280).
+  Files arriving after that decision may be judged separately: display groups use
+  `decisionKey()` (`src/lib/scored-entries.mjs`), while upload links and membership still use
+  the raw `groupKey()`. Never merge distinct rulings just because their storage group matches.
 
 **Auth boundary**: the only gate is `ORGANIZER_PIN`, checked by `isOrganizer()` against an
 `organizer` cookie whose value **is the PIN verbatim**. It is deliberately not a security
@@ -341,15 +344,15 @@ the confident wrong answer.
   `scoringMode === "quantity"`. The Admin "Leader bonuses" picker renders the **title**, the
   bonus and a team dropdown — never the label. So on a `competition` task the label is dead data, and **the winner criterion has
   nowhere to live but the title.** Setting the label instead accomplishes nothing.
-- **A group's score is looked up by `groupKey`, never by row id.** Several files sent
+- **A displayed group's score is looked up by `decisionKey`, never by row id.** Several files sent
   as one piece of evidence are one decision, but only ONE row inside the group scores — the
   newest, per `latestApproved` — while every screen anchors its group on the OLDEST file.
   Keyed by row id the lookup misses on every multi-file group and falls through to
   `awardedBreakdown()`, which reads what was frozen at judging time and therefore cannot
   know about a competition bonus decided afterwards. `/api/feed`, `/api/state`,
   `/api/task-entries` and `/api/leaderboard/[teamId]` all carry this rule, and any query
-  feeding it must select `group_id` or `groupKey` silently degrades to the row id and
-  reintroduces the bug. `winningGroups` takes RAW rows for the same reason: handed ranked
+  feeding it must select `group_id`, `team_id`, `status` and `judged_at`; these identify the
+  files the judging write actually decided together. `winningGroups` takes RAW rows for the same reason: handed ranked
   ones it can only ever return single-file groups. `flow6` section 7 is the guard — a
   competition task with a decided winner and two files is the only shape where the ranked
   path and the frozen fallback differ.
@@ -395,8 +398,9 @@ the confident wrong answer.
   fixture: build a `__qa`-prefixed row, scope every delete to it, and hand
   `scripts/task-store.mjs` a fake client instead (`scripts/task-db.test.mjs`).
 - The `notice` banner is sticky and eats viewport. If you set one for testing, clear it.
-- `api()` in `src/lib/client.ts` has **no timeout**. A request that hangs forever leaves
-  Upload buttons disabled with Cancel a no-op.
+- `api()` in `src/lib/client.ts` bounds JSON requests to **15 seconds**, including reading
+  the response body, so stalled polls can recover. Keep caller cancellation wired through.
+  This deadline must never apply to the direct tus media upload.
 - `/api/feed` clamps to `limit=400` (max 500) and renders video with `preload="auto"`, so a
   feed open eagerly fetches every clip on the page. A cost question, not a correctness one.
 - Two recurring bug classes, both of which have produced every serious bug so far:

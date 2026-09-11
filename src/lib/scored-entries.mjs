@@ -2,12 +2,21 @@
  * Selects the approved evidence that contributes to a team's score.
  *
  * This mirrors `team_scores`: one latest approved row per round/team/task,
- * followed by restoring the other approved files in that winning group.
+ * followed by restoring the other approved files in that winning decision.
  * Rejections are intentionally excluded.
  */
 
 function groupKey(row) {
   return row.group_id ?? row.id;
+}
+
+/**
+ * A late file can finish after its siblings were judged. The judging write
+ * matches status and judged_at, so only files with the same ruling belong in
+ * one displayed decision. Keep the storage group unchanged for upload links.
+ */
+export function decisionKey(row) {
+  return JSON.stringify([groupKey(row), row.team_id ?? null, row.status ?? null, row.judged_at ?? null]);
 }
 
 function compareNewest(a, b) {
@@ -48,7 +57,7 @@ function sameEvidence(row, winner) {
     row.round === winner.round &&
     row.team_id === winner.team_id &&
     row.task_id === winner.task_id &&
-    groupKey(row) === groupKey(winner)
+    decisionKey(row) === decisionKey(winner)
   );
 }
 

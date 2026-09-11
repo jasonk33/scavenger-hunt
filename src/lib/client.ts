@@ -107,14 +107,37 @@ export class ApiError extends Error {
 }
 
 export async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    cache: "no-store",
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError((body as { error?: string })?.error ?? `Request failed (${res.status})`, res.status);
-  return body as T;
+  // Only JSON requests pass here; large media transfers use tus directly.
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (init?.signal?.aborted) abort();
+  else init?.signal?.addEventListener("abort", abort, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 15000);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    });
+    const body = await res.json().catch((e) => {
+      if (controller.signal.aborted) throw e;
+      if (res.ok) throw new Error("The server returned an unreadable response. Please try again.");
+      return {};
+    });
+    if (!res.ok) throw new ApiError((body as { error?: string })?.error ?? `Request failed (${res.status})`, res.status);
+    return body as T;
+  } catch (e) {
+    if (timedOut) throw new Error("Request timed out. Check your connection and try again.");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    init?.signal?.removeEventListener("abort", abort);
+  }
 }
 
 /** Narrows an unknown thrown value into something safe to show a person. */
