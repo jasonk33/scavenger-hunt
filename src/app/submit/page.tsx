@@ -1101,6 +1101,8 @@ function TaskRow({
 }) {
   const [open, setOpen] = useState(false);
   const [otherOpen, setOtherOpen] = useState(false);
+  const completedJob = job?.status === "done";
+  const expanded = open || completedJob;
   const { data: otherData, error: otherError } = usePoll<OtherTeamEntries>(
     otherOpen
       ? `/api/task-entries?taskId=${encodeURIComponent(task.id)}&playerId=${encodeURIComponent(playerId)}`
@@ -1213,13 +1215,17 @@ function TaskRow({
           >
             {st === "done" || st === "waiting" ? "Redo" : "Upload"}
           </button>
-          {groups.length > 0 && (
+          {(groups.length > 0 || completedJob) && (
             <button
               className="btn btn-sm"
               style={{ flex: "1 1 120px" }}
-              onClick={() => setOpen((v) => !v)}
+              aria-expanded={expanded}
+              onClick={() => {
+                setOpen(!expanded);
+                if (completedJob) onJobClose();
+              }}
             >
-              {open ? "Hide" : groups.length > 1 ? `See ${groups.length}` : "See"}
+              {expanded ? "Hide" : groups.length > 1 ? `See ${groups.length}` : "See"}
             </button>
           )}
           <button

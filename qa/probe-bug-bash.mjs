@@ -350,6 +350,23 @@ try {
     assert.equal(await page.locator('input[type="file"]').getAttribute("capture"), null);
   });
   await shot("uploaded");
+  await check("Hide dismisses the completed upload even after approval, without OK", async () => {
+    const row = page.locator(".card-flat").filter({ hasText: tasks[0].title });
+    const uploaded = items.find((i) => i.id === "upload1");
+    Object.assign(uploaded, { status: "approved", pointsAwarded: tasks[0].points });
+    await expect(row).toHaveClass(/card-done/);
+    await expect(row.getByRole("button", { name: "OK", exact: true })).toBeVisible();
+    const writes = mutations.length;
+    await row.getByRole("button", { name: "Hide", exact: true }).click();
+    await expect(row.getByRole("button", { name: "OK", exact: true })).toHaveCount(0);
+    await expect(row.locator(".media-preview")).toHaveCount(0);
+    await row.getByRole("button", { name: /^See(?: \d+)?$/ }).click();
+    await expect(row.locator(".media-box").first()).toBeVisible();
+    await row.getByRole("button", { name: "Hide", exact: true }).click();
+    await expect(row.locator(".media-box")).toHaveCount(0);
+    assert.equal(mutations.length, writes, "hiding and reopening must not write to submissions");
+    await shot("upload-hidden");
+  });
 
   await page.goto(`${BASE}/feed`);
   await expect(page.getByText(tasks[3].title, { exact: true })).toBeVisible();
@@ -727,11 +744,14 @@ try {
   });
   await check("Adding a video preserves the group's saved note and retries a failed note save", async () => {
     const anchor = items.at(-1);
-    await page.getByRole("button", { name: "Add another photo or clip to this", exact: true }).click();
+    const row = page.locator(".card-flat").filter({ hasText: tasks[0].title });
+    await row.getByRole("button", { name: "Hide", exact: true }).click();
+    await row.getByRole("button", { name: /^See(?: \d+)?$/ }).click();
+    await row.getByRole("button", { name: "Add another file to this", exact: true }).last().click();
     await page.locator('input[type="file"]').setInputFiles({ name: "another.mov", mimeType: "video/quicktime", buffer: clip });
     await expect(page.getByText("It's in the judge's queue", { exact: false })).toBeVisible();
     assert.equal(items.at(-1).groupId, anchor.id);
-    const note = page.getByPlaceholder("Add a note for the judge (optional)");
+    const note = row.locator(".card-good").getByPlaceholder("Add a note for the judge (optional)");
     await expect(note).toHaveValue(anchor.note);
     await expect(page.locator(".media-preview video")).toHaveAttribute("preload", "auto");
     noteError = true;
@@ -751,7 +771,7 @@ try {
   await check("Saving a note through See updates the open upload card and its fallback", async () => {
     const row = page.locator(".card-flat").filter({ hasText: tasks[0].title });
     try {
-      await row.getByRole("button", { name: /^See(?: \d+)?$/ }).click();
+      await expect(row.getByRole("button", { name: "Hide", exact: true })).toBeVisible();
       const entry = row.locator("div").filter({ has: page.getByText("2 files", { exact: true }) })
         .filter({ has: page.getByRole("button", { name: "Add another file to this", exact: true }) }).last();
       const note = entry.getByPlaceholder("Add a note for the judge (optional)");
@@ -773,7 +793,6 @@ try {
   await check("A newly reopened upload follows notes saved on the group's original file", async () => {
     const row = page.locator(".card-flat").filter({ hasText: tasks[0].title });
     try {
-      await row.getByRole("button", { name: "OK", exact: true }).click();
       await row.getByRole("button", { name: /^See(?: \d+)?$/ }).click();
       const entry = (count) => row.locator("div").filter({ has: page.getByText(`${count} files`, { exact: true }) })
         .filter({ has: page.getByRole("button", { name: "Add another file to this", exact: true }) }).last();
