@@ -170,6 +170,9 @@ do not chain drivers or recreate a serial runner. No driver may take over one mi
 The standalone drivers need Round 1 started, not just its teams revealed.
 `node qa/probe-welcome.mjs` instead mocks every API request and covers the welcome
 page and all round transitions without connecting to the event database.
+`node qa/probe-bug-bash.mjs` is also offline: it walks the player and organizer
+screens with sample media, delayed/failed responses and narrow viewports. It
+needs no `.env.local`; its simulated upload does not verify Supabase Storage.
 
 On a fresh clone, download the browser binary once first:
 

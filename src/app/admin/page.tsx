@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, usePoll } from "@/lib/client";
 import { eventState, type EventPhase } from "@/lib/event";
 import { useEvent } from "@/components/EventShell";
+import OrganizerGate from "@/components/OrganizerGate";
 
 type AdminData = {
   settings: {
@@ -44,54 +45,11 @@ type AdminData = {
 };
 
 export default function AdminPage() {
-  const [authed, setAuthed] = useState<boolean | null>(null);
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState("");
-
-  useEffect(() => {
-    api("/api/admin/data")
-      .then(() => setAuthed(true))
-      .catch(() => setAuthed(false));
-  }, []);
-
-  const login = async () => {
-    setPinError("");
-    try {
-      await api("/api/admin/login", { method: "POST", body: JSON.stringify({ pin }) });
-      setAuthed(true);
-    } catch (e) {
-      setPinError(errorMessage(e, "Wrong PIN"));
-    }
-  };
-
-  if (authed === null) return <p className="muted" style={{ marginTop: 24 }}>Checking…</p>;
-
-  if (!authed) {
-    return (
-      <div className="card" style={{ marginTop: 24 }}>
-        <b>Organizer</b>
-        <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
-          Event setup: players, teams, rounds, exports.
-        </p>
-        <input
-          className="field"
-          type="password"
-          inputMode="numeric"
-          placeholder="PIN"
-          value={pin}
-          onChange={(e) => setPin(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && login()}
-          style={{ marginBottom: 10 }}
-        />
-        {pinError && <p className="bad tiny">{pinError}</p>}
-        <button className="btn btn-primary btn-wide" onClick={login}>
-          Unlock
-        </button>
-      </div>
-    );
-  }
-
-  return <Admin />;
+  return (
+    <OrganizerGate endpoint="/api/admin/data" description="Event setup: players, teams, rounds, exports.">
+      <Admin />
+    </OrganizerGate>
+  );
 }
 
 function Admin() {
@@ -282,7 +240,7 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
   return (
     <>
       <div className="card">
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
           {[1, 2].map((r) => (
             <button
               key={r}
@@ -325,10 +283,10 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
         <div style={{ display: "grid", gap: 6 }}>
           {data.players.map((p) =>
             editing === p.id ? (
-              <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                 <input
                   className="field"
-                  style={{ flex: 1, minHeight: 44 }}
+                  style={{ flex: "1 1 100%", minWidth: 0, minHeight: 44 }}
                   value={draft}
                   autoFocus
                   onChange={(e) => setDraft(e.target.value)}
@@ -376,10 +334,11 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
                 </button>
               </div>
             ) : (
-              <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <button
+                  className="name"
                   style={{
-                    flex: 1,
+                    flex: "1 1 180px",
                     minWidth: 0,
                     textAlign: "left",
                     background: "none",
@@ -398,7 +357,7 @@ function RosterTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
                 </button>
                 <select
                   className="field"
-                  style={{ width: 200, minHeight: 44 }}
+                  style={{ flex: "1 1 200px", width: "100%", minWidth: 0, minHeight: 44 }}
                   value={assigned.get(p.id) ?? ""}
                   onChange={(e) => setTeam(p.id, e.target.value)}
                 >
@@ -872,7 +831,7 @@ function TaskEditor({
 }
 
 function HealthTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unknown>) => void }) {
-  const { data: health } = usePoll<{
+  const { data: health, error, reload } = usePoll<{
     ok: boolean;
     checks: Array<{ name: string; ok: boolean; detail: string }>;
   }>("/api/admin/health", 30000);
@@ -885,7 +844,16 @@ function HealthTab({ data, run }: { data: AdminData; run: (fn: () => Promise<unk
           Run this the day before. It does a real upload to Storage — the same path a player&apos;s
           phone uses — so a bad key or a missing policy shows up now instead of at 1:05pm.
         </p>
-        {!health && <span className="muted tiny">Checking…</span>}
+        {error && (
+          <div className="card card-bad tiny" role="alert">
+            Couldn&apos;t refresh health checks: {error}. Retrying.
+            {health && " The results below are from the last successful check."}
+            <button className="btn btn-sm" style={{ display: "flex", marginTop: 8 }} onClick={() => void reload()}>
+              Try again
+            </button>
+          </div>
+        )}
+        {!health && !error && <span className="muted tiny">Checking…</span>}
         <div style={{ display: "grid", gap: 6 }}>
           {(health?.checks ?? []).map((c) => (
             <div key={c.name} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>

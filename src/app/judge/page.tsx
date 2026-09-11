@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage, fmtBytes, usePoll } from "@/lib/client";
 import { REASON_MAX } from "@/lib/groups";
 import Score from "@/components/Score";
+import OrganizerGate from "@/components/OrganizerGate";
 
 type Item = {
   id: string;
@@ -63,57 +64,11 @@ function matches(item: Item, needle: string) {
 const SEARCH_AT = 8;
 
 export default function JudgePage() {
-  const [authed, setAuthed] = useState<boolean | null>(null);
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState("");
-
-  useEffect(() => {
-    api("/api/judge/queue")
-      .then(() => setAuthed(true))
-      .catch(() => setAuthed(false));
-  }, []);
-
-  const login = async () => {
-    setPinError("");
-    try {
-      await api("/api/admin/login", { method: "POST", body: JSON.stringify({ pin }) });
-      setAuthed(true);
-    } catch (e) {
-      setPinError(errorMessage(e, "Wrong PIN"));
-    }
-  };
-
-  if (authed === null) return <p className="muted" style={{ marginTop: 24 }}>Checking…</p>;
-
-  // This is the only door into the organizer screens, so it says what is behind
-  // it. Players will land here by tapping "Organizer" out of curiosity; the PIN
-  // is what stops them, not obscurity.
-  if (!authed) {
-    return (
-      <div className="card" style={{ marginTop: 24 }}>
-        <h2 style={{ margin: "0 0 2px" }}>Organizer</h2>
-        <p className="muted tiny" style={{ margin: "0 0 12px" }}>
-          Judging and event setup. Players don&apos;t need this.
-        </p>
-        <input
-          className="field"
-          type="password"
-          inputMode="numeric"
-          placeholder="PIN"
-          value={pin}
-          onChange={(e) => setPin(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && login()}
-          style={{ marginBottom: 10 }}
-        />
-        {pinError && <p className="bad tiny">{pinError}</p>}
-        <button className="btn btn-primary btn-wide" onClick={login}>
-          Unlock
-        </button>
-      </div>
-    );
-  }
-
-  return <JudgeQueue />;
+  return (
+    <OrganizerGate endpoint="/api/judge/queue" description="Judging and event setup. Players don't need this.">
+      <JudgeQueue />
+    </OrganizerGate>
+  );
 }
 
 function JudgeQueue() {
@@ -122,7 +77,7 @@ function JudgeQueue() {
   // and without this selector those submissions become invisible and never get
   // scored -- a silently wrong Round 1 result.
   const [round, setRound] = useState<number | null>(null);
-  const { data, reload } = usePoll<Queue>(
+  const { data, error, reload } = usePoll<Queue>(
     round ? `/api/judge/queue?round=${round}` : "/api/judge/queue",
     5000
   );
@@ -212,7 +167,14 @@ function JudgeQueue() {
       // back. Either way the pick is spent.
       if (queue.some((i) => i.id === id)) setDone((d) => new Set(d).add(id));
       setPickedId((p) => (p === id ? null : p));
-      reload();
+      await reload();
+      // Suppression lasts only through this refresh, not through a later Undo
+      // by the other organizer (including one before we ever saw the approval).
+      setDone((d) => {
+        const next = new Set(d);
+        next.delete(id);
+        return next;
+      });
     } catch (e) {
       setErr(errorMessage(e, "Failed"));
     } finally {
@@ -242,7 +204,7 @@ function JudgeQueue() {
       <header className="row" style={{ margin: "18px 0 10px" }}>
         <h1 style={{ margin: 0 }}>Judge</h1>
         <span className={`pill${queue.length > 0 ? " pill-accent" : ""}`}>
-          {queue.length} waiting
+          {data ? `${queue.length} waiting` : "…"}
         </span>
       </header>
 
@@ -271,8 +233,17 @@ function JudgeQueue() {
       )}
 
       {err && <div className="card card-bad tiny bad">{err}</div>}
+      {error && (
+        <div className="card card-bad tiny" role="alert">
+          Couldn&apos;t refresh the queue: {error}. Retrying.
+          {data && " The entries shown may be out of date."}
+          <button className="btn btn-sm" style={{ display: "flex", marginTop: 8 }} onClick={() => void reload()}>
+            Try again
+          </button>
+        </div>
+      )}
 
-      {!current && (
+      {!current && !error && (
         data ? (
           <div className="empty">
             <b className="good">Queue is empty</b>

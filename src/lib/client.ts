@@ -100,6 +100,12 @@ export function syncSavedEpoch(epoch: string): boolean {
   }
 }
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 export async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -107,7 +113,7 @@ export async function api<T = unknown>(url: string, init?: RequestInit): Promise
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as { error?: string })?.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError((body as { error?: string })?.error ?? `Request failed (${res.status})`, res.status);
   return body as T;
 }
 
@@ -132,15 +138,16 @@ export function usePoll<T>(url: string | null, ms = 5000) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const inflight = useRef(false);
+  const inflight = useRef<AbortController | null>(null);
   const generation = useRef(0);
 
   const load = useCallback(async () => {
     if (!url || inflight.current) return;
     const requestGeneration = generation.current;
-    inflight.current = true;
+    const controller = new AbortController();
+    inflight.current = controller;
     try {
-      const d = await api<T>(url);
+      const d = await api<T>(url, { signal: controller.signal });
       if (requestGeneration !== generation.current) return;
       setData(d);
       setError(null);
@@ -149,15 +156,24 @@ export function usePoll<T>(url: string | null, ms = 5000) {
       setError(errorMessage(e, "Network error"));
     } finally {
       if (requestGeneration === generation.current) {
-        inflight.current = false;
+        inflight.current = null;
         setLoading(false);
       }
     }
   }, [url]);
 
+  const reload = useCallback(() => {
+    // A post-write refresh must supersede a poll started before the write.
+    generation.current += 1;
+    inflight.current?.abort();
+    inflight.current = null;
+    return load();
+  }, [load]);
+
   useEffect(() => {
     generation.current += 1;
-    inflight.current = false;
+    inflight.current?.abort();
+    inflight.current = null;
     // A changed URL is a new question. Do not briefly render the previous
     // round/team/task's answer while that request is on the way.
     setData(null);
@@ -177,13 +193,14 @@ export function usePoll<T>(url: string | null, ms = 5000) {
     document.addEventListener("visibilitychange", onShow);
     return () => {
       generation.current += 1;
-      inflight.current = false;
+      inflight.current?.abort();
+      inflight.current = null;
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onShow);
     };
   }, [url, ms, load]);
 
-  return { data, error, loading, reload: load };
+  return { data, error, loading, reload };
 }
 
 export function fmtBytes(b?: number | null) {

@@ -721,7 +721,9 @@ export default function SubmitPage() {
         <div className="card card-accent">
           <b>You&apos;re submitting as {data?.me?.name ?? me.name}</b>
           <p className="muted tiny" style={{ margin: "4px 0 10px" }}>
-            {s && s.submitted > 0
+            {!s
+              ? "Your submissions haven't loaded yet. Switching won't move anything already sent — ask an organizer if any submissions are on the wrong team."
+              : s.submitted > 0
               ? `${s.submitted} submission${s.submitted === 1 ? "" : "s"} already went in under this name. Switching won't move those — ask an organizer if any of them are on the wrong team.`
               : "Nothing has been submitted under this name yet, so switching is clean."}
           </p>
@@ -762,7 +764,7 @@ export default function SubmitPage() {
       )}
 
       {s && (
-        <div className="card row" style={{ gap: 14, justifyContent: "space-between" }}>
+        <div className="card row" style={{ gap: 14, justifyContent: "space-between", flexWrap: "wrap" }}>
           <Stat label="points" value={s.points} big />
           <Stat label="scored" value={s.approved} />
           <Stat label="waiting" value={s.pending} />

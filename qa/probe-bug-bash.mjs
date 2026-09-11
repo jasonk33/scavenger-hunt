@@ -1,0 +1,453 @@
+/**
+ * Offline browser bug bash. All APIs and media are intercepted; no credentials,
+ * database access, or live event changes. Run against a local app with:
+ * BASE_URL=http://127.0.0.1:3000 node qa/probe-bug-bash.mjs
+ */
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { chromium, expect as baseExpect } from "@playwright/test";
+
+const BASE = process.env.BASE_URL || "http://127.0.0.1:3000";
+assert(["localhost", "127.0.0.1", "[::1]"].includes(new URL(BASE).hostname));
+const expect = baseExpect.configure({ timeout: 1800 });
+const photo = readFileSync(new URL("./media/photo.jpg", import.meta.url));
+const clip = readFileSync(new URL("./media/clip.mp4", import.meta.url));
+const me = { id: "p1", name: "__qa Alexandria Montgomery-Wellington" };
+const mate = { id: "p2", name: "__qa BartholomewFitzgeraldWithALongName" };
+const teams = [
+  { id: "t1", round: 1, name: "__qa The Pigeon Intelligence Agency", color: "#cceeff" },
+  { id: "t2", round: 1, name: "__qa Birthday Bureau", color: "#8855bb" },
+  { id: "t3", round: 2, name: "__qa Remixed Friends", color: "#99ddbb" },
+];
+const tasks = [
+  { id: "task1", title: "__qa A photo with a stranger", points: 3 },
+  { id: "task2", title: "__qa Gather extra pigeons", points: 5, scoring_mode: "quantity", measurement_label: "extra pigeon", points_per_unit: 1 },
+  { id: "task3", title: "__qa Rejected performance", points: 10, requires_video: true },
+  { id: "task4", title: "__qa Best birthday picture", points: 5, scoring_mode: "competition", competition_bonus: 7, winner_team_id: "t1" },
+  { id: "task5", title: "__qa A secret challenge", points: 5, is_secret: true },
+].map((t) => ({
+  round: 1, active: true, scoring_mode: "fixed", measurement_label: "", points_per_unit: 0,
+  competition_bonus: 0, winner_team_id: null, requires_video: false, is_secret: false,
+  revealed_at: null, competition: null, ...t,
+}));
+let phase = "round1";
+const event = () => ({
+  phase, activeRound: phase === "round2" ? 2 : 1, startedRound: phase === "welcome" ? 0 : phase === "round2" ? 2 : 1,
+  submissionsOpen: phase === "round1" || phase === "round2", tasksVisible: phase !== "welcome",
+});
+const media = (id, video = false) => ({ id, url: `${BASE}/__qa/${video ? "clip.mp4" : "photo.jpg"}`, isVideo: video, sizeBytes: 12345 });
+const item = (id, taskIndex, status, extra = {}) => {
+  const task = tasks[taskIndex];
+  return {
+    id, taskId: task.id, status, media: [media(id)], isVideo: false, sizeBytes: 12345,
+    note: "Look at the pigeon on the left.", taskTitle: task.title, taskPoints: task.points,
+    scoringMode: task.scoring_mode, measurementLabel: task.measurement_label,
+    measurementValue: null, pointsPerUnit: task.points_per_unit,
+    competitionBonus: task.competition_bonus, requiresVideo: task.requires_video, isSecret: false,
+    teamId: teams[0].id, teamName: teams[0].name, teamColor: teams[0].color, playerName: me.name,
+    duplicate: false, pointsAwarded: status === "approved" ? task.points : null,
+    awardedBase: task.points, awardedBonus: 0, rejectReason: null, ...extra,
+  };
+};
+let items = [
+  item("s1", 1, "pending"),
+  item("s2", 0, "pending"),
+  item("s3", 2, "rejected", { rejectReason: "The stranger is out of frame. Please include everyone." }),
+  item("s4", 3, "approved", { awardedBonus: 7, media: [media("s4"), media("s4b", true)] }),
+];
+let queueError = false;
+let adminError = false;
+let authorized = true;
+let holdNextQueue = false;
+let releaseQueue = null;
+let undoOnApprove = false;
+let healthError = false;
+let stateHeld = false;
+let queueReads = 0;
+let healthReads = 0;
+let stateReads = 0;
+const refused = [];
+const pageErrors = [];
+const mutations = [];
+const failures = [];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const entries = () => items.filter((i) => i.status === "approved").map((i) => ({
+  ...i, basePoints: i.awardedBase, bonusPoints: i.awardedBonus,
+}));
+const state = () => ({
+  settings: { round: 1, submissions_open: event().submissionsOpen, saved_epoch: "" },
+  event: event(), me, team: teams[0], tasks: tasks.filter((t) => t.active && (!t.is_secret || t.revealed_at)),
+  submissions: items.flatMap((i) => i.media.map((m, index) => ({
+    id: m.id, task_id: i.taskId, player_id: me.id, status: i.status,
+    points_awarded: i.pointsAwarded, basePoints: i.awardedBase, bonusPoints: i.awardedBonus,
+    measurement_value: i.measurementValue, reject_reason: i.rejectReason,
+    created_at: `2026-09-11T12:00:0${index}.000Z`, judged_at: "2026-09-11T12:01:00.000Z",
+    groupId: i.id, note: i.note, mediaUrl: m.url, isVideo: m.isVideo, playerName: me.name,
+  }))),
+  stats: { submitted: items.length, pending: items.filter((i) => i.status === "pending").length,
+    approved: entries().length, rejected: items.filter((i) => i.status === "rejected").length,
+    points: entries().reduce((n, i) => n + i.basePoints + i.bonusPoints, 0) },
+  rejections: items.filter((i) => i.status === "rejected").map((i) => ({
+    id: i.id, taskId: i.taskId, taskTitle: i.taskTitle, reason: i.rejectReason, at: "2026-09-11T12:01:00.000Z",
+  })),
+  upload: { endpoint: `${BASE}/__qa/tus`, anonKey: "eyJoffline.fixture.signature", bucket: "offline" },
+});
+const adminData = () => ({
+  settings: { active_round: event().activeRound, started_round: event().startedRound,
+    submissions_open: event().submissionsOpen, event_name: "__qa Birthday", notice: "" },
+  players: [me, mate], teams, roster: [me, mate].map((p) => ({ round: 1, player_id: p.id, team_id: "t1" })),
+  tasks, stuck: [], counts: { "1": { total: items.length, uploading: 0, pending: 2, approved: 1, rejected: 1 } },
+  resetEnabled: false,
+});
+const browser = await chromium.launch({ headless: process.env.PW_HEADLESS === "true" });
+const deadline = setTimeout(() => { void browser.close(); }, 55000);
+let checks = 0;
+try {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
+  await ctx.addInitScript((player) => {
+    localStorage.setItem("sh.player", JSON.stringify(player));
+    const interval = window.setInterval.bind(window);
+    window.setInterval = (fn, ms, ...args) => interval(fn, ms >= 2000 ? 150 : ms, ...args);
+  }, me);
+  await ctx.route("**/*", async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const respond = (body, status = 200) => route.fulfill({ status, json: body });
+    if (url.origin !== new URL(BASE).origin) {
+      refused.push(req.url());
+      return route.abort("blockedbyclient");
+    }
+    if (url.pathname === "/__qa/photo.jpg") return route.fulfill({ contentType: "image/jpeg", body: photo });
+    if (url.pathname === "/__qa/clip.mp4") return route.fulfill({ contentType: "video/mp4", body: clip });
+    if (url.pathname === "/__qa/tus" && req.method() === "POST") {
+      return route.fulfill({ status: 201, headers: {
+        location: `${BASE}/__qa/tus/file`, "tus-resumable": "1.0.0",
+        "upload-offset": String(req.postDataBuffer()?.length ?? 0),
+      } });
+    }
+    if (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/__qa/")) return route.continue();
+    if (req.method() === "GET") {
+      if (url.pathname === "/api/event") return respond(event());
+      if (url.pathname === "/api/notice") return respond({ notice: "" });
+      if (url.pathname === "/api/players") return respond({
+        eventName: "__qa Birthday", event: event(), players: [me, mate].map((p) => ({ ...p, team: teams[0] })),
+      });
+      if (url.pathname === "/api/state") {
+        stateReads++;
+        while (stateHeld) await sleep(10);
+        return respond(state());
+      }
+      if (url.pathname === "/api/judge/queue") {
+        queueReads++;
+        if (queueError) return respond({ error: "Queue temporarily unavailable" }, 503);
+        if (!authorized) return respond({ error: "Organizer PIN required" }, 401);
+        const snapshot = structuredClone({ round: 1, teams, queue: items.filter((i) => i.status === "pending"),
+          recent: items.filter((i) => ["approved", "rejected"].includes(i.status)), otherRoundPending: 0 });
+        if (holdNextQueue) {
+          holdNextQueue = false;
+          await new Promise((resolve) => { releaseQueue = resolve; });
+        }
+        return respond(snapshot);
+      }
+      if (url.pathname === "/api/admin/data") {
+        if (adminError) return respond({ error: "Admin temporarily unavailable" }, 503);
+        if (!authorized) return respond({ error: "Organizer PIN required" }, 401);
+        return respond(adminData());
+      }
+      if (url.pathname === "/api/admin/health") {
+        healthReads++;
+        return healthError ? respond({ error: "Health service unavailable" }, 503)
+          : respond({ ok: true, checks: [{ name: "Offline sample", ok: true, detail: "Fixture response, not a live health check" }] });
+      }
+      if (url.pathname === "/api/feed") return respond({ round: 1, items: entries().concat(
+        items.filter((i) => i.status === "rejected").map((i) => ({ ...i, basePoints: 0, bonusPoints: 0 })),
+      ) });
+      if (url.pathname === "/api/leaderboard") return respond({
+        round: 1, activeRound: event().startedRound, totalPending: 2,
+        rows: teams.filter((t) => t.round === 1).map((t) => ({
+          teamId: t.id, name: t.name, color: t.color, points: t.id === "t1" ? 12 : 0,
+          tasksScored: t.id === "t1" ? 1 : 0, pending: 1, members: [me, mate],
+        })),
+      });
+      if (url.pathname.startsWith("/api/leaderboard/")) return respond({ round: 1, team: teams[0], entries: entries() });
+      if (url.pathname === "/api/task-entries") return respond({ entries: entries() });
+    } else {
+      const body = req.postDataJSON();
+      mutations.push({ path: url.pathname, method: req.method(), body });
+      if (url.pathname === "/api/admin/login") {
+        if (body.pin !== "offline") return respond({ error: "Wrong PIN" }, 401);
+        authorized = true;
+        return respond({ ok: true });
+      }
+      if (url.pathname === "/api/admin/settings") {
+        if (body.event_action === "end_round_1") phase = "break";
+        if (body.event_action === "reopen_round_1") phase = "round1";
+        return respond({ ok: true });
+      }
+      if (url.pathname === "/api/admin/tasks" && req.method() === "PATCH") {
+        const t = tasks.find((t) => t.id === body.id);
+        if (body.title !== undefined) t.title = body.title;
+        if (body.revealed !== undefined) t.revealed_at = body.revealed ? "2026-09-11" : null;
+        return respond({ ok: true });
+      }
+      if (url.pathname.startsWith("/api/judge/")) {
+        const i = items.find((i) => i.id === url.pathname.split("/").at(-1));
+        if (body.action === "approve" && i.scoringMode === "quantity" && body.measurementValue === null) {
+          return respond({ error: "Enter the measured amount before approving." }, 400);
+        }
+        i.status = body.action === "reset" ? "pending" : body.action === "approve" ? "approved" : "rejected";
+        i.pointsAwarded = i.status === "approved" ? i.taskPoints : null;
+        i.rejectReason = body.reason ?? null;
+        i.measurementValue = body.measurementValue ?? null;
+        i.awardedBonus = i.scoringMode === "quantity" ? (i.measurementValue ?? 0) * i.pointsPerUnit : 0;
+        if (undoOnApprove && body.action === "approve") i.status = "pending";
+        return respond({ ok: true });
+      }
+      if (url.pathname === "/api/submissions") {
+        const i = item("upload1", tasks.findIndex((t) => t.id === body.taskId), "uploading");
+        items.push(i);
+        return respond({ submissionId: i.id, objectName: "offline/photo.jpg", contentType: "image/jpeg" });
+      }
+      if (url.pathname === "/api/submissions/upload1") {
+        const i = items.find((i) => i.id === "upload1");
+        if (body.noteOnly) i.note = body.note;
+        else i.status = "pending";
+        return respond({ ok: true });
+      }
+    }
+    refused.push(`${req.method()} ${url.pathname}`);
+    return route.abort("blockedbyclient");
+  });
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  page.on("dialog", (dialog) => dialog.accept());
+  const check = async (name, fn) => {
+    checks++;
+    try { await fn(); console.log(`PASS ${name}`); }
+    catch (e) {
+      failures.push(name);
+      console.error(`FAIL ${name}: ${e.message}`);
+      await page.screenshot({ path: `qa/shots/bug-bash-failure-${checks}.png`, fullPage: false });
+    }
+  };
+  const shot = (name) => page.screenshot({ path: `qa/shots/bug-bash-${name}.png`, fullPage: true });
+  const fits = async () => {
+    const overflow = await page.locator("body *").evaluateAll((nodes) => nodes.filter((node) => {
+      const r = node.getBoundingClientRect();
+      return r.width > 0 && (r.right > innerWidth + 1 || r.left < -1);
+    }).slice(0, 8).map((node) => `${node.tagName}.${node.className}: ${node.textContent.slice(0, 80)}`));
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), JSON.stringify(overflow));
+  };
+
+  await page.goto(BASE);
+  await expect(page.getByRole("button", { name: "Change name", exact: true })).toBeVisible();
+  await check("Home shows the selected player and teammates", async () => {
+    await expect(page.getByText(mate.name, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Change name", exact: true }).click();
+    await page.getByPlaceholder("Search your name").fill("Alexandria");
+    await page.getByRole("button", { name: me.name, exact: true }).click();
+    await expect(page.getByRole("link", { name: "View tasks", exact: true })).toBeVisible();
+  });
+  await shot("home");
+  await page.goto(`${BASE}/submit`);
+  await expect(page.getByText(tasks[0].title, { exact: true })).toBeVisible();
+  await check("Task filters and saved tasks remain recoverable", async () => {
+    await page.getByRole("button", { name: "Save for later", exact: true }).first().click();
+    await page.getByRole("button", { name: /Filters/ }).click();
+    await page.getByRole("button", { name: /Saved/ }).click();
+    await expect(page.getByText(tasks[0].title, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Save for later", exact: true }).click();
+    await expect(page.getByText("Nothing saved yet", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Show all tasks", exact: true }).click();
+  });
+  await shot("tasks");
+  await check("Photo picker, local preview and upload completion", async () => {
+    await page.locator(".card-flat").filter({ hasText: tasks[0].title }).getByRole("button", { name: "Redo", exact: true }).click();
+    await page.locator('input[type="file"]').setInputFiles({ name: "sample.jpg", mimeType: "image/jpeg", buffer: photo });
+    await expect(page.getByText("It's in the judge's queue", { exact: false })).toBeVisible();
+    assert(mutations.some((m) => m.path === "/api/submissions/upload1" && m.method === "PATCH"));
+    assert.equal(await page.locator('input[type="file"]').getAttribute("capture"), null);
+  });
+  await shot("uploaded");
+
+  await page.goto(`${BASE}/feed`);
+  await expect(page.getByText(tasks[3].title, { exact: true })).toBeVisible();
+  await check("Grouped feed shows baseline, bonus and playable clip", async () => {
+    await expect(page.getByText("+7 bonus", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Show 1 more file", exact: true }).click();
+    await expect(page.locator("video")).toHaveAttribute("preload", "auto");
+    await expect(page.locator("video")).toHaveAttribute("src", /#t=0.1$/);
+    await expect.poll(() => page.locator("video").evaluate((v) => v.readyState)).toBeGreaterThan(0);
+    await page.locator("video").evaluate((v) => v.play());
+    await expect.poll(() => page.locator("video").evaluate((v) => v.currentTime)).toBeGreaterThan(0.1);
+  });
+  await shot("feed");
+  await check("Feed rejection filter has a way back", async () => {
+    await page.getByRole("button", { name: "Rejected", exact: true }).click();
+    await expect(page.getByText("The stranger is out of frame.", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "All", exact: true }).click();
+  });
+  await page.goto(`${BASE}/leaderboard`);
+  await check("Team scores expand to grouped evidence", async () => {
+    await page.getByRole("button", { name: new RegExp(teams[0].name) }).click();
+    await expect(page.getByText(tasks[3].title, { exact: true })).toBeVisible();
+    await expect(page.getByText("+7 bonus", { exact: true })).toBeVisible();
+  });
+  await shot("scores");
+
+  await page.goto(`${BASE}/judge`);
+  await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+  await check("Quantity judging sends the count, not discretionary points", async () => {
+    await page.getByRole("spinbutton").fill("3");
+    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    await expect.poll(() => items[0].status).toBe("approved");
+    assert.equal(items[0].measurementValue, 3);
+    await expect(page.getByText("Judged this round", { exact: false })).toBeVisible();
+  });
+  await check("Another organizer's Undo restores an item in this judge's queue", async () => {
+    await expect.poll(() => items[0].status).toBe("approved");
+    await expect(page.locator(".stack .card-flat").filter({ hasText: tasks[1].title }).getByRole("button", { name: "Undo", exact: true })).toBeVisible();
+    const reads = queueReads;
+    items[0].status = "pending";
+    await expect.poll(() => queueReads).toBeGreaterThan(reads + 1);
+    await expect(page.getByRole("spinbutton")).toBeVisible();
+  });
+  await check("Judging refreshes past an older poll and sees an immediate remote Undo", async () => {
+    // Reload only sets up this independent race, not the cross-judge check above.
+    await page.reload();
+    await expect(page.getByRole("spinbutton")).toBeVisible();
+    holdNextQueue = true;
+    await expect.poll(() => Boolean(releaseQueue)).toBe(true);
+    undoOnApprove = true;
+    const writes = mutations.length;
+    const reads = queueReads;
+    try {
+      await page.getByRole("spinbutton").fill("3");
+      await page.getByRole("button", { name: "Approve", exact: true }).click();
+      await expect.poll(() => mutations.length).toBeGreaterThan(writes);
+      await expect.poll(() => queueReads).toBeGreaterThan(reads);
+      await expect(page.getByRole("spinbutton")).toBeVisible();
+    } finally {
+      undoOnApprove = false;
+      releaseQueue?.();
+      releaseQueue = null;
+    }
+  });
+  await check("Judge exposes failed refreshes instead of a stale all-clear", async () => {
+    queueError = true;
+    const reads = queueReads;
+    await expect.poll(() => queueReads).toBeGreaterThan(reads + 1);
+    await expect(page.getByText(/couldn't refresh|connection hiccup|temporarily unavailable/i)).toBeVisible();
+  });
+  await shot("judge-offline");
+  queueError = false;
+  await page.goto(`${BASE}/admin`);
+  await expect(page.getByRole("button", { name: "End Round 1", exact: true })).toBeVisible();
+  await check("End and reopen round controls update without resetting data", async () => {
+    await page.getByRole("button", { name: "End Round 1", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Reopen Round 1", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Reopen Round 1", exact: true }).click();
+    await expect(page.getByRole("button", { name: "End Round 1", exact: true })).toBeVisible();
+    assert.equal(items.length, 5);
+  });
+  await page.getByRole("button", { name: "roster", exact: true }).click();
+  await check("Roster player names and controls fit a narrow phone", async () => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await fits();
+    const name = page.getByRole("button", { name: `${mate.name} edit`, exact: true });
+    assert(await name.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "Player name overflows its available width");
+  });
+  await shot("roster");
+  await page.getByRole("button", { name: `${me.name} edit`, exact: true }).click();
+  await check("Player rename controls fit at 320px", fits);
+  await shot("roster-edit");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "tasks", exact: true }).click();
+  await check("Secret reveal is independent of its five-point tier", async () => {
+    await page.getByRole("button", { name: "Reveal", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Live", exact: true })).toBeVisible();
+  });
+  await shot("admin-tasks");
+  await page.getByRole("button", { name: "health", exact: true }).click();
+  await expect(page.getByText("Offline sample", { exact: true })).toBeVisible();
+  await check("Health exposes failed refreshes instead of stale green checks", async () => {
+    healthError = true;
+    const reads = healthReads;
+    await expect.poll(() => healthReads).toBeGreaterThan(reads + 1);
+    await expect(page.getByText(/couldn't refresh|health service unavailable|connection hiccup/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reset submissions", exact: true })).toHaveCount(0);
+  });
+  await shot("health-offline");
+  healthError = false;
+  await check("Health clears the stale-results warning after recovery", async () => {
+    await expect(page.getByRole("alert").filter({ hasText: "Couldn't refresh health checks" })).toHaveCount(0);
+  });
+
+  for (const path of ["/judge", "/admin"]) {
+    await check(`${path} distinguishes an initial outage from a PIN refusal`, async () => {
+      queueError = path === "/judge";
+      adminError = path === "/admin";
+      try {
+        await page.goto(`${BASE}${path}`);
+        await expect(page.getByText(/temporarily unavailable/i)).toBeVisible();
+        await expect(page.getByPlaceholder("PIN", { exact: true })).toHaveCount(0);
+        queueError = false;
+        adminError = false;
+        await page.getByRole("button", { name: "Try again", exact: true }).click();
+        await expect(page.getByRole("heading", { name: path === "/judge" ? "Judge" : "Admin", exact: true })).toBeVisible();
+      } finally {
+        queueError = false;
+        adminError = false;
+      }
+    });
+  }
+  await check("Organizer PIN rejects a bad value and unlocks with a valid value", async () => {
+    authorized = false;
+    await page.goto(`${BASE}/judge`);
+    await page.getByPlaceholder("PIN", { exact: true }).fill("incorrect");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.getByText("Wrong PIN", { exact: true })).toBeVisible();
+    await page.getByPlaceholder("PIN", { exact: true }).fill("offline");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Judge", exact: true })).toBeVisible();
+  });
+
+  stateHeld = true;
+  await page.goto(`${BASE}/submit`);
+  await expect.poll(() => stateReads).toBeGreaterThan(0);
+  await page.getByRole("button", { name: `${me.name} switch`, exact: true }).click();
+  await expect(page.getByText("You're submitting as", { exact: false })).toBeVisible();
+  await check("Identity switching does not claim zero submissions before loading", async () => {
+    await expect(page.getByText("Nothing has been submitted under this name yet", { exact: false })).toHaveCount(0);
+  });
+  await shot("switch-loading");
+  stateHeld = false;
+
+  for (const width of [260, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const path of ["/", "/submit", "/feed", "/leaderboard", "/judge"]) {
+      await page.goto(`${BASE}${path}`);
+      await expect(page.locator(".card").first()).toBeVisible();
+      await check(`${path} fits at ${width}px`, fits);
+    }
+  }
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/feed`);
+  await expect(page.getByText(tasks[3].title, { exact: true })).toBeVisible();
+  await shot("feed-dark-mobile");
+  await check("Browser has no uncaught application errors or unmocked requests", async () => {
+    assert.deepEqual(pageErrors, []);
+    assert.deepEqual(refused, []);
+  });
+} finally {
+  stateHeld = false;
+  clearTimeout(deadline);
+  await browser.close();
+}
+console.log(`\nBrowser bug bash: ${checks - failures.length}/${checks} passed; live database requests: 0`);
+if (failures.length) {
+  console.error(failures.join("\n"));
+  process.exitCode = 1;
+}
