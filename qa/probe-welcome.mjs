@@ -158,6 +158,30 @@ try {
   await expect(home.getByRole("heading", { name: "Rules", exact: true })).toBeVisible();
   await expect(home.getByText(/Stay together/)).toBeVisible();
   await expect(home.getByText(/same stranger.*3.*per team.*per round/i)).toBeVisible();
+  await expect(home.getByRole("region", { name: "Event status" })).toContainText("when Jason starts Round 1");
+  const howTo = home.getByRole("region", { name: "How it works", exact: true });
+  await expect(howTo).toContainText("Meet at Jason's apartment");
+  await expect(howTo.getByRole("list", { name: "Afternoon schedule" }).getByRole("listitem")).toHaveText([
+    "Round 190 min", "Break1 hour", "Round 290 min",
+  ]);
+  await expect(howTo).toContainText(/back to the apartment.*relaxing and refreshments/i);
+  await expect(howTo).toContainText(/switch teams for Round 2.*each round is scored separately/i);
+  await expect(howTo).toContainText(/50 tasks per round.*as many as you can/i);
+  await expect(howTo.getByRole("list", { name: "Task points" }).getByRole("listitem")).toHaveText([
+    "1 pt", "3 pts", "5 pts", "10 pts",
+  ]);
+  await expect(howTo).toContainText(/bonus points for doing extra/i);
+  const rules = home.getByRole("region", { name: "Rules", exact: true });
+  await expect(rules.locator("b, strong")).toHaveCount(0);
+  assert.equal(await rules.getByRole("listitem").first().evaluate((node) => getComputedStyle(node).listStyleType), "disc");
+  assert.equal(await rules.getByRole("listitem").first().evaluate((node) => getComputedStyle(node).fontWeight), "400");
+  const website = home.getByRole("region", { name: "Using the website" });
+  await expect(website).toContainText(/Tasks:.*upload photo or video evidence/i);
+  await expect(website).toContainText(/once per team.*approved/i);
+  await expect(website).toContainText(/Scores:.*standings/i);
+  await expect(website).toContainText(/Feed:.*photos and videos/i);
+  await expect(website.getByRole("listitem")).toHaveCount(3);
+  await expect(website).not.toContainText(/Waiting:|Rejected:/);
   for (const name of ["Tasks", "Scores", "Feed"]) await expect(navLink(home, name)).toHaveCount(0);
   await expect(navLink(home, "Home")).toHaveClass("on");
 
@@ -179,7 +203,10 @@ try {
   assert.equal(new URL(home.url()).pathname, "/", "Choosing a name must not navigate away");
   await home.setViewportSize({ width: 390, height: 844 });
   await home.screenshot({ path: "qa/shots/welcome-home.png", fullPage: true });
-  console.log("PASS Home identity, team-only welcome, rules, narrow names");
+  await home.emulateMedia({ colorScheme: "dark" });
+  await home.screenshot({ path: "qa/shots/welcome-dark.png", fullPage: true });
+  await home.emulateMedia({ colorScheme: "light" });
+  console.log("PASS Home identity, team-only welcome, event format, website guide, plain rules, narrow names");
 
   const direct = await ctx.newPage();
   holdEvent = true;
@@ -279,6 +306,7 @@ try {
   await expect(home.getByRole("heading", { name: "Your Round 2 team", exact: true })).toBeVisible();
   await expect(home.getByText(remixMate.name, { exact: true })).toBeVisible();
   await expect(home.getByText(teammate.name, { exact: true })).toHaveCount(0);
+  await expect(home.getByRole("region", { name: "Event status" })).toContainText("when Jason starts the round");
   await expect(tasks).toHaveURL(`${BASE}/`);
   await tasks.goto(`${BASE}/submit`);
   await expect(tasks).toHaveURL(`${BASE}/`);

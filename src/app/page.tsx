@@ -13,10 +13,10 @@ type PlayersResponse = {
 };
 
 const PHASE_COPY = {
-  welcome: ["Welcome to the hunt", "Meet your team and read the rules. Tasks will appear when the organizer starts Round 1."],
+  welcome: ["Welcome to the hunt", "Meet your team and read the rules. Tasks will appear when Jason starts Round 1."],
   round1: ["Round 1 is on", "Stay together, pick a task and send your evidence."],
   break: ["Round 1 is over", "Uploads are closed. Check your scores and photos while the organizers get the new teams ready."],
-  remix: ["Meet your Round 2 team", "Your new teammates are below. Round 2 tasks will appear when the organizer starts the round."],
+  remix: ["Meet your Round 2 team", "Your new teammates are below. Round 2 tasks will appear when Jason starts the round."],
   round2: ["Round 2 is on", "New team, new tasks, separate scores. Go make it count."],
   finished: ["The hunt is over", "Uploads are closed. Check the final tasks, scores and photos while the judges finish up."],
 };
@@ -162,21 +162,39 @@ export default function HomePage() {
         ) : <p className="muted" style={{ margin: 0 }}>Waiting for event status…</p>}
       </section>
 
-      <section className="card" aria-labelledby="rules">
-        <h2 id="rules" style={{ margin: "0 0 8px" }}>Rules</h2>
-        <ul className="stack" style={{ margin: 0, paddingLeft: 20 }}>
-          <li><b>Stay together.</b></li>
-          <li>The same stranger can help with a maximum of <b>3 tasks per team per round.</b></li>
-        </ul>
-      </section>
       <section className="card" aria-labelledby="how-to">
         <h2 id="how-to" style={{ margin: "0 0 8px" }}>How it works</h2>
-        <ul className="stack" style={{ margin: 0, paddingLeft: 20 }}>
-          <li><b>Tasks:</b> pick a task and upload photos or video as evidence. Each task scores once per team.</li>
-          <li><b>Waiting:</b> your evidence is with the judges. Points appear when it&apos;s approved.</li>
-          <li><b>Rejected:</b> read the reason on Tasks, then try again and upload new evidence while the round is open.</li>
-          <li><b>Scores:</b> check the team standings for each round.</li>
-          <li><b>Feed:</b> see everyone&apos;s judged photos and videos.</li>
+        <p style={{ margin: 0 }}>Meet at Jason&apos;s apartment.</p>
+        <ol className="hunt-schedule" aria-label="Afternoon schedule" role="list">
+          <li><span>Round 1</span><b className="num">90 min</b></li>
+          <li><span>Break</span><b className="num">1 hour</b></li>
+          <li><span>Round 2</span><b className="num">90 min</b></li>
+        </ol>
+        <p style={{ margin: 0 }}>
+          Back to the apartment for relaxing and refreshments at the break.
+          Switch teams for Round 2; each round is scored separately.
+        </p>
+        <div style={{ borderTop: "1px solid var(--line-soft)", marginTop: 14, paddingTop: 14 }}>
+          <p style={{ margin: 0 }}><b>50 tasks per round.</b> Do as many as you can before time&apos;s up.</p>
+          <ul className="row" aria-label="Task points" role="list" style={{ flexWrap: "wrap", listStyle: "none", padding: 0, margin: "8px 0" }}>
+            {[1, 3, 5, 10].map((points) => <li key={points} className="pill pill-accent">{points} {points === 1 ? "pt" : "pts"}</li>)}
+          </ul>
+          <p style={{ margin: 0 }}>Some tasks offer bonus points for doing extra.</p>
+        </div>
+      </section>
+      <section className="card" aria-labelledby="rules">
+        <h2 id="rules" style={{ margin: "0 0 8px" }}>Rules</h2>
+        <ul className="stack" style={{ margin: 0, paddingLeft: 20, listStyleType: "disc" }}>
+          <li>Stay together.</li>
+          <li>The same stranger can help with a maximum of 3 tasks per team per round.</li>
+        </ul>
+      </section>
+      <section className="card" aria-labelledby="website">
+        <h2 id="website" style={{ margin: "0 0 8px" }}>Using the website</h2>
+        <ul className="stack" style={{ margin: 0, paddingLeft: 20, listStyleType: "disc" }}>
+          <li><b>Tasks:</b> upload photo or video evidence. Each task scores once per team when approved.</li>
+          <li><b>Scores:</b> live team standings.</li>
+          <li><b>Feed:</b> everyone&apos;s judged photos and videos.</li>
         </ul>
       </section>
     </>

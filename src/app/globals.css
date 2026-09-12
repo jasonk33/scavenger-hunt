@@ -255,6 +255,29 @@ h2 {
   gap: 8px;
 }
 
+.hunt-schedule {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  text-align: center;
+}
+.hunt-schedule li {
+  padding: 8px 4px;
+  border-radius: 10px;
+  background: var(--accent-weak);
+}
+.hunt-schedule span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.hunt-schedule b {
+  display: block;
+  font-size: 19px;
+}
+
 /* ---- Focus ------------------------------------------------------------- */
 
 /* :focus-visible only, so a thumb tap never leaves a ring behind but keyboard
