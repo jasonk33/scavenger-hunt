@@ -166,6 +166,7 @@ try {
   ]);
   await expect(howTo).toContainText(/After Round 1, meet back at Jason's apartment for a 1-hour break.*relax.*refreshments/i);
   await expect(howTo).toContainText(/switch teams for Round 2.*each round is scored separately/i);
+  await expect(howTo).toContainText("After Round 2, we'll give out awards.");
   await expect(howTo).toContainText(/Each round, every team gets a bag of challenge props and a separate bag of handy supplies/i);
   await expect(howTo).toContainText(/50 tasks per round.*as many as you can/i);
   await expect(howTo.getByRole("list", { name: "Task points" }).getByRole("listitem")).toHaveText([

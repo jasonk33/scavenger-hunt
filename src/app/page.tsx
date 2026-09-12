@@ -172,6 +172,7 @@ export default function HomePage() {
         <p style={{ margin: 0 }}>
           After Round 1, meet back at Jason&apos;s apartment for a 1-hour break to relax and enjoy refreshments.
           Switch teams for Round 2; each round is scored separately.
+          After Round 2, we&apos;ll give out awards.
         </p>
         <p style={{ margin: "10px 0 0" }}>
           Each round, every team gets a bag of challenge props and a separate bag of handy supplies.
