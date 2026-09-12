@@ -194,7 +194,7 @@ export default function HomePage() {
       <section className="card" aria-labelledby="website">
         <h2 id="website" style={{ margin: "0 0 8px" }}>Using the website</h2>
         <ul className="stack" style={{ margin: 0, paddingLeft: 20, listStyleType: "disc" }}>
-          <li><b>Tasks:</b> upload photo or video evidence. Each task scores once per team when approved.</li>
+          <li><b>Tasks:</b> upload photo or video evidence and use the optional note field for extra explanation. Each task scores once per team when approved.</li>
           <li><b>Scores:</b> live team standings.</li>
           <li><b>Feed:</b> everyone&apos;s judged photos and videos.</li>
         </ul>

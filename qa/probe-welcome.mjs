@@ -178,6 +178,7 @@ try {
   assert.equal(await rules.getByRole("listitem").first().evaluate((node) => getComputedStyle(node).fontWeight), "400");
   const website = home.getByRole("region", { name: "Using the website" });
   await expect(website).toContainText(/Tasks:.*upload photo or video evidence/i);
+  await expect(website).toContainText(/optional note field.*extra explanation/i);
   await expect(website).toContainText(/once per team.*approved/i);
   await expect(website).toContainText(/Scores:.*standings/i);
   await expect(website).toContainText(/Feed:.*photos and videos/i);
