@@ -160,12 +160,13 @@ try {
   await expect(home.getByText(/same stranger.*3.*per team.*per round/i)).toBeVisible();
   await expect(home.getByRole("region", { name: "Event status" })).toContainText("when Jason starts Round 1");
   const howTo = home.getByRole("region", { name: "How it works", exact: true });
-  await expect(howTo).toContainText("Meet at Jason's apartment");
+  await expect(howTo).not.toContainText("Meet at Jason's apartment");
   await expect(howTo.getByRole("list", { name: "Afternoon schedule" }).getByRole("listitem")).toHaveText([
     "Round 190 min", "Break1 hour", "Round 290 min",
   ]);
-  await expect(howTo).toContainText(/back to the apartment.*relaxing and refreshments/i);
+  await expect(howTo).toContainText(/After Round 1, meet back at Jason's apartment for a 1-hour break.*relax.*refreshments/i);
   await expect(howTo).toContainText(/switch teams for Round 2.*each round is scored separately/i);
+  await expect(howTo).toContainText(/Each round, every team gets a bag of challenge props and a separate bag of handy supplies/i);
   await expect(howTo).toContainText(/50 tasks per round.*as many as you can/i);
   await expect(howTo.getByRole("list", { name: "Task points" }).getByRole("listitem")).toHaveText([
     "1 pt", "3 pts", "5 pts", "10 pts",

@@ -164,15 +164,17 @@ export default function HomePage() {
 
       <section className="card" aria-labelledby="how-to">
         <h2 id="how-to" style={{ margin: "0 0 8px" }}>How it works</h2>
-        <p style={{ margin: 0 }}>Meet at Jason&apos;s apartment.</p>
         <ol className="hunt-schedule" aria-label="Afternoon schedule" role="list">
           <li><span>Round 1</span><b className="num">90 min</b></li>
           <li><span>Break</span><b className="num">1 hour</b></li>
           <li><span>Round 2</span><b className="num">90 min</b></li>
         </ol>
         <p style={{ margin: 0 }}>
-          Back to the apartment for relaxing and refreshments at the break.
+          After Round 1, meet back at Jason&apos;s apartment for a 1-hour break to relax and enjoy refreshments.
           Switch teams for Round 2; each round is scored separately.
+        </p>
+        <p style={{ margin: "10px 0 0" }}>
+          Each round, every team gets a bag of challenge props and a separate bag of handy supplies.
         </p>
         <div style={{ borderTop: "1px solid var(--line-soft)", marginTop: 14, paddingTop: 14 }}>
           <p style={{ margin: 0 }}><b>50 tasks per round.</b> Do as many as you can before time&apos;s up.</p>
